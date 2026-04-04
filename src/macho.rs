@@ -803,6 +803,127 @@ mod tests {
     }
 
     #[test]
+    fn dysymtab_command_counts_symbol_classes() {
+        let mut obj = ObjectFile::new();
+        obj.symbols.push(Symbol {
+            name: "local_abs".into(),
+            section: 0,
+            value: 7,
+            global: false,
+            undefined: false,
+            absolute: true,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
+        obj.symbols.push(Symbol {
+            name: "local_text".into(),
+            section: 1,
+            value: 0,
+            global: false,
+            undefined: false,
+            absolute: false,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
+        obj.symbols.push(Symbol {
+            name: "_main".into(),
+            section: 1,
+            value: 0,
+            global: true,
+            undefined: false,
+            absolute: false,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
+        obj.symbols.push(Symbol {
+            name: "_common".into(),
+            section: 0,
+            value: 24,
+            global: true,
+            undefined: true,
+            absolute: false,
+            common: true,
+            common_align_pow2: 3,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
+        obj.symbols.push(Symbol {
+            name: "_puts".into(),
+            section: 0,
+            value: 0,
+            global: true,
+            undefined: true,
+            absolute: false,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: true,
+            weak_def: false,
+        });
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let dysymtab_cmd_offset = HEADER_SIZE as usize
+            + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize
+            + BUILD_VERSION_CMD_SIZE as usize
+            + SYMTAB_CMD_SIZE as usize;
+        let ilocalsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 8],
+            buf[dysymtab_cmd_offset + 9],
+            buf[dysymtab_cmd_offset + 10],
+            buf[dysymtab_cmd_offset + 11],
+        ]);
+        let nlocalsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 12],
+            buf[dysymtab_cmd_offset + 13],
+            buf[dysymtab_cmd_offset + 14],
+            buf[dysymtab_cmd_offset + 15],
+        ]);
+        let iextdefsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 16],
+            buf[dysymtab_cmd_offset + 17],
+            buf[dysymtab_cmd_offset + 18],
+            buf[dysymtab_cmd_offset + 19],
+        ]);
+        let nextdefsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 20],
+            buf[dysymtab_cmd_offset + 21],
+            buf[dysymtab_cmd_offset + 22],
+            buf[dysymtab_cmd_offset + 23],
+        ]);
+        let iundefsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 24],
+            buf[dysymtab_cmd_offset + 25],
+            buf[dysymtab_cmd_offset + 26],
+            buf[dysymtab_cmd_offset + 27],
+        ]);
+        let nundefsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 28],
+            buf[dysymtab_cmd_offset + 29],
+            buf[dysymtab_cmd_offset + 30],
+            buf[dysymtab_cmd_offset + 31],
+        ]);
+
+        assert_eq!(ilocalsym, 0);
+        assert_eq!(nlocalsym, 2);
+        assert_eq!(iextdefsym, 2);
+        assert_eq!(nextdefsym, 1);
+        assert_eq!(iundefsym, 3);
+        assert_eq!(nundefsym, 2);
+    }
+
+    #[test]
     fn align_to_works() {
         assert_eq!(align_to(0, 4), 0);
         assert_eq!(align_to(1, 4), 4);
