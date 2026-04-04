@@ -22,14 +22,13 @@ use crate::reg::{GpReg, SP};
 
 /// Assemble a source file to a Mach-O object file.
 pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
-    let src = fs::read_to_string(input)
-        .map_err(|e| AsmError::new(format!("{}", e)).with_path(input))?;
+    let src =
+        fs::read_to_string(input).map_err(|e| AsmError::new(format!("{}", e)).with_path(input))?;
 
-    let obj = assemble_source(&src)
-        .map_err(|e| e.with_source_context(input, &src))?;
+    let obj = assemble_source(&src).map_err(|e| e.with_source_context(input, &src))?;
 
-    let file = fs::File::create(output)
-        .map_err(|e| AsmError::new(format!("{}", e)).with_path(output))?;
+    let file =
+        fs::File::create(output).map_err(|e| AsmError::new(format!("{}", e)).with_path(output))?;
     let mut w = BufWriter::new(file);
     macho::write_macho(&obj, &mut w)
         .map_err(|e| AsmError::new(format!("writing output: {}", e)).with_path(output))?;
@@ -48,7 +47,11 @@ pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
     let stmts: Vec<_> = stmts
         .iter()
         .cloned()
-        .map(|stmt| LocatedStmt { stmt, line: 0, col: 0 })
+        .map(|stmt| LocatedStmt {
+            stmt,
+            line: 0,
+            col: 0,
+        })
         .collect();
     assemble_located_stmts(&stmts)
 }
@@ -117,7 +120,13 @@ pub struct AsmError {
 
 impl AsmError {
     pub fn new(msg: String) -> Self {
-        Self { path: None, line: None, col: None, msg, snippet: None }
+        Self {
+            path: None,
+            line: None,
+            col: None,
+            msg,
+            snippet: None,
+        }
     }
 
     pub fn at(line: u32, col: u32, msg: String) -> Self {
@@ -168,7 +177,14 @@ impl std::fmt::Display for AsmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match (&self.path, self.line, self.col) {
             (Some(path), Some(line), Some(col)) => {
-                writeln!(f, "{}:{}:{}: error: {}", path.display(), line, col, self.msg)?;
+                writeln!(
+                    f,
+                    "{}:{}:{}: error: {}",
+                    path.display(),
+                    line,
+                    col,
+                    self.msg
+                )?;
                 if let Some(snippet) = &self.snippet {
                     writeln!(f, "{}", snippet)?;
                     write!(f, "{}^", " ".repeat(col.saturating_sub(1) as usize))?;
@@ -393,7 +409,9 @@ impl CfiProcState {
                 return Ok(None);
             }
             if self.cfa_offset < 0 {
-                return Err(AsmError("compact unwind stack size must be non-negative".into()));
+                return Err(AsmError(
+                    "compact unwind stack size must be non-negative".into(),
+                ));
             }
             let stack_size = self.cfa_offset as u64;
             if !stack_size.is_multiple_of(16) {
@@ -418,7 +436,9 @@ impl CfiProcState {
         if self.cfa_offset != 16 {
             return Ok(None);
         }
-        if self.saved_gp_offsets.get(&29) != Some(&-16) || self.saved_gp_offsets.get(&30) != Some(&-8) {
+        if self.saved_gp_offsets.get(&29) != Some(&-16)
+            || self.saved_gp_offsets.get(&30) != Some(&-8)
+        {
             return Ok(None);
         }
 
@@ -537,7 +557,8 @@ impl Assembler {
         }
         self.fixups.clear();
         self.pending_relocs.clear();
-        self.pending_relocs.resize_with(self.sections.len(), Vec::new);
+        self.pending_relocs
+            .resize_with(self.sections.len(), Vec::new);
         self.active_cfi_proc = None;
         self.linker_optimization_hints.clear();
         self.compact_unwind_rows.clear();
@@ -567,7 +588,11 @@ impl Assembler {
                     }
                     self.note_symbol(name);
                     let offset = self.current_offset();
-                    if self.labels.insert(name.clone(), (self.section, offset)).is_some() {
+                    if self
+                        .labels
+                        .insert(name.clone(), (self.section, offset))
+                        .is_some()
+                    {
                         return Err(AsmError(format!("duplicate label '{}'", name))
                             .with_loc_if_absent(stmt.line, stmt.col));
                     }
@@ -591,10 +616,9 @@ impl Assembler {
             self.note_stmt_location(stmt.line, stmt.col);
             match &stmt.stmt {
                 Stmt::Label(_) => {}
-                Stmt::Directive(dir) => {
-                    self.process_directive(dir)
-                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?
-                }
+                Stmt::Directive(dir) => self
+                    .process_directive(dir)
+                    .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?,
                 Stmt::Instruction(inst) => {
                     self.sections[self.section].has_instructions = true;
                     let word = inst.encode();
@@ -640,7 +664,11 @@ impl Assembler {
                 self.note_symbol(name);
                 self.absolute_defs.insert(name.clone(), expr.clone());
             }
-            Directive::Comm { name, size, align_pow2 } => {
+            Directive::Comm {
+                name,
+                size,
+                align_pow2,
+            } => {
                 self.record_common_symbol(name, *size, *align_pow2)?;
             }
             Directive::Extern(name) => {
@@ -667,14 +695,24 @@ impl Assembler {
                 let attrs = self.symbol_attrs_mut(name);
                 attrs.weak_def = true;
             }
-            Directive::Align { power, max_skip, .. }
-            | Directive::P2Align { power, max_skip, .. } => {
+            Directive::Align {
+                power, max_skip, ..
+            }
+            | Directive::P2Align {
+                power, max_skip, ..
+            } => {
                 self.collect_alignment(*power, *max_skip)?;
             }
             Directive::Byte(vals) => self.reserve_initialized_bytes(vals.len() as u64, ".byte")?,
-            Directive::Short(vals) => self.reserve_initialized_bytes((vals.len() as u64) * 2, ".short")?,
-            Directive::Word(vals) => self.reserve_initialized_bytes((vals.len() as u64) * 4, ".word")?,
-            Directive::Quad(vals) => self.reserve_initialized_bytes((vals.len() as u64) * 8, ".quad")?,
+            Directive::Short(vals) => {
+                self.reserve_initialized_bytes((vals.len() as u64) * 2, ".short")?
+            }
+            Directive::Word(vals) => {
+                self.reserve_initialized_bytes((vals.len() as u64) * 4, ".word")?
+            }
+            Directive::Quad(vals) => {
+                self.reserve_initialized_bytes((vals.len() as u64) * 8, ".quad")?
+            }
             Directive::Ascii(bytes) | Directive::Asciz(bytes) => {
                 self.reserve_initialized_bytes(bytes.len() as u64, "string directive")?;
             }
@@ -690,7 +728,13 @@ impl Assembler {
                     .ok_or_else(|| AsmError(".fill size overflows u64".into()))?;
                 self.reserve_initialized_bytes(total, ".fill")?;
             }
-            Directive::Zerofill { segment, section, symbol, size, align_pow2 } => {
+            Directive::Zerofill {
+                segment,
+                section,
+                symbol,
+                size,
+                align_pow2,
+            } => {
                 self.reserve_zerofill(segment, section, symbol.as_deref(), *size, *align_pow2)?;
             }
             Directive::CfiStartProc
@@ -721,15 +765,23 @@ impl Assembler {
         match dir {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
-            Directive::Set(_ , _)
+            Directive::Set(_, _)
             | Directive::Comm { .. }
             | Directive::Extern(_)
             | Directive::Global(_)
             | Directive::PrivateExtern(_)
             | Directive::WeakReference(_)
             | Directive::WeakDefinition(_) => {}
-            Directive::Align { power, fill, max_skip }
-            | Directive::P2Align { power, fill, max_skip } => {
+            Directive::Align {
+                power,
+                fill,
+                max_skip,
+            }
+            | Directive::P2Align {
+                power,
+                fill,
+                max_skip,
+            } => {
                 self.emit_alignment(*power, *fill, *max_skip)?;
             }
             Directive::Byte(vals) => {
@@ -793,10 +845,20 @@ impl Assembler {
                 }
                 self.emit_space(*n)?;
             }
-            Directive::Fill { repeat, size, value } => {
+            Directive::Fill {
+                repeat,
+                size,
+                value,
+            } => {
                 self.emit_fill(*repeat, *size, *value)?;
             }
-            Directive::Zerofill { segment, section, size, align_pow2, .. } => {
+            Directive::Zerofill {
+                segment,
+                section,
+                size,
+                align_pow2,
+                ..
+            } => {
                 self.emit_zerofill(segment, section, *size, *align_pow2)?;
             }
             Directive::CfiStartProc => {
@@ -828,9 +890,12 @@ impl Assembler {
     }
 
     fn function_symbol_at(&self, section: usize, offset: u64) -> Option<String> {
-        let mut exact: Vec<_> = self.labels
+        let mut exact: Vec<_> = self
+            .labels
             .iter()
-            .filter(|(_, (label_section, label_offset))| *label_section == section && *label_offset == offset)
+            .filter(|(_, (label_section, label_offset))| {
+                *label_section == section && *label_offset == offset
+            })
             .map(|(name, _)| name.as_str())
             .collect();
 
@@ -841,16 +906,26 @@ impl Assembler {
             .copied()
             .find(|name| {
                 !is_assembler_local_symbol(name)
-                    && self.symbol_attrs.get(*name).is_some_and(|attrs| attrs.global)
+                    && self
+                        .symbol_attrs
+                        .get(*name)
+                        .is_some_and(|attrs| attrs.global)
             })
-            .or_else(|| exact.iter().copied().find(|name| !is_assembler_local_symbol(name)))
+            .or_else(|| {
+                exact
+                    .iter()
+                    .copied()
+                    .find(|name| !is_assembler_local_symbol(name))
+            })
             .or_else(|| exact.into_iter().next())
             .map(str::to_string)
     }
 
     fn start_cfi_proc(&mut self) -> Result<(), AsmError> {
         if self.active_cfi_proc.is_some() {
-            return Err(AsmError("nested .cfi_startproc directives are not supported".into()));
+            return Err(AsmError(
+                "nested .cfi_startproc directives are not supported".into(),
+            ));
         }
         if self.sections[self.section].kind != SectionKind::Text {
             return Err(AsmError(
@@ -861,7 +936,11 @@ impl Assembler {
         let function_symbol = self
             .function_symbol_at(self.section, start_offset)
             .ok_or_else(|| AsmError(".cfi_startproc must follow a function label".into()))?;
-        self.active_cfi_proc = Some(CfiProcState::new(self.section, start_offset, function_symbol));
+        self.active_cfi_proc = Some(CfiProcState::new(
+            self.section,
+            start_offset,
+            function_symbol,
+        ));
         Ok(())
     }
 
@@ -875,7 +954,10 @@ impl Assembler {
         match dir {
             Directive::CfiDefCfa { register, offset } => {
                 if *offset < 0 {
-                    return Err(AsmError(format!(".cfi_def_cfa offset {} must be non-negative", offset)));
+                    return Err(AsmError(format!(
+                        ".cfi_def_cfa offset {} must be non-negative",
+                        offset
+                    )));
                 }
                 proc.cfa_register = *register;
                 proc.cfa_offset = *offset;
@@ -971,12 +1053,16 @@ impl Assembler {
         });
 
         if encoding.is_none() {
-            self.eh_frame_rows.push(proc.eh_frame_record(self.current_offset())?);
+            self.eh_frame_rows
+                .push(proc.eh_frame_record(self.current_offset())?);
         }
         Ok(())
     }
 
-    fn record_build_version(&mut self, build_version: &BuildVersionDirective) -> Result<(), AsmError> {
+    fn record_build_version(
+        &mut self,
+        build_version: &BuildVersionDirective,
+    ) -> Result<(), AsmError> {
         match &self.build_version {
             Some(existing) if existing == build_version => Ok(()),
             Some(existing) => Err(AsmError(format!(
@@ -1001,9 +1087,7 @@ impl Assembler {
         if self.sections[self.section].kind == SectionKind::ZeroFill {
             return Err(AsmError(format!(
                 "{} is not supported in zero-fill section {},{}",
-                context,
-                self.sections[self.section].segment,
-                self.sections[self.section].name
+                context, self.sections[self.section].segment, self.sections[self.section].name
             )));
         }
         self.sections[self.section].size += amount;
@@ -1034,13 +1118,19 @@ impl Assembler {
             .checked_mul(byte_count as u64)
             .ok_or_else(|| AsmError(".fill size overflows u64".into()))?;
         if total > 1024 * 1024 * 64 {
-            return Err(AsmError(format!(".fill size {} too large (max 64MB)", total)));
+            return Err(AsmError(format!(
+                ".fill size {} too large (max 64MB)",
+                total
+            )));
         }
         if byte_count == 0 {
             return Ok(());
         }
         if byte_count > 8 {
-            return Err(AsmError(format!(".fill element size {} too large (max 8)", size)));
+            return Err(AsmError(format!(
+                ".fill element size {} too large (max 8)",
+                size
+            )));
         }
 
         let pattern = value.to_le_bytes();
@@ -1052,7 +1142,10 @@ impl Assembler {
 
     fn collect_alignment(&mut self, power: u32, max_skip: Option<u64>) -> Result<(), AsmError> {
         if power > 30 {
-            return Err(AsmError(format!("alignment power {} too large (max 30)", power)));
+            return Err(AsmError(format!(
+                "alignment power {} too large (max 30)",
+                power
+            )));
         }
 
         let current = self.current_offset();
@@ -1074,7 +1167,10 @@ impl Assembler {
         max_skip: Option<u64>,
     ) -> Result<(), AsmError> {
         if power > 30 {
-            return Err(AsmError(format!("alignment power {} too large (max 30)", power)));
+            return Err(AsmError(format!(
+                "alignment power {} too large (max 30)",
+                power
+            )));
         }
 
         {
@@ -1139,17 +1235,39 @@ impl Assembler {
             let line = fixup.line;
             let col = fixup.col;
             let result = match fixup.kind.clone() {
-                FixupKind::Branch26(template) => self.resolve_branch_or_reloc(fixup, template, 26, true),
-                FixupKind::Branch19(template) => self.resolve_branch_or_reloc(fixup, template, 19, false),
-                FixupKind::Branch14(template) => self.resolve_branch_or_reloc(fixup, template, 14, false),
+                FixupKind::Branch26(template) => {
+                    self.resolve_branch_or_reloc(fixup, template, 26, true)
+                }
+                FixupKind::Branch19(template) => {
+                    self.resolve_branch_or_reloc(fixup, template, 19, false)
+                }
+                FixupKind::Branch14(template) => {
+                    self.resolve_branch_or_reloc(fixup, template, 14, false)
+                }
                 FixupKind::Literal19(template) => self.resolve_literal_fixup(fixup, template),
                 FixupKind::Adr21(template) => self.resolve_adr_fixup(fixup, template),
-                FixupKind::Page21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true),
-                FixupKind::GotLoadPage21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGE21, true),
-                FixupKind::TlvpLoadPage21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGE21, true),
-                FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false),
-                FixupKind::GotLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGEOFF12, false),
-                FixupKind::TlvpLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGEOFF12, false),
+                FixupKind::Page21 => {
+                    self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true)
+                }
+                FixupKind::GotLoadPage21 => {
+                    self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGE21, true)
+                }
+                FixupKind::TlvpLoadPage21 => {
+                    self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGE21, true)
+                }
+                FixupKind::PageOff12 => {
+                    self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false)
+                }
+                FixupKind::GotLoadPageOff12 => self.resolve_page_fixup(
+                    fixup,
+                    crate::macho::ARM64_RELOC_GOT_LOAD_PAGEOFF12,
+                    false,
+                ),
+                FixupKind::TlvpLoadPageOff12 => self.resolve_page_fixup(
+                    fixup,
+                    crate::macho::ARM64_RELOC_TLVP_LOAD_PAGEOFF12,
+                    false,
+                ),
                 FixupKind::Data32 => self.resolve_data32_fixup(fixup),
                 FixupKind::Data64 => self.resolve_data64_fixup(fixup),
             };
@@ -1173,7 +1291,12 @@ impl Assembler {
                 .and_then(|value| value.checked_add(addend))
                 .ok_or_else(|| AsmError("branch offset overflows i64".into()))?;
             let resolved = self.resolve_branch_fixup(&template, delta, bits)?;
-            self.patch_section_data(fixup.section, fixup.offset, &resolved.encode().to_le_bytes(), "branch fixup")?;
+            self.patch_section_data(
+                fixup.section,
+                fixup.offset,
+                &resolved.encode().to_le_bytes(),
+                "branch fixup",
+            )?;
             return Ok(());
         }
 
@@ -1214,7 +1337,8 @@ impl Assembler {
     }
 
     fn resolve_literal_fixup(&mut self, fixup: Fixup, template: Inst) -> Result<(), AsmError> {
-        let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, "ldr literal target")?;
+        let (symbol, addend) =
+            self.require_relocatable_symbol(&fixup.expr, "ldr literal target")?;
         let Some((target_section, target_offset)) = self.labels.get(&symbol) else {
             return Err(AsmError(format!(
                 "ldr literal target '{}' requires an assembler-local label",
@@ -1227,7 +1351,12 @@ impl Assembler {
             .and_then(|value| value.checked_add(addend))
             .ok_or_else(|| AsmError("ldr literal offset overflows i64".into()))?;
         let resolved = self.resolve_literal_inst(&template, delta)?;
-        self.patch_section_data(fixup.section, fixup.offset, &resolved.encode().to_le_bytes(), "ldr literal fixup")?;
+        self.patch_section_data(
+            fixup.section,
+            fixup.offset,
+            &resolved.encode().to_le_bytes(),
+            "ldr literal fixup",
+        )?;
         Ok(())
     }
 
@@ -1245,17 +1374,32 @@ impl Assembler {
             .and_then(|value| value.checked_add(addend))
             .ok_or_else(|| AsmError("adr offset overflows i64".into()))?;
         let resolved = self.resolve_adr_inst(&template, delta)?;
-        self.patch_section_data(fixup.section, fixup.offset, &resolved.encode().to_le_bytes(), "adr fixup")?;
+        self.patch_section_data(
+            fixup.section,
+            fixup.offset,
+            &resolved.encode().to_le_bytes(),
+            "adr fixup",
+        )?;
         Ok(())
     }
 
     fn resolve_data64_fixup(&mut self, fixup: Fixup) -> Result<(), AsmError> {
         match self.classify_expr(&fixup.expr)? {
             ClassifiedExpr::Absolute(value) => {
-                self.patch_section_data(fixup.section, fixup.offset, &(value as u64).to_le_bytes(), ".quad")?;
+                self.patch_section_data(
+                    fixup.section,
+                    fixup.offset,
+                    &(value as u64).to_le_bytes(),
+                    ".quad",
+                )?;
             }
             ClassifiedExpr::Relocatable { symbol, addend } => {
-                self.patch_section_data(fixup.section, fixup.offset, &(addend as u64).to_le_bytes(), ".quad")?;
+                self.patch_section_data(
+                    fixup.section,
+                    fixup.offset,
+                    &(addend as u64).to_le_bytes(),
+                    ".quad",
+                )?;
                 self.record_pending_reloc(
                     fixup.section,
                     fixup.offset,
@@ -1265,8 +1409,17 @@ impl Assembler {
                     false,
                 );
             }
-            ClassifiedExpr::Difference { minuend, subtrahend, addend } => {
-                self.patch_section_data(fixup.section, fixup.offset, &(addend as u64).to_le_bytes(), ".quad")?;
+            ClassifiedExpr::Difference {
+                minuend,
+                subtrahend,
+                addend,
+            } => {
+                self.patch_section_data(
+                    fixup.section,
+                    fixup.offset,
+                    &(addend as u64).to_le_bytes(),
+                    ".quad",
+                )?;
                 self.record_pending_reloc(
                     fixup.section,
                     fixup.offset,
@@ -1284,8 +1437,17 @@ impl Assembler {
                     false,
                 );
             }
-            ClassifiedExpr::PointerToGot { symbol, addend, pcrel } => {
-                self.patch_section_data(fixup.section, fixup.offset, &(addend as u64).to_le_bytes(), ".quad")?;
+            ClassifiedExpr::PointerToGot {
+                symbol,
+                addend,
+                pcrel,
+            } => {
+                self.patch_section_data(
+                    fixup.section,
+                    fixup.offset,
+                    &(addend as u64).to_le_bytes(),
+                    ".quad",
+                )?;
                 self.record_pending_reloc(
                     fixup.section,
                     fixup.offset,
@@ -1326,17 +1488,23 @@ impl Assembler {
         }
     }
 
-    fn require_relocatable_symbol(&self, expr: &Expr, context: &str) -> Result<(String, i64), AsmError> {
+    fn require_relocatable_symbol(
+        &self,
+        expr: &Expr,
+        context: &str,
+    ) -> Result<(String, i64), AsmError> {
         match self.classify_expr(expr)? {
             ClassifiedExpr::Relocatable { symbol, addend } => Ok((symbol, addend)),
             ClassifiedExpr::Absolute(_) => Err(AsmError(format!(
                 "{} must resolve to a relocatable symbol",
                 context
             ))),
-            ClassifiedExpr::Difference { .. } | ClassifiedExpr::PointerToGot { .. } => Err(AsmError(format!(
-                "{} must resolve to a single relocatable symbol",
-                context
-            ))),
+            ClassifiedExpr::Difference { .. } | ClassifiedExpr::PointerToGot { .. } => {
+                Err(AsmError(format!(
+                    "{} must resolve to a single relocatable symbol",
+                    context
+                )))
+            }
         }
     }
 
@@ -1353,9 +1521,7 @@ impl Assembler {
         if end > section.data.len() {
             return Err(AsmError(format!(
                 "{} exceeds section {},{} bounds",
-                context,
-                section.segment,
-                section.name
+                context, section.segment, section.name
             )));
         }
         section.data[start..end].copy_from_slice(bytes);
@@ -1401,7 +1567,12 @@ impl Assembler {
         Ok(())
     }
 
-    fn record_common_symbol(&mut self, name: &str, size: u64, align_pow2: u8) -> Result<(), AsmError> {
+    fn record_common_symbol(
+        &mut self,
+        name: &str,
+        size: u64,
+        align_pow2: u8,
+    ) -> Result<(), AsmError> {
         if align_pow2 > 15 {
             return Err(AsmError(format!(
                 "common symbol '{}' alignment power {} too large (max 15)",
@@ -1411,7 +1582,11 @@ impl Assembler {
         if self.labels.contains_key(name) || self.absolute_defs.contains_key(name) {
             return Err(AsmError(format!("duplicate symbol '{}'", name)));
         }
-        if self.common_symbols.insert(name.to_string(), CommonSymbol { size, align_pow2 }).is_some() {
+        if self
+            .common_symbols
+            .insert(name.to_string(), CommonSymbol { size, align_pow2 })
+            .is_some()
+        {
             return Err(AsmError(format!("duplicate common symbol '{}'", name)));
         }
         self.note_symbol(name);
@@ -1453,7 +1628,11 @@ impl Assembler {
                 return Err(AsmError(format!("duplicate symbol '{}'", symbol)));
             }
             self.note_symbol(symbol);
-            if self.labels.insert(symbol.to_string(), (target, offset)).is_some() {
+            if self
+                .labels
+                .insert(symbol.to_string(), (target, offset))
+                .is_some()
+            {
                 return Err(AsmError(format!("duplicate symbol '{}'", symbol)));
             }
         }
@@ -1515,7 +1694,10 @@ impl Assembler {
         Ok(index)
     }
 
-    fn supported_section(seg: &str, sect: &str) -> Result<(&'static str, &'static str, SectionKind), AsmError> {
+    fn supported_section(
+        seg: &str,
+        sect: &str,
+    ) -> Result<(&'static str, &'static str, SectionKind), AsmError> {
         let seg_lower = seg.to_lowercase();
         let sect_lower = sect.to_lowercase();
         if seg_lower == "__text" && sect_lower == "__text" {
@@ -1536,7 +1718,12 @@ impl Assembler {
         }
     }
 
-    fn ensure_same_section(&self, current_section: usize, target_section: usize, symbol: &str) -> Result<(), AsmError> {
+    fn ensure_same_section(
+        &self,
+        current_section: usize,
+        target_section: usize,
+        symbol: &str,
+    ) -> Result<(), AsmError> {
         if target_section == current_section {
             Ok(())
         } else {
@@ -1552,32 +1739,77 @@ impl Assembler {
         match inst {
             Inst::B { .. } => Ok(Inst::B { offset: checked }),
             Inst::Bl { .. } => Ok(Inst::Bl { offset: checked }),
-            Inst::BCond { cond, .. } => Ok(Inst::BCond { cond: *cond, offset: checked }),
-            Inst::Cbz { rt, sf, .. } => Ok(Inst::Cbz { rt: *rt, offset: checked, sf: *sf }),
-            Inst::Cbnz { rt, sf, .. } => Ok(Inst::Cbnz { rt: *rt, offset: checked, sf: *sf }),
-            Inst::Tbz { rt, bit, sf, .. } => Ok(Inst::Tbz { rt: *rt, bit: *bit, offset: checked, sf: *sf }),
-            Inst::Tbnz { rt, bit, sf, .. } => Ok(Inst::Tbnz { rt: *rt, bit: *bit, offset: checked, sf: *sf }),
-            _ => Err(AsmError("internal error: invalid branch fixup instruction".into())),
+            Inst::BCond { cond, .. } => Ok(Inst::BCond {
+                cond: *cond,
+                offset: checked,
+            }),
+            Inst::Cbz { rt, sf, .. } => Ok(Inst::Cbz {
+                rt: *rt,
+                offset: checked,
+                sf: *sf,
+            }),
+            Inst::Cbnz { rt, sf, .. } => Ok(Inst::Cbnz {
+                rt: *rt,
+                offset: checked,
+                sf: *sf,
+            }),
+            Inst::Tbz { rt, bit, sf, .. } => Ok(Inst::Tbz {
+                rt: *rt,
+                bit: *bit,
+                offset: checked,
+                sf: *sf,
+            }),
+            Inst::Tbnz { rt, bit, sf, .. } => Ok(Inst::Tbnz {
+                rt: *rt,
+                bit: *bit,
+                offset: checked,
+                sf: *sf,
+            }),
+            _ => Err(AsmError(
+                "internal error: invalid branch fixup instruction".into(),
+            )),
         }
     }
 
     fn resolve_literal_inst(&self, inst: &Inst, offset: i64) -> Result<Inst, AsmError> {
         let checked = check_branch_offset(offset, 19)?;
         match inst {
-            Inst::LdrLit64 { rt, .. } => Ok(Inst::LdrLit64 { rt: *rt, offset: checked }),
-            Inst::LdrLit32 { rt, .. } => Ok(Inst::LdrLit32 { rt: *rt, offset: checked }),
-            Inst::LdrswLit { rt, .. } => Ok(Inst::LdrswLit { rt: *rt, offset: checked }),
-            Inst::LdrFpLit64 { rt, .. } => Ok(Inst::LdrFpLit64 { rt: *rt, offset: checked }),
-            Inst::LdrFpLit32 { rt, .. } => Ok(Inst::LdrFpLit32 { rt: *rt, offset: checked }),
-            _ => Err(AsmError("internal error: invalid literal fixup instruction".into())),
+            Inst::LdrLit64 { rt, .. } => Ok(Inst::LdrLit64 {
+                rt: *rt,
+                offset: checked,
+            }),
+            Inst::LdrLit32 { rt, .. } => Ok(Inst::LdrLit32 {
+                rt: *rt,
+                offset: checked,
+            }),
+            Inst::LdrswLit { rt, .. } => Ok(Inst::LdrswLit {
+                rt: *rt,
+                offset: checked,
+            }),
+            Inst::LdrFpLit64 { rt, .. } => Ok(Inst::LdrFpLit64 {
+                rt: *rt,
+                offset: checked,
+            }),
+            Inst::LdrFpLit32 { rt, .. } => Ok(Inst::LdrFpLit32 {
+                rt: *rt,
+                offset: checked,
+            }),
+            _ => Err(AsmError(
+                "internal error: invalid literal fixup instruction".into(),
+            )),
         }
     }
 
     fn resolve_adr_inst(&self, inst: &Inst, offset: i64) -> Result<Inst, AsmError> {
         let checked = check_pcrel_offset(offset, 21, "adr offset")?;
         match inst {
-            Inst::Adr { rd, .. } => Ok(Inst::Adr { rd: *rd, imm: checked }),
-            _ => Err(AsmError("internal error: invalid adr fixup instruction".into())),
+            Inst::Adr { rd, .. } => Ok(Inst::Adr {
+                rd: *rd,
+                imm: checked,
+            }),
+            _ => Err(AsmError(
+                "internal error: invalid adr fixup instruction".into(),
+            )),
         }
     }
 
@@ -1678,11 +1910,8 @@ impl Assembler {
         let mut section = Section::new("__TEXT", "__eh_frame", SectionKind::EhFrame);
         section.align_pow2 = 3;
         section.data.extend_from_slice(&[
-            0x10, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,
-            0x01, 0x7a, 0x52, 0x00,
-            0x01, 0x78, 0x1e, 0x01,
-            0x10, 0x0c, 0x1f, 0x00,
+            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x7a, 0x52, 0x00, 0x01, 0x78,
+            0x1e, 0x01, 0x10, 0x0c, 0x1f, 0x00,
         ]);
 
         self.pending_relocs.push(Vec::new());
@@ -1738,7 +1967,9 @@ impl Assembler {
         section.align_pow2 = 3;
         for row in &self.compact_unwind_rows {
             let reloc_offset = section.data.len() as u32;
-            section.data.extend_from_slice(&row.start_offset.to_le_bytes());
+            section
+                .data
+                .extend_from_slice(&row.start_offset.to_le_bytes());
             section.data.extend_from_slice(&row.length.to_le_bytes());
             section.data.extend_from_slice(&row.encoding.to_le_bytes());
             section.data.extend_from_slice(&0u64.to_le_bytes());
@@ -1759,7 +1990,9 @@ impl Assembler {
 
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
         if self.active_cfi_proc.is_some() {
-            return Err(AsmError("unterminated .cfi_startproc before end of file".into()));
+            return Err(AsmError(
+                "unterminated .cfi_startproc before end of file".into(),
+            ));
         }
 
         self.materialize_compact_unwind_section();
@@ -1984,7 +2217,8 @@ impl Assembler {
             });
         }
 
-        let page_reloc_targets: BTreeSet<_> = self.pending_relocs
+        let page_reloc_targets: BTreeSet<_> = self
+            .pending_relocs
             .iter()
             .flat_map(|relocs| relocs.iter())
             .filter(|reloc| {
@@ -2000,32 +2234,30 @@ impl Assembler {
         symbols.sort_by(|a, b| {
             let rank_a = symbol_class_rank(a);
             let rank_b = symbol_class_rank(b);
-            rank_a
-                .cmp(&rank_b)
-                .then_with(|| match rank_a {
-                    0 => {
-                        if a.section == b.section && a.value == b.value {
-                            let a_is_section_temp = a.name.starts_with("ltmp");
-                            let b_is_section_temp = b.name.starts_with("ltmp");
-                            if a_is_section_temp != b_is_section_temp {
-                                let a_prefers_front =
-                                    !a_is_section_temp && page_reloc_targets.contains(&a.name);
-                                let b_prefers_front =
-                                    !b_is_section_temp && page_reloc_targets.contains(&b.name);
-                                if a_prefers_front != b_prefers_front {
-                                    return b_prefers_front.cmp(&a_prefers_front);
-                                }
+            rank_a.cmp(&rank_b).then_with(|| match rank_a {
+                0 => {
+                    if a.section == b.section && a.value == b.value {
+                        let a_is_section_temp = a.name.starts_with("ltmp");
+                        let b_is_section_temp = b.name.starts_with("ltmp");
+                        if a_is_section_temp != b_is_section_temp {
+                            let a_prefers_front =
+                                !a_is_section_temp && page_reloc_targets.contains(&a.name);
+                            let b_prefers_front =
+                                !b_is_section_temp && page_reloc_targets.contains(&b.name);
+                            if a_prefers_front != b_prefers_front {
+                                return b_prefers_front.cmp(&a_prefers_front);
                             }
                         }
-                        symbol_order
-                            .get(&a.name)
-                            .copied()
-                            .unwrap_or(usize::MAX)
-                            .cmp(&symbol_order.get(&b.name).copied().unwrap_or(usize::MAX))
-                            .then_with(|| a.name.cmp(&b.name))
                     }
-                    _ => a.name.cmp(&b.name),
-                })
+                    symbol_order
+                        .get(&a.name)
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                        .cmp(&symbol_order.get(&b.name).copied().unwrap_or(usize::MAX))
+                        .then_with(|| a.name.cmp(&b.name))
+                }
+                _ => a.name.cmp(&b.name),
+            })
         });
 
         let linker_optimization_hints = self.build_linker_optimization_hint_data()?;
@@ -2036,8 +2268,9 @@ impl Assembler {
                     PendingRelocTarget::Symbol(symbol) => symbols
                         .iter()
                         .position(|s| s.name == symbol)
-                        .ok_or_else(|| AsmError(format!("missing relocation symbol '{}'", symbol)))?
-                        as u32,
+                        .ok_or_else(|| {
+                            AsmError(format!("missing relocation symbol '{}'", symbol))
+                        })? as u32,
                     PendingRelocTarget::Raw(value) => value,
                 };
                 self.sections[pending.section].relocations.push(Relocation {
@@ -2077,7 +2310,10 @@ impl Assembler {
             data.push(hint.labels.len() as u8);
             for label in &hint.labels {
                 let (section, offset) = self.labels.get(label).copied().ok_or_else(|| {
-                    AsmError(format!(".loh {} references undefined label '{}'", hint.kind, label))
+                    AsmError(format!(
+                        ".loh {} references undefined label '{}'",
+                        hint.kind, label
+                    ))
                 })?;
                 if self.sections[section].kind != SectionKind::Text {
                     return Err(AsmError(format!(
@@ -2149,8 +2385,7 @@ impl Assembler {
                 visiting.pop();
                 return Err(AsmError(format!(
                     "absolute symbol '{}' references undefined symbol '{}'",
-                    name,
-                    referenced
+                    name, referenced
                 )));
             }
         }
@@ -2166,11 +2401,7 @@ impl Assembler {
             }
             Err(err) => {
                 visiting.pop();
-                return Err(AsmError(format!(
-                    "absolute symbol '{}': {}",
-                    name,
-                    err
-                )));
+                return Err(AsmError(format!("absolute symbol '{}': {}", name, err)));
             }
         };
 
@@ -2263,14 +2494,20 @@ fn section_allocation_order(sections: &[Section]) -> Vec<usize> {
 
 fn check_branch_offset(offset: i64, bits: u8) -> Result<i32, AsmError> {
     if offset % 4 != 0 {
-        return Err(AsmError(format!("branch offset {} is not 4-byte aligned", offset)));
+        return Err(AsmError(format!(
+            "branch offset {} is not 4-byte aligned",
+            offset
+        )));
     }
 
     let scaled = offset / 4;
     let min = -(1i64 << (bits - 1));
     let max = (1i64 << (bits - 1)) - 1;
     if scaled < min || scaled > max {
-        return Err(AsmError(format!("branch offset {} is out of range for {}-bit immediate", offset, bits)));
+        return Err(AsmError(format!(
+            "branch offset {} is out of range for {}-bit immediate",
+            offset, bits
+        )));
     }
 
     Ok(offset as i32)
@@ -2301,6 +2538,8 @@ fn symbol_class_rank(symbol: &Symbol) -> u8 {
 
 fn linker_optimization_hint_kind(name: &str) -> Option<u8> {
     match name {
+        "AdrpLdr" => Some(2),
+        "AdrpLdrGotLdr" => Some(4),
         "AdrpAdd" => Some(7),
         "AdrpLdrGot" => Some(8),
         _ => None,
@@ -2339,7 +2578,9 @@ mod tests {
     }
 
     fn data_bytes(obj: &ObjectFile) -> &[u8] {
-        &obj.section("__DATA", "__data").expect("missing __DATA,__data").data
+        &obj.section("__DATA", "__data")
+            .expect("missing __DATA,__data")
+            .data
     }
 
     fn text_relocs(obj: &ObjectFile) -> &[Relocation] {
@@ -2347,7 +2588,9 @@ mod tests {
     }
 
     fn data_relocs(obj: &ObjectFile) -> &[Relocation] {
-        &obj.section("__DATA", "__data").expect("missing __DATA,__data").relocations
+        &obj.section("__DATA", "__data")
+            .expect("missing __DATA,__data")
+            .relocations
     }
 
     fn compact_unwind_section(obj: &ObjectFile) -> &Section {
@@ -2409,7 +2652,7 @@ mod tests {
             ret\n\
             zlocal:\n\
             ret\n\
-            bl _puts\n"
+            bl _puts\n",
         )
         .unwrap();
 
@@ -2500,7 +2743,9 @@ mod tests {
 
     #[test]
     fn assemble_label_offset() {
-        let obj = assemble_source(".text\n.global _start\n_start:\nnop\nfoo:\nadd x0, x1, x2\nret\n").unwrap();
+        let obj =
+            assemble_source(".text\n.global _start\n_start:\nnop\nfoo:\nadd x0, x1, x2\nret\n")
+                .unwrap();
         let foo = obj.symbols.iter().find(|s| s.name == "foo").unwrap();
         assert_eq!(foo.value, 4); // after the nop
         assert!(!foo.global);
@@ -2508,10 +2753,7 @@ mod tests {
 
     #[test]
     fn assemble_instructions_api() {
-        let insts = vec![
-            Inst::Nop,
-            Inst::Ret { rn: X30 },
-        ];
+        let insts = vec![Inst::Nop, Inst::Ret { rn: X30 }];
         let obj = assemble_instructions(&insts, &["_main"]);
         assert_eq!(text_bytes(&obj).len(), 8);
         assert!(obj.symbols.iter().any(|s| s.name == "_main" && s.global));
@@ -2602,7 +2844,14 @@ mod tests {
         let obj = assemble_source(".cstring\nmsg: .asciz \"hello\"\n").unwrap();
         let cstring = obj.section("__TEXT", "__cstring").unwrap();
         assert_eq!(cstring.data, b"hello\0");
-        assert_eq!(obj.symbols.iter().find(|sym| sym.name == "msg").unwrap().value, 0);
+        assert_eq!(
+            obj.symbols
+                .iter()
+                .find(|sym| sym.name == "msg")
+                .unwrap()
+                .value,
+            0
+        );
     }
 
     #[test]
@@ -2614,26 +2863,41 @@ mod tests {
     #[test]
     fn assemble_comm_emits_common_symbol() {
         let obj = assemble_source(".comm _common, 24, 3\n.text\nret\n").unwrap();
-        let common = obj.symbols.iter().find(|sym| sym.name == "_common").unwrap();
+        let common = obj
+            .symbols
+            .iter()
+            .find(|sym| sym.name == "_common")
+            .unwrap();
         assert!(common.global);
         assert!(common.undefined);
         assert!(common.common);
         assert_eq!(common.common_align_pow2, 3);
         assert_eq!(common.value, 24);
-        assert_eq!(text_bytes(&obj), Inst::Ret { rn: X30 }.encode().to_le_bytes());
+        assert_eq!(
+            text_bytes(&obj),
+            Inst::Ret { rn: X30 }.encode().to_le_bytes()
+        );
     }
 
     #[test]
     fn assemble_zerofill_reserves_bss_without_switching_sections() {
-        let obj = assemble_source(".text\nret\n.zerofill __DATA,__bss,_scratch,16,4\nret\n").unwrap();
+        let obj =
+            assemble_source(".text\nret\n.zerofill __DATA,__bss,_scratch,16,4\nret\n").unwrap();
         let bss = obj.section("__DATA", "__bss").unwrap();
-        let scratch = obj.symbols.iter().find(|sym| sym.name == "_scratch").unwrap();
+        let scratch = obj
+            .symbols
+            .iter()
+            .find(|sym| sym.name == "_scratch")
+            .unwrap();
 
-        assert_eq!(text_bytes(&obj), [
-            Inst::Ret { rn: X30 }.encode().to_le_bytes(),
-            Inst::Ret { rn: X30 }.encode().to_le_bytes(),
-        ]
-        .concat());
+        assert_eq!(
+            text_bytes(&obj),
+            [
+                Inst::Ret { rn: X30 }.encode().to_le_bytes(),
+                Inst::Ret { rn: X30 }.encode().to_le_bytes(),
+            ]
+            .concat()
+        );
         assert!(bss.data.is_empty());
         assert_eq!(bss.size, 16);
         assert_eq!(bss.align_pow2, 4);
@@ -2651,20 +2915,29 @@ mod tests {
 
     #[test]
     fn assemble_zerofill_keeps_declared_section_order_and_trailing_address() {
-        let obj = assemble_source(
-            ".text\nret\n.zerofill __DATA,__bss,_scratch,16,4\n.data\n.byte 1\n"
-        )
-        .unwrap();
+        let obj =
+            assemble_source(".text\nret\n.zerofill __DATA,__bss,_scratch,16,4\n.data\n.byte 1\n")
+                .unwrap();
 
-        let section_names: Vec<_> = obj.sections.iter()
+        let section_names: Vec<_> = obj
+            .sections
+            .iter()
             .map(|section| (section.segment.as_str(), section.name.as_str()))
             .collect();
         assert_eq!(
             section_names,
-            vec![("__TEXT", "__text"), ("__DATA", "__bss"), ("__DATA", "__data")]
+            vec![
+                ("__TEXT", "__text"),
+                ("__DATA", "__bss"),
+                ("__DATA", "__data")
+            ]
         );
 
-        let scratch = obj.symbols.iter().find(|sym| sym.name == "_scratch").unwrap();
+        let scratch = obj
+            .symbols
+            .iter()
+            .find(|sym| sym.name == "_scratch")
+            .unwrap();
         assert_eq!(scratch.section, 2);
         assert_eq!(scratch.value, 16);
     }
@@ -2682,7 +2955,12 @@ mod tests {
         let err = assemble_source(".data\n.byte 1\n.unknown_directive\n.byte 2\n").unwrap_err();
         assert_eq!(err.line, Some(3));
         assert_eq!(err.col, Some(1));
-        assert!(err.msg.contains("unsupported directive '.unknown_directive'"), "got: {}", err);
+        assert!(
+            err.msg
+                .contains("unsupported directive '.unknown_directive'"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -2695,7 +2973,7 @@ mod tests {
             .cfi_def_cfa_offset 16\n\
             add sp, sp, #16\n\
             ret\n\
-            .cfi_endproc\n"
+            .cfi_endproc\n",
         )
         .unwrap();
         let compact = compact_unwind_section(&obj);
@@ -2704,10 +2982,9 @@ mod tests {
         assert_eq!(
             compact.data,
             [
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x0C, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x02,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x10,
+                0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
             ]
         );
         assert_eq!(
@@ -2744,17 +3021,16 @@ mod tests {
             ldp x20, x19, [sp, #16]\n\
             ldp x22, x21, [sp], #48\n\
             ret\n\
-            .cfi_endproc\n"
+            .cfi_endproc\n",
         )
         .unwrap();
         let compact = compact_unwind_section(&obj);
         assert_eq!(
             compact.data,
             [
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x20, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x04,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x03, 0x00,
+                0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
             ]
         );
     }
@@ -2762,19 +3038,34 @@ mod tests {
     #[test]
     fn assemble_cfi_endproc_requires_active_proc() {
         let err = assemble_source(".cfi_endproc\n").unwrap_err();
-        assert!(err.msg.contains(".cfi_endproc requires an active .cfi_startproc"), "got: {}", err);
+        assert!(
+            err.msg
+                .contains(".cfi_endproc requires an active .cfi_startproc"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
     fn assemble_cfi_directive_requires_active_proc() {
         let err = assemble_source(".cfi_def_cfa_offset 16\n").unwrap_err();
-        assert!(err.msg.contains("CFI directives require an active .cfi_startproc"), "got: {}", err);
+        assert!(
+            err.msg
+                .contains("CFI directives require an active .cfi_startproc"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
     fn assemble_unterminated_cfi_proc_is_rejected() {
-        let err = assemble_source(".text\nunterminated_target:\n.cfi_startproc\nret\n").unwrap_err();
-        assert!(err.msg.contains("unterminated .cfi_startproc"), "got: {}", err);
+        let err =
+            assemble_source(".text\nunterminated_target:\n.cfi_startproc\nret\n").unwrap_err();
+        assert!(
+            err.msg.contains("unterminated .cfi_startproc"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -2785,13 +3076,16 @@ mod tests {
             .cfi_startproc\n\
             ret\n\
             .cfi_restore w29\n\
-            .cfi_endproc\n"
+            .cfi_endproc\n",
         )
         .unwrap();
 
         let compact = compact_unwind_section(&obj);
         let eh_frame = eh_frame_section(&obj);
-        assert_eq!(u32::from_le_bytes(compact.data[12..16].try_into().unwrap()), UNWIND_ARM64_MODE_DWARF);
+        assert_eq!(
+            u32::from_le_bytes(compact.data[12..16].try_into().unwrap()),
+            UNWIND_ARM64_MODE_DWARF
+        );
         assert!(!eh_frame.data.is_empty());
     }
 
@@ -2809,13 +3103,16 @@ mod tests {
             .cfi_offset w29, -16\n\
             .cfi_offset w19, -24\n\
             ret\n\
-            .cfi_endproc\n"
+            .cfi_endproc\n",
         )
         .unwrap();
 
         let compact = compact_unwind_section(&obj);
         let eh_frame = eh_frame_section(&obj);
-        assert_eq!(u32::from_le_bytes(compact.data[12..16].try_into().unwrap()), UNWIND_ARM64_MODE_DWARF);
+        assert_eq!(
+            u32::from_le_bytes(compact.data[12..16].try_into().unwrap()),
+            UNWIND_ARM64_MODE_DWARF
+        );
         assert!(eh_frame.relocations.len() >= 2);
     }
 
@@ -2827,10 +3124,8 @@ mod tests {
 
     #[test]
     fn assemble_build_version_sets_object_metadata() {
-        let obj = assemble_source(
-            ".text\nret\n.build_version macos, 11, 0 sdk_version 15, 5\n"
-        )
-        .unwrap();
+        let obj =
+            assemble_source(".text\nret\n.build_version macos, 11, 0 sdk_version 15, 5\n").unwrap();
 
         assert_eq!(obj.build_version.platform, macho::PLATFORM_MACOS);
         assert_eq!(obj.build_version.minos, macho::pack_version(11, 0, 0));
@@ -2863,18 +3158,37 @@ mod tests {
         let const_data = obj.section("__TEXT", "__const").unwrap();
         assert_eq!(cstring.data, b"hello\0");
         assert_eq!(const_data.data, 42u64.to_le_bytes());
-        assert_eq!(obj.symbols.iter().find(|sym| sym.name == "msg").unwrap().value, 0);
-        assert_eq!(obj.symbols.iter().find(|sym| sym.name == "value").unwrap().value, 6);
+        assert_eq!(
+            obj.symbols
+                .iter()
+                .find(|sym| sym.name == "msg")
+                .unwrap()
+                .value,
+            0
+        );
+        assert_eq!(
+            obj.symbols
+                .iter()
+                .find(|sym| sym.name == "value")
+                .unwrap()
+                .value,
+            6
+        );
     }
 
     #[test]
     fn assemble_bss_is_zero_fill() {
-        let obj = assemble_source(".section __DATA,__bss\n.p2align 4\nscratch:\n.space 16\n").unwrap();
+        let obj =
+            assemble_source(".section __DATA,__bss\n.p2align 4\nscratch:\n.space 16\n").unwrap();
         let bss = obj.section("__DATA", "__bss").unwrap();
         assert!(bss.data.is_empty());
         assert_eq!(bss.size, 16);
         assert_eq!(bss.align_pow2, 4);
-        let scratch = obj.symbols.iter().find(|sym| sym.name == "scratch").unwrap();
+        let scratch = obj
+            .symbols
+            .iter()
+            .find(|sym| sym.name == "scratch")
+            .unwrap();
         assert_eq!(scratch.value, 0);
     }
 
@@ -2907,7 +3221,8 @@ mod tests {
             ".global _main\n.text\n_main:\nadrp x0, second@PAGE\nadd x0, x0, second@PAGEOFF\nret\n.data\nfirst: .byte 1\nsecond: .byte 2\n"
         ).unwrap();
 
-        let reloc_syms: Vec<_> = text_relocs(&obj).iter()
+        let reloc_syms: Vec<_> = text_relocs(&obj)
+            .iter()
             .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
             .collect();
         assert_eq!(reloc_syms, vec!["second", "second"]);
@@ -2916,14 +3231,16 @@ mod tests {
     #[test]
     fn assemble_page_reloc_creates_undefined_external_symbol() {
         let obj = assemble_source(
-            ".global _main\n.text\n_main:\nadrp x0, _foo@PAGE\nadd x0, x0, _foo@PAGEOFF\nret\n"
-        ).unwrap();
+            ".global _main\n.text\n_main:\nadrp x0, _foo@PAGE\nadd x0, x0, _foo@PAGEOFF\nret\n",
+        )
+        .unwrap();
 
         let foo = obj.symbols.iter().find(|sym| sym.name == "_foo").unwrap();
         assert!(foo.undefined);
         assert!(foo.global);
 
-        let reloc_syms: Vec<_> = text_relocs(&obj).iter()
+        let reloc_syms: Vec<_> = text_relocs(&obj)
+            .iter()
             .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
             .collect();
         assert_eq!(reloc_syms, vec!["_foo", "_foo"]);
@@ -2961,7 +3278,11 @@ mod tests {
             ".global _load_tls\n.text\n_load_tls:\nadrp x0, _tls_counter@TLVPPAGE\nldr x0, [x0, _tls_counter@TLVPPAGEOFF]\nret\n"
         ).unwrap();
 
-        let tls_counter = obj.symbols.iter().find(|sym| sym.name == "_tls_counter").unwrap();
+        let tls_counter = obj
+            .symbols
+            .iter()
+            .find(|sym| sym.name == "_tls_counter")
+            .unwrap();
         assert!(tls_counter.undefined);
         assert!(tls_counter.global);
 
@@ -2997,7 +3318,10 @@ mod tests {
         let obj = assemble_source(".data\n.quad _puts@GOT\n").unwrap();
         let relocs = data_relocs(&obj);
         assert_eq!(relocs.len(), 1);
-        assert_eq!(relocs[0].reloc_type, crate::macho::ARM64_RELOC_POINTER_TO_GOT);
+        assert_eq!(
+            relocs[0].reloc_type,
+            crate::macho::ARM64_RELOC_POINTER_TO_GOT
+        );
         assert_eq!(relocs[0].length, 3);
         assert!(!relocs[0].pcrel);
         assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "_puts");
@@ -3009,7 +3333,10 @@ mod tests {
         let obj = assemble_source(".text\n.long _puts@GOT - .\n").unwrap();
         let relocs = text_relocs(&obj);
         assert_eq!(relocs.len(), 1);
-        assert_eq!(relocs[0].reloc_type, crate::macho::ARM64_RELOC_POINTER_TO_GOT);
+        assert_eq!(
+            relocs[0].reloc_type,
+            crate::macho::ARM64_RELOC_POINTER_TO_GOT
+        );
         assert_eq!(relocs[0].length, 2);
         assert!(relocs[0].pcrel);
         assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "_puts");
@@ -3077,55 +3404,101 @@ mod tests {
     #[test]
     fn assemble_forward_branch_label() {
         let obj = assemble_source(".text\nstart:\nb done\nnop\ndone:\nret\n").unwrap();
-        assert_eq!(&text_bytes(&obj)[0..4], &Inst::B { offset: 8 }.encode().to_le_bytes());
+        assert_eq!(
+            &text_bytes(&obj)[0..4],
+            &Inst::B { offset: 8 }.encode().to_le_bytes()
+        );
     }
 
     #[test]
     fn assemble_backward_branch_label() {
         let obj = assemble_source(".text\nstart:\nnop\nb start\n").unwrap();
-        assert_eq!(&text_bytes(&obj)[4..8], &Inst::B { offset: -4 }.encode().to_le_bytes());
+        assert_eq!(
+            &text_bytes(&obj)[4..8],
+            &Inst::B { offset: -4 }.encode().to_le_bytes()
+        );
     }
 
     #[test]
     fn assemble_local_cbz_label() {
         let obj = assemble_source(".text\nstart:\ncbz x0, done\nret\ndone:\nret\n").unwrap();
-        assert_eq!(&text_bytes(&obj)[0..4], &Inst::Cbz { rt: X0, offset: 8, sf: true }.encode().to_le_bytes());
+        assert_eq!(
+            &text_bytes(&obj)[0..4],
+            &Inst::Cbz {
+                rt: X0,
+                offset: 8,
+                sf: true
+            }
+            .encode()
+            .to_le_bytes()
+        );
     }
 
     #[test]
     fn assemble_local_tbz_label() {
         let obj = assemble_source(".text\ntbz x0, #5, done\nnop\ndone:\nret\n").unwrap();
-        assert_eq!(&text_bytes(&obj)[0..4], &Inst::Tbz { rt: X0, bit: 5, offset: 8, sf: true }.encode().to_le_bytes());
+        assert_eq!(
+            &text_bytes(&obj)[0..4],
+            &Inst::Tbz {
+                rt: X0,
+                bit: 5,
+                offset: 8,
+                sf: true
+            }
+            .encode()
+            .to_le_bytes()
+        );
     }
 
     #[test]
     fn assemble_adr_local_label() {
         let obj = assemble_source(".text\nadr x0, target\nret\ntarget:\nret\n").unwrap();
-        assert_eq!(&text_bytes(&obj)[0..4], &Inst::Adr { rd: X0, imm: 8 }.encode().to_le_bytes());
+        assert_eq!(
+            &text_bytes(&obj)[0..4],
+            &Inst::Adr { rd: X0, imm: 8 }.encode().to_le_bytes()
+        );
     }
 
     #[test]
     fn assemble_ldr_literal_local_label() {
-        let obj = assemble_source(".text\nldr x0, target\nret\n.p2align 3\ntarget:\n.quad 42\n").unwrap();
-        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrLit64 { rt: X0, offset: 8 }.encode().to_le_bytes());
+        let obj =
+            assemble_source(".text\nldr x0, target\nret\n.p2align 3\ntarget:\n.quad 42\n").unwrap();
+        assert_eq!(
+            &text_bytes(&obj)[0..4],
+            &Inst::LdrLit64 { rt: X0, offset: 8 }.encode().to_le_bytes()
+        );
     }
 
     #[test]
     fn assemble_ldrsw_literal_local_label() {
         let obj = assemble_source(".text\nldrsw x0, target\nret\ntarget:\n.word -1\n").unwrap();
-        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrswLit { rt: X0, offset: 8 }.encode().to_le_bytes());
+        assert_eq!(
+            &text_bytes(&obj)[0..4],
+            &Inst::LdrswLit { rt: X0, offset: 8 }.encode().to_le_bytes()
+        );
     }
 
     #[test]
     fn assemble_ldr_d_literal_local_label() {
-        let obj = assemble_source(".text\nldr d0, target\nret\n.p2align 3\ntarget:\n.quad 42\n").unwrap();
-        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrFpLit64 { rt: D0, offset: 8 }.encode().to_le_bytes());
+        let obj =
+            assemble_source(".text\nldr d0, target\nret\n.p2align 3\ntarget:\n.quad 42\n").unwrap();
+        assert_eq!(
+            &text_bytes(&obj)[0..4],
+            &Inst::LdrFpLit64 { rt: D0, offset: 8 }
+                .encode()
+                .to_le_bytes()
+        );
     }
 
     #[test]
     fn assemble_ldr_s_literal_local_label() {
         let obj = assemble_source(".text\nldr s0, target\nret\ntarget:\n.word 42\n").unwrap();
-        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrFpLit32 { rt: S0, offset: 8 }.encode().to_le_bytes());
+        assert_eq!(
+            &text_bytes(&obj)[0..4],
+            &Inst::LdrFpLit32 { rt: S0, offset: 8 }
+                .encode()
+                .to_le_bytes()
+        );
     }
 
     #[test]
@@ -3151,7 +3524,10 @@ mod tests {
         let obj = assemble_source(".text\nbl _puts\nret\n").unwrap();
         let reloc_name = &obj.symbols[text_relocs(&obj)[0].symbol_idx as usize].name;
         assert_eq!(reloc_name, "_puts");
-        assert!(obj.symbols.iter().any(|sym| sym.name == "_puts" && sym.undefined));
+        assert!(obj
+            .symbols
+            .iter()
+            .any(|sym| sym.name == "_puts" && sym.undefined));
     }
 
     #[test]
@@ -3159,7 +3535,10 @@ mod tests {
         let obj = assemble_source(".text\nb _exit\n").unwrap();
         let reloc_name = &obj.symbols[text_relocs(&obj)[0].symbol_idx as usize].name;
         assert_eq!(reloc_name, "_exit");
-        assert!(obj.symbols.iter().any(|sym| sym.name == "_exit" && sym.undefined));
+        assert!(obj
+            .symbols
+            .iter()
+            .any(|sym| sym.name == "_exit" && sym.undefined));
     }
 
     #[test]
@@ -3212,6 +3591,45 @@ mod tests {
     }
 
     #[test]
+    fn assemble_linker_optimization_hint_emits_adrp_ldr_payload() {
+        let obj = assemble_source(
+            ".text\n\
+             .globl _f\n\
+             _f:\n\
+             Lloh0:\n\
+               adrp x8, _g_counter@PAGE\n\
+             Lloh1:\n\
+               ldr w8, [x8, _g_counter@PAGEOFF]\n\
+               ret\n\
+               .loh AdrpLdr Lloh0, Lloh1\n\
+             .data\n\
+             _g_counter:\n\
+               .long 7\n",
+        )
+        .unwrap();
+        assert_eq!(obj.linker_optimization_hints, vec![2, 2, 0, 4, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn assemble_linker_optimization_hint_emits_adrp_ldr_got_ldr_payload() {
+        let obj = assemble_source(
+            ".text\n\
+             .globl _f\n\
+             _f:\n\
+             Lloh0:\n\
+               adrp x8, _ext_value@GOTPAGE\n\
+             Lloh1:\n\
+               ldr x8, [x8, _ext_value@GOTPAGEOFF]\n\
+             Lloh2:\n\
+               ldr w8, [x8]\n\
+               ret\n\
+               .loh AdrpLdrGotLdr Lloh0, Lloh1, Lloh2\n",
+        )
+        .unwrap();
+        assert_eq!(obj.linker_optimization_hints, vec![4, 3, 0, 4, 8, 0, 0, 0]);
+    }
+
+    #[test]
     fn assemble_page_reloc_target_at_section_base_sorts_before_section_temp() {
         let obj = assemble_source(
             ".globl _main\n\
@@ -3226,8 +3644,14 @@ mod tests {
         )
         .unwrap();
         let names: Vec<_> = obj.symbols.iter().map(|sym| sym.name.as_str()).collect();
-        let msg_index = names.iter().position(|name| *name == "msg").expect("msg symbol");
-        let ltmp1_index = names.iter().position(|name| *name == "ltmp1").expect("ltmp1 symbol");
+        let msg_index = names
+            .iter()
+            .position(|name| *name == "msg")
+            .expect("msg symbol");
+        let ltmp1_index = names
+            .iter()
+            .position(|name| *name == "ltmp1")
+            .expect("ltmp1 symbol");
         assert!(msg_index < ltmp1_index, "symbols: {:?}", names);
     }
 
@@ -3257,7 +3681,8 @@ mod tests {
 
     #[test]
     fn assemble_branch14_rejects_out_of_range_target() {
-        let err = assemble_source(".text\ntbz x0, #5, done\n.space 32768\ndone:\nret\n").unwrap_err();
+        let err =
+            assemble_source(".text\ntbz x0, #5, done\n.space 32768\ndone:\nret\n").unwrap_err();
         assert!(err.msg.contains("out of range"), "got: {}", err);
     }
 
