@@ -2221,25 +2221,57 @@ impl Assembler {
             });
         }
 
-        let section_base_page_reloc_targets: BTreeSet<_> = self
+        let symbol_order = self.symbol_order.clone();
+        let section_base_reloc_anchor_order: BTreeMap<_, _> = self
             .pending_relocs
             .iter()
-            .flat_map(|relocs| relocs.iter())
-            .filter(|reloc| {
-                reloc.reloc_type == macho::ARM64_RELOC_PAGE21
-                    || reloc.reloc_type == macho::ARM64_RELOC_PAGEOFF12
+            .enumerate()
+            .flat_map(|(section, relocs)| relocs.iter().map(move |reloc| (section, reloc)))
+            .filter_map(|(section, reloc)| {
+                let PendingRelocTarget::Symbol(symbol) = &reloc.target else {
+                    return None;
+                };
+                let (_, offset) = self.labels.get(symbol)?;
+                if *offset != 0 {
+                    return None;
+                }
+
+                let owner = self
+                    .labels
+                    .iter()
+                    .filter(|(_, (label_section, label_offset))| {
+                        *label_section == section && *label_offset <= reloc.offset as u64
+                    })
+                    .max_by(|(a_name, (_, a_offset)), (b_name, (_, b_offset))| {
+                        a_offset
+                            .cmp(b_offset)
+                            .then_with(|| {
+                                (!is_assembler_local_symbol(a_name))
+                                    .cmp(&!is_assembler_local_symbol(b_name))
+                            })
+                            .then_with(|| {
+                                symbol_order
+                                    .get(*a_name)
+                                    .copied()
+                                    .unwrap_or(usize::MAX)
+                                    .cmp(
+                                        &symbol_order
+                                            .get(*b_name)
+                                            .copied()
+                                            .unwrap_or(usize::MAX),
+                                    )
+                            })
+                    })
+                    .and_then(|(name, _)| symbol_order.get(name).copied())?;
+
+                Some((symbol.clone(), owner))
             })
-            .filter_map(|reloc| match &reloc.target {
-                PendingRelocTarget::Symbol(symbol) => Some(symbol.clone()),
-                PendingRelocTarget::Raw(_) => None,
-            })
-            .filter(|symbol| {
-                self.labels
-                    .get(symbol)
-                    .map(|(_, offset)| *offset == 0)
-                    .unwrap_or(false)
-            })
-            .collect();
+            .fold(BTreeMap::<String, usize>::new(), |mut acc, (symbol, owner)| {
+                acc.entry(symbol)
+                    .and_modify(|existing| *existing = (*existing).min(owner))
+                    .or_insert(owner);
+                acc
+            });
         let page_reloc_targets: BTreeSet<_> = self
             .pending_relocs
             .iter()
@@ -2253,7 +2285,6 @@ impl Assembler {
                 PendingRelocTarget::Raw(_) => None,
             })
             .collect();
-        let symbol_order = self.symbol_order.clone();
         symbols.sort_by(|a, b| {
             let rank_a = symbol_class_rank(a);
             let rank_b = symbol_class_rank(b);
@@ -2261,17 +2292,30 @@ impl Assembler {
                 0 => {
                     let a_is_primary_text_temp = a.name == "ltmp0";
                     let b_is_primary_text_temp = b.name == "ltmp0";
-                    let a_base_reloc_target = !a.name.starts_with("ltmp")
-                        && section_base_page_reloc_targets.contains(&a.name);
-                    let b_base_reloc_target = !b.name.starts_with("ltmp")
-                        && section_base_page_reloc_targets.contains(&b.name);
+                    let a_anchor = section_base_reloc_anchor_order
+                        .get(&a.name)
+                        .copied()
+                        .unwrap_or(usize::MAX);
+                    let b_anchor = section_base_reloc_anchor_order
+                        .get(&b.name)
+                        .copied()
+                        .unwrap_or(usize::MAX);
+                    let a_order = symbol_order
+                        .get(&a.name)
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                        .min(a_anchor);
+                    let b_order = symbol_order
+                        .get(&b.name)
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                        .min(b_anchor);
                     a_is_primary_text_temp
                         .cmp(&b_is_primary_text_temp)
                         .reverse()
                         .then_with(|| {
-                    a_base_reloc_target
-                        .cmp(&b_base_reloc_target)
-                        .reverse()
+                    a_order
+                        .cmp(&b_order)
                         .then_with(|| {
                     if a.section == b.section && a.value == b.value {
                         let a_is_section_temp = a.name.starts_with("ltmp");
@@ -3795,6 +3839,46 @@ mod tests {
             .position(|name| *name == "_tls_value$tlv$init")
             .expect("tls init symbol");
         assert!(ltmp1_index < tls_init_index, "symbols: {:?}", names);
+    }
+
+    #[test]
+    fn assemble_const_reloc_target_anchors_before_later_const_symbols() {
+        let obj = assemble_source(
+            ".build_version macos, 11, 0 sdk_version 15, 5\n\
+             .subsections_via_symbols\n\
+             .globl _fuzz_1\n\
+             .text\n\
+             _fuzz_1:\n\
+               ret\n\
+             .section __TEXT,__const\n\
+             .p2align 3\n\
+             const0_1:\n\
+               .quad data0_1\n\
+             const1_1:\n\
+               .quad _ext_1\n\
+             const2_1:\n\
+               .quad _other_1 - _ext_1 + 12\n\
+             .data\n\
+             .p2align 3\n\
+             data0_1:\n\
+               .quad 0\n",
+        )
+        .unwrap();
+        let names: Vec<_> = obj.symbols.iter().map(|sym| sym.name.as_str()).collect();
+        let const0_index = names
+            .iter()
+            .position(|name| *name == "const0_1")
+            .expect("const0_1 symbol");
+        let data0_index = names
+            .iter()
+            .position(|name| *name == "data0_1")
+            .expect("data0_1 symbol");
+        let const1_index = names
+            .iter()
+            .position(|name| *name == "const1_1")
+            .expect("const1_1 symbol");
+        assert!(const0_index < data0_index, "symbols: {:?}", names);
+        assert!(data0_index < const1_index, "symbols: {:?}", names);
     }
 
     #[test]
