@@ -212,6 +212,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "atomic_maxmin",
+        source: "atomic_maxmin.c",
+        driver: "extern int fetch_max_builtin(int);\nextern int fetch_min_builtin(int);\nint main(void) {\n    return (fetch_max_builtin(4) != 0)\n        || (fetch_max_builtin(2) != 4)\n        || (fetch_min_builtin(3) != 4)\n        || (fetch_min_builtin(5) != 3);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "compare_chain",
         source: "compare_chain.c",
         driver: "extern int both_small(int, int);\nint main(void) {\n    return (both_small(1, 2) != 2) || (both_small(3, 9) != 1) || (both_small(30, 40) != 0);\n}\n",
