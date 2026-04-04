@@ -60,6 +60,25 @@ fn fixture_paths_are_resolved_from_corpus_directory() {
 }
 
 #[test]
+fn corpus_section_inventory_matches_load_commands_and_symbols() {
+    let paths = assemble_fixture("section_inventory.s");
+
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_symbols = common::object_symbols(&paths.obj);
+    let ref_symbols = common::object_symbols(&paths.ref_obj);
+
+    assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
+    assert!(ours_load.contains("sectname __const"), "missing __const section:\n{}", ours_load);
+    assert!(ours_load.contains("sectname __bss"), "missing __bss section:\n{}", ours_load);
+    assert!(ours_load.contains("flags 0x00000001"), "missing zerofill flag:\n{}", ours_load);
+    assert!(ours_symbols.contains(" b scratch"), "missing bss symbol:\n{}", ours_symbols);
+
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+}
+
+#[test]
 fn corpus_cstring_section_matches_load_commands_and_symbols() {
     let paths = assemble_fixture("cstring_data.s");
 
@@ -70,6 +89,25 @@ fn corpus_cstring_section_matches_load_commands_and_symbols() {
 
     assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
     assert!(ours_symbols.contains(" s greeting"), "missing cstring symbol:\n{}", ours_symbols);
+
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+}
+
+#[test]
+fn corpus_section_inventory_matches_load_commands_and_symbols() {
+    let paths = assemble_fixture("section_inventory.s");
+
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_symbols = common::object_symbols(&paths.obj);
+    let ref_symbols = common::object_symbols(&paths.ref_obj);
+
+    assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
+    assert!(ours_load.contains("sectname __const"), "missing __const section:\n{}", ours_load);
+    assert!(ours_load.contains("sectname __bss"), "missing __bss section:\n{}", ours_load);
+    assert!(ours_load.contains("flags 0x00000001"), "missing zerofill flag:\n{}", ours_load);
+    assert!(ours_symbols.contains(" b scratch"), "missing bss symbol:\n{}", ours_symbols);
 
     assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
     assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
