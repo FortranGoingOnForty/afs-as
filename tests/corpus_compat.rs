@@ -207,6 +207,8 @@ fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
     let ref_relocs = common::object_relocations(&paths.ref_obj);
     let ours_symbols = common::object_symbols(&paths.obj);
     let ref_symbols = common::object_symbols(&paths.ref_obj);
+    let ours_symbols_raw = common::object_symbols_preserve_order(&paths.obj);
+    let ref_symbols_raw = common::object_symbols_preserve_order(&paths.ref_obj);
     let ours_symbols_verbose = common::object_symbols_verbose(&paths.obj);
     let ref_symbols_verbose = common::object_symbols_verbose(&paths.ref_obj);
 
@@ -224,6 +226,10 @@ fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
     assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
     assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
     assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_symbols_raw),
+        normalize_tool_output(&ref_symbols_raw)
+    );
     assert_eq!(
         normalize_tool_output(&ours_symbols_verbose),
         normalize_tool_output(&ref_symbols_verbose)

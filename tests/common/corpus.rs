@@ -89,6 +89,10 @@ pub fn object_symbols(path: &Path) -> String {
     tool_output("nm", &["-a", path.to_str().expect("object path")])
 }
 
+pub fn object_symbols_preserve_order(path: &Path) -> String {
+    tool_output("nm", &["-ap", path.to_str().expect("object path")])
+}
+
 pub fn object_symbols_verbose(path: &Path) -> String {
     tool_output("nm", &["-m", path.to_str().expect("object path")])
 }
