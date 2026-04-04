@@ -199,17 +199,18 @@ impl<'a> Parser<'a> {
 
     /// Handle conditional branch mnemonics: "b" followed by ".eq", ".ne", etc.
     fn resolve_mnemonic(&mut self, name: &str) -> Result<String, ParseError> {
-        if name == "b" {
-            // Check for .cond suffix
+        let lower = name.to_lowercase();
+        if lower == "b" {
+            // Check for .cond suffix (e.g., B.EQ, b.ne)
             if let Tok::Ident(ref cond) = self.peek().clone() {
                 if cond.starts_with('.') {
-                    let full = format!("b{}", cond);
+                    let full = format!("b{}", cond.to_lowercase());
                     self.advance();
                     return Ok(full);
                 }
             }
         }
-        Ok(name.to_lowercase())
+        Ok(lower)
     }
 
     fn parse_directive(&mut self, name: &str) -> Result<Stmt, ParseError> {
@@ -468,7 +469,8 @@ impl<'a> Parser<'a> {
 
         // Check for label@PAGEOFF (identifier followed by @)
         if let Tok::Ident(ref name) = self.peek().clone() {
-            if !name.starts_with('x') && !name.starts_with('w') && name != "sp" && name != "xzr" && name != "wzr" {
+            let lower = name.to_lowercase();
+            if !lower.starts_with('x') && !lower.starts_with('w') && lower != "sp" && lower != "xzr" && lower != "wzr" {
                 let label = name.clone();
                 self.advance();
                 let kind = if self.eat(&Tok::At) {
@@ -691,7 +693,10 @@ impl<'a> Parser<'a> {
 
         // Handle label references for LDR (literal pool loads)
         if let Tok::Ident(_) = self.peek() {
-            if !matches!(self.peek(), Tok::Ident(ref s) if s == "sp" || s == "xzr" || s.starts_with('x') || s.starts_with('w')) {
+            if !matches!(self.peek(), Tok::Ident(ref s) if {
+                let lo = s.to_lowercase();
+                lo == "sp" || lo == "xzr" || lo == "wzr" || lo.starts_with('x') || lo.starts_with('w')
+            }) {
                 // It's a label reference — skip for now.
                 self.advance();
                 if self.eat(&Tok::At) { self.advance(); }
@@ -1310,5 +1315,33 @@ _main:
     fn error_missing_comma() {
         let result = parse("add x0 x1 x2");
         assert!(result.is_err());
+    }
+
+    // ---- Case insensitivity ----
+
+    #[test]
+    fn parse_uppercase_add() {
+        assert_eq!(parse_inst("ADD X0, X1, X2"), Inst::AddReg { rd: X0, rn: X1, rm: X2, sf: true });
+    }
+
+    #[test]
+    fn parse_uppercase_b_eq() {
+        assert_eq!(parse_inst("B.EQ #8"), Inst::BCond { cond: Cond::EQ, offset: 8 });
+    }
+
+    #[test]
+    fn parse_mixed_case_ldr() {
+        assert_eq!(parse_inst("Ldr X0, [X1, #8]"), Inst::LdrImm64 { rt: X0, rn: X1, offset: 8 });
+    }
+
+    #[test]
+    fn parse_uppercase_add_does_not_treat_x2_as_label() {
+        // BUG 3 regression: uppercase X2 must be parsed as register, not label
+        assert_eq!(parse_inst("ADD X0, X1, X2"), Inst::AddReg { rd: X0, rn: X1, rm: X2, sf: true });
+    }
+
+    #[test]
+    fn parse_uppercase_mov_sp() {
+        assert_eq!(parse_inst("MOV X29, SP"), Inst::AddImm { rd: X29, rn: SP, imm12: 0, shift: false, sf: true });
     }
 }
