@@ -54,6 +54,23 @@ fn corpus_external_call_matches_relocations_and_symbols() {
 }
 
 #[test]
+fn corpus_external_branches_match_relocations_and_symbols() {
+    let paths = assemble_fixture("external_branches.s");
+
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+    let ours_symbols = common::object_symbols(&paths.obj);
+    let ref_symbols = common::object_symbols(&paths.ref_obj);
+
+    assert!(ours_relocs.matches("BR26").count() >= 2, "missing BR26 relocations:\n{}", ours_relocs);
+    assert!(ours_symbols.contains(" U _exit"), "missing undefined _exit:\n{}", ours_symbols);
+    assert!(ours_symbols.contains(" U _puts"), "missing undefined _puts:\n{}", ours_symbols);
+
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+}
+
+#[test]
 fn fixture_paths_are_resolved_from_corpus_directory() {
     let path = common::fixture_path("hello_world.s");
     assert!(path.ends_with("tests/corpus/hello_world.s"));
