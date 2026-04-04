@@ -38,6 +38,7 @@ CLI behavior is intentionally small and explicit:
 ## Standalone Support Matrix
 
 The tracked support matrix lives in [docs/standalone.md](docs/standalone.md).
+The standalone release checklist lives in [docs/release-readiness.md](docs/release-readiness.md).
 
 That document covers:
 
@@ -45,6 +46,12 @@ That document covers:
 - known unsupported features that currently fail explicitly
 - library API vs CLI usage
 - testing strategy for expanding the standalone surface safely
+
+The release-readiness checklist covers:
+
+- the required CI and local gates for a standalone claim
+- the hard failure conditions that block that claim
+- testing opportunities when the release bar changes
 
 ## Library API
 

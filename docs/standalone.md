@@ -3,6 +3,7 @@
 `afs-as` is intended to be usable as a real standalone assembler on Apple Silicon macOS, not only as ARMFORTAS's backend object emitter.
 
 This document describes the support we intentionally rely on today.
+The release bar for calling that support standalone-ready lives in [release-readiness.md](release-readiness.md).
 
 ## Target
 
