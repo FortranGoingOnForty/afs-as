@@ -40,6 +40,7 @@ const N_WEAK_DEF: u16 = 0x0080;
 
 // Relocation types
 pub const ARM64_RELOC_UNSIGNED: u32 = 0;
+pub const ARM64_RELOC_SUBTRACTOR: u32 = 1;
 pub const ARM64_RELOC_BRANCH26: u32 = 2;
 pub const ARM64_RELOC_PAGE21: u32 = 3;
 pub const ARM64_RELOC_PAGEOFF12: u32 = 4;

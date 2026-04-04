@@ -54,9 +54,9 @@ pub enum Directive {
     Set(String, Expr),
     Align(u32),
     P2Align(u32),
-    Byte(Vec<u8>),
-    Word(Vec<u32>),
-    Quad(Vec<u64>),
+    Byte(Vec<Expr>),
+    Word(Vec<Expr>),
+    Quad(Vec<Expr>),
     Ascii(Vec<u8>),
     Asciz(Vec<u8>),
     Space(u64),
@@ -260,16 +260,13 @@ impl<'a> Parser<'a> {
                 Directive::P2Align(n)
             }
             ".byte" => {
-                let vals = self.parse_const_expr_list("byte expression")?;
-                Directive::Byte(vals.into_iter().map(|v| v as u8).collect())
+                Directive::Byte(self.parse_expr_list()?)
             }
             ".word" | ".long" => {
-                let vals = self.parse_const_expr_list("word expression")?;
-                Directive::Word(vals.into_iter().map(|v| v as u32).collect())
+                Directive::Word(self.parse_expr_list()?)
             }
             ".quad" => {
-                let vals = self.parse_const_expr_list("quad expression")?;
-                Directive::Quad(vals.into_iter().map(|v| v as u64).collect())
+                Directive::Quad(self.parse_expr_list()?)
             }
             ".ascii" => {
                 if let Tok::StringLit(s) = self.peek().clone() {
@@ -326,10 +323,10 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Directive(dir))
     }
 
-    fn parse_const_expr_list(&mut self, context: &str) -> Result<Vec<i64>, ParseError> {
-        let mut vals = vec![self.parse_const_expr(context)?];
+    fn parse_expr_list(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let mut vals = vec![self.parse_expr()?];
         while self.eat(&Tok::Comma) {
-            vals.push(self.parse_const_expr(context)?);
+            vals.push(self.parse_expr()?);
         }
         Ok(vals)
     }
@@ -1525,19 +1522,38 @@ mod tests {
     #[test]
     fn parse_byte_directive() {
         let stmts = parse_stmts(".byte 0x41, 0x42, 0x43");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Byte(vec![0x41, 0x42, 0x43]))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Byte(vec![
+                Expr::Int(0x41),
+                Expr::Int(0x42),
+                Expr::Int(0x43),
+            ]))]
+        );
     }
 
     #[test]
     fn parse_word_directive_expression() {
         let stmts = parse_stmts(".word 1 + 2 - 3");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Word(vec![0]))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Word(vec![Expr::Sub(
+                Box::new(Expr::Add(Box::new(Expr::Int(1)), Box::new(Expr::Int(2)))),
+                Box::new(Expr::Int(3)),
+            )]))]
+        );
     }
 
     #[test]
     fn parse_quad_directive_parenthesized_expression() {
         let stmts = parse_stmts(".quad -(1 + 2)");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Quad(vec![u64::MAX - 2]))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Quad(vec![Expr::UnaryMinus(Box::new(Expr::Add(
+                Box::new(Expr::Int(1)),
+                Box::new(Expr::Int(2)),
+            )))]))]
+        );
     }
 
     #[test]
@@ -1607,11 +1623,15 @@ _main:
     }
 
     #[test]
-    fn error_symbolic_directive_expression_requires_constant() {
-        let result = parse(".quad foo - 1");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.msg.contains("pure constant expression"), "got: {}", err.msg);
+    fn parse_symbolic_quad_expression() {
+        let stmts = parse_stmts(".quad foo - 1");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Quad(vec![Expr::Sub(
+                Box::new(Expr::Symbol("foo".into())),
+                Box::new(Expr::Int(1)),
+            )]))]
+        );
     }
 
     // ---- Case insensitivity ----

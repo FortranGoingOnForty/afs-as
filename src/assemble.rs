@@ -12,7 +12,7 @@ use std::io::BufWriter;
 use std::path::Path;
 
 use crate::encode::Inst;
-use crate::expr::{self, Expr};
+use crate::expr::{self, ClassifiedExpr, Expr, SymbolValue};
 use crate::macho::{self, ObjectFile, Relocation, Section, SectionKind, Symbol};
 use crate::parse::{self, Stmt, Directive, RelocKind};
 
@@ -42,6 +42,7 @@ pub fn assemble_source(src: &str) -> Result<ObjectFile, AsmError> {
 pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
     let mut asm = Assembler::new();
     asm.collect_layout(stmts)?;
+    asm.prepare_expression_state(stmts)?;
     asm.reset_for_emission();
     asm.process(stmts)?;
     asm.finish()
@@ -106,6 +107,8 @@ struct Assembler {
     labels: BTreeMap<String, (usize, u64)>,
     /// Absolute symbol assignments declared via `.set` / `.equ`.
     absolute_defs: BTreeMap<String, Expr>,
+    absolute_symbols: BTreeMap<String, i64>,
+    section_bases: Vec<u64>,
     /// Symbol attributes declared via directives.
     symbol_attrs: BTreeMap<String, SymbolAttrs>,
     /// Pending relocations for each section.
@@ -124,6 +127,7 @@ struct PendingReloc {
     section: usize,
     offset: u32,
     symbol: String,
+    length: u8,
     reloc_type: u32,
     pcrel: bool,
 }
@@ -135,6 +139,8 @@ impl Assembler {
             sections: vec![Section::text()],
             labels: BTreeMap::new(),
             absolute_defs: BTreeMap::new(),
+            absolute_symbols: BTreeMap::new(),
+            section_bases: Vec::new(),
             symbol_attrs: BTreeMap::new(),
             pending_relocs: vec![Vec::new()],
         }
@@ -157,6 +163,12 @@ impl Assembler {
         }
         self.pending_relocs.clear();
         self.pending_relocs.resize_with(self.sections.len(), Vec::new);
+    }
+
+    fn prepare_expression_state(&mut self, _stmts: &[Stmt]) -> Result<(), AsmError> {
+        self.section_bases = self.section_base_addresses();
+        self.absolute_symbols = self.resolve_absolute_symbols()?;
+        Ok(())
     }
 
     fn collect_layout(&mut self, stmts: &[Stmt]) -> Result<(), AsmError> {
@@ -208,6 +220,7 @@ impl Assembler {
                                 section: self.section,
                                 offset,
                                 symbol: label_ref.symbol.clone(),
+                                length: 2,
                                 reloc_type,
                                 pcrel,
                             });
@@ -224,6 +237,7 @@ impl Assembler {
                                     section: self.section,
                                     offset,
                                     symbol: label_ref.symbol.clone(),
+                                    length: 2,
                                     reloc_type: crate::macho::ARM64_RELOC_BRANCH26,
                                     pcrel: true,
                                 });
@@ -317,15 +331,21 @@ impl Assembler {
                 let aligned = align_value(current, *n);
                 self.emit_space(aligned - current)?;
             }
-            Directive::Byte(vals) => self.emit_initialized_bytes(vals, ".byte")?,
+            Directive::Byte(vals) => {
+                for expr in vals {
+                    let value = self.require_absolute_expr(expr, ".byte expression")?;
+                    self.emit_initialized_bytes(&[(value as u8)], ".byte")?;
+                }
+            }
             Directive::Word(vals) => {
-                for v in vals {
-                    self.emit_initialized_bytes(&v.to_le_bytes(), ".word")?;
+                for expr in vals {
+                    let value = self.require_absolute_expr(expr, ".word expression")?;
+                    self.emit_initialized_bytes(&(value as u32).to_le_bytes(), ".word")?;
                 }
             }
             Directive::Quad(vals) => {
-                for v in vals {
-                    self.emit_initialized_bytes(&v.to_le_bytes(), ".quad")?;
+                for expr in vals {
+                    self.emit_quad_expr(expr)?;
                 }
             }
             Directive::Ascii(bytes) => self.emit_initialized_bytes(bytes, ".ascii")?,
@@ -447,9 +467,88 @@ impl Assembler {
         bases
     }
 
+    fn symbol_values_for_expr(&self) -> BTreeMap<String, SymbolValue> {
+        let mut values = BTreeMap::new();
+
+        for (name, value) in &self.absolute_symbols {
+            values.insert(name.clone(), SymbolValue::Absolute(*value));
+        }
+
+        for (name, (section, offset)) in &self.labels {
+            values.insert(
+                name.clone(),
+                SymbolValue::Defined {
+                    section: *section,
+                    value: (self.section_bases[*section] + offset) as i64,
+                },
+            );
+        }
+
+        values
+    }
+
+    fn classify_expr(&self, expr: &Expr) -> Result<ClassifiedExpr, AsmError> {
+        expr::classify(expr, &self.symbol_values_for_expr())
+            .map_err(|err| AsmError(err.to_string()))
+    }
+
+    fn require_absolute_expr(&self, expr: &Expr, context: &str) -> Result<i64, AsmError> {
+        match self.classify_expr(expr)? {
+            ClassifiedExpr::Absolute(value) => Ok(value),
+            _ => Err(AsmError(format!(
+                "{} must resolve to an absolute value",
+                context
+            ))),
+        }
+    }
+
+    fn emit_quad_expr(&mut self, expr: &Expr) -> Result<(), AsmError> {
+        let offset = self.current_offset() as u32;
+        match self.classify_expr(expr)? {
+            ClassifiedExpr::Absolute(value) => {
+                self.emit_initialized_bytes(&(value as u64).to_le_bytes(), ".quad")?;
+            }
+            ClassifiedExpr::Relocatable { symbol, addend } => {
+                self.emit_initialized_bytes(&(addend as u64).to_le_bytes(), ".quad")?;
+                self.pending_relocs[self.section].push(PendingReloc {
+                    section: self.section,
+                    offset,
+                    symbol,
+                    length: 3,
+                    reloc_type: crate::macho::ARM64_RELOC_UNSIGNED,
+                    pcrel: false,
+                });
+            }
+            ClassifiedExpr::Difference {
+                minuend,
+                subtrahend,
+                addend,
+            } => {
+                self.emit_initialized_bytes(&(addend as u64).to_le_bytes(), ".quad")?;
+                self.pending_relocs[self.section].push(PendingReloc {
+                    section: self.section,
+                    offset,
+                    symbol: subtrahend,
+                    length: 3,
+                    reloc_type: crate::macho::ARM64_RELOC_SUBTRACTOR,
+                    pcrel: false,
+                });
+                self.pending_relocs[self.section].push(PendingReloc {
+                    section: self.section,
+                    offset,
+                    symbol: minuend,
+                    length: 3,
+                    reloc_type: crate::macho::ARM64_RELOC_UNSIGNED,
+                    pcrel: false,
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
-        let section_bases = self.section_base_addresses();
-        let absolute_symbols = self.resolve_absolute_symbols()?;
+        let section_bases = self.section_bases.clone();
+        let absolute_symbols = self.absolute_symbols.clone();
         let mut symbols: Vec<Symbol> = Vec::new();
 
         for name in absolute_symbols.keys() {
@@ -602,7 +701,7 @@ impl Assembler {
                     offset: pending.offset,
                     symbol_idx: sym_idx as u32,
                     pcrel: pending.pcrel,
-                    length: 2,
+                    length: pending.length,
                     extern_: true,
                     reloc_type: pending.reloc_type,
                 });
@@ -614,42 +713,84 @@ impl Assembler {
 
     fn resolve_absolute_symbols(&self) -> Result<BTreeMap<String, i64>, AsmError> {
         let mut resolved = BTreeMap::new();
-        let mut progress = true;
-
-        while progress {
-            progress = false;
-            for (name, expr) in &self.absolute_defs {
-                if resolved.contains_key(name) {
-                    continue;
-                }
-                match expr::eval_with_symbols(expr, &resolved) {
-                    Ok(value) => {
-                        resolved.insert(name.clone(), value);
-                        progress = true;
-                    }
-                    Err(expr::EvalError::UndefinedSymbol(_)) => {}
-                    Err(expr::EvalError::Overflow) => {
-                        return Err(AsmError(format!(
-                            "absolute symbol '{}' overflows i64",
-                            name
-                        )));
-                    }
-                }
-            }
+        let mut visiting = Vec::new();
+        let names: Vec<_> = self.absolute_defs.keys().cloned().collect();
+        for name in names {
+            let value = self.resolve_absolute_symbol(&name, &mut resolved, &mut visiting)?;
+            resolved.insert(name, value);
         }
+        Ok(resolved)
+    }
 
-        if let Some(name) = self
-            .absolute_defs
-            .keys()
-            .find(|name| !resolved.contains_key(*name))
-        {
+    fn resolve_absolute_symbol(
+        &self,
+        name: &str,
+        resolved: &mut BTreeMap<String, i64>,
+        visiting: &mut Vec<String>,
+    ) -> Result<i64, AsmError> {
+        if let Some(value) = resolved.get(name) {
+            return Ok(*value);
+        }
+        if visiting.iter().any(|entry| entry == name) {
             return Err(AsmError(format!(
-                "absolute symbol '{}' must resolve from constants or earlier absolute symbols",
+                "absolute symbol '{}' has a cyclic definition",
                 name
             )));
         }
 
-        Ok(resolved)
+        let expr = self
+            .absolute_defs
+            .get(name)
+            .ok_or_else(|| AsmError(format!("missing absolute symbol definition '{}'", name)))?;
+
+        visiting.push(name.to_string());
+        let mut symbols = BTreeMap::new();
+        for referenced in expr::referenced_symbols(expr) {
+            if let Some(value) = resolved.get(&referenced) {
+                symbols.insert(referenced, SymbolValue::Absolute(*value));
+            } else if self.absolute_defs.contains_key(&referenced) {
+                let value = self.resolve_absolute_symbol(&referenced, resolved, visiting)?;
+                symbols.insert(referenced, SymbolValue::Absolute(value));
+            } else if let Some((section, offset)) = self.labels.get(&referenced) {
+                symbols.insert(
+                    referenced,
+                    SymbolValue::Defined {
+                        section: *section,
+                        value: (self.section_bases[*section] + offset) as i64,
+                    },
+                );
+            } else {
+                visiting.pop();
+                return Err(AsmError(format!(
+                    "absolute symbol '{}' references undefined symbol '{}'",
+                    name,
+                    referenced
+                )));
+            }
+        }
+
+        let value = match expr::classify(expr, &symbols) {
+            Ok(ClassifiedExpr::Absolute(value)) => value,
+            Ok(_) => {
+                visiting.pop();
+                return Err(AsmError(format!(
+                    "absolute symbol '{}' must resolve to an absolute value",
+                    name
+                )));
+            }
+            Err(err) => {
+                visiting.pop();
+                return Err(AsmError(format!(
+                    "absolute symbol '{}': {}",
+                    name,
+                    err
+                )));
+            }
+        };
+
+        visiting.pop();
+        resolved.insert(name.to_string(), value);
+        Ok(value)
     }
 }
 
@@ -688,6 +829,10 @@ mod tests {
 
     fn text_relocs(obj: &ObjectFile) -> &[Relocation] {
         &obj.text_section().relocations
+    }
+
+    fn data_relocs(obj: &ObjectFile) -> &[Relocation] {
+        &obj.section("__DATA", "__data").expect("missing __DATA,__data").relocations
     }
 
     #[test]
@@ -754,6 +899,14 @@ mod tests {
         let abs2 = obj.symbols.iter().find(|s| s.name == "ABS2").unwrap();
         assert!(abs2.absolute);
         assert_eq!(abs2.value, 12);
+    }
+
+    #[test]
+    fn assemble_absolute_symbol_from_label_difference() {
+        let obj = assemble_source(".text\nfoo:\nnop\nbar:\nret\n.set DIFF, bar - foo\n").unwrap();
+        let diff = obj.symbols.iter().find(|s| s.name == "DIFF").unwrap();
+        assert!(diff.absolute);
+        assert_eq!(diff.value, 4);
     }
 
     #[test]
@@ -946,6 +1099,42 @@ mod tests {
             .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
             .collect();
         assert_eq!(reloc_syms, vec!["_foo", "_foo"]);
+    }
+
+    #[test]
+    fn assemble_quad_local_symbol_creates_unsigned_relocation() {
+        let obj = assemble_source(".data\nfoo: .byte 1\n.quad foo\n").unwrap();
+        let relocs = data_relocs(&obj);
+        assert_eq!(relocs.len(), 1);
+        assert_eq!(relocs[0].reloc_type, crate::macho::ARM64_RELOC_UNSIGNED);
+        assert_eq!(relocs[0].length, 3);
+        assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "foo");
+        assert_eq!(&data_bytes(&obj)[1..9], &[0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn assemble_quad_same_section_difference_is_constant() {
+        let obj = assemble_source(".data\nfoo: .byte 1\nbar: .byte 2\n.quad bar - foo\n").unwrap();
+        assert!(data_relocs(&obj).is_empty());
+        assert_eq!(&data_bytes(&obj)[2..10], &1u64.to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_quad_external_difference_creates_subtractor_pair() {
+        let obj = assemble_source(".data\n.quad _ext - _other + 4\n").unwrap();
+        let relocs = data_relocs(&obj);
+        assert_eq!(relocs.len(), 2);
+        assert_eq!(relocs[0].reloc_type, crate::macho::ARM64_RELOC_SUBTRACTOR);
+        assert_eq!(relocs[1].reloc_type, crate::macho::ARM64_RELOC_UNSIGNED);
+        assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "_other");
+        assert_eq!(obj.symbols[relocs[1].symbol_idx as usize].name, "_ext");
+        assert_eq!(&data_bytes(&obj)[0..8], &4u64.to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_word_symbolic_expression_is_rejected() {
+        let err = assemble_source(".data\n.word foo\n").unwrap_err();
+        assert!(err.0.contains("absolute value"), "got: {}", err.0);
     }
 
     #[test]
