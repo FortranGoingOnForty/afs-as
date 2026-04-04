@@ -8,6 +8,7 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 pub mod encode;
+pub mod lex;
 pub mod parse;
 pub mod macho;
 
