@@ -129,6 +129,13 @@ pub struct ParseError {
     pub msg: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocatedStmt {
+    pub stmt: Stmt,
+    pub line: u32,
+    pub col: u32,
+}
+
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}: error: {}", self.line, self.col, self.msg)
@@ -145,6 +152,14 @@ impl From<LexError> for ParseError {
 
 /// Parse assembly source text into a list of statements.
 pub fn parse(src: &str) -> Result<Vec<Stmt>, ParseError> {
+    Ok(parse_with_locations(src)?
+        .into_iter()
+        .map(|stmt| stmt.stmt)
+        .collect())
+}
+
+/// Parse assembly source text into statements with source locations.
+pub fn parse_with_locations(src: &str) -> Result<Vec<LocatedStmt>, ParseError> {
     let tokens = Lexer::tokenize(src)?;
     let mut p = Parser::new(&tokens);
     p.parse_program()
@@ -237,7 +252,7 @@ impl<'a> Parser<'a> {
         while self.peek() == &Tok::Newline { self.advance(); }
     }
 
-    fn parse_program(&mut self) -> Result<Vec<Stmt>, ParseError> {
+    fn parse_program(&mut self) -> Result<Vec<LocatedStmt>, ParseError> {
         let mut stmts = Vec::new();
         self.skip_newlines();
         while self.peek() != &Tok::Eof {
@@ -247,27 +262,41 @@ impl<'a> Parser<'a> {
         Ok(stmts)
     }
 
-    fn parse_line(&mut self, stmts: &mut Vec<Stmt>) -> Result<(), ParseError> {
+    fn parse_line(&mut self, stmts: &mut Vec<LocatedStmt>) -> Result<(), ParseError> {
         // A line can be: label, directive, instruction, or empty.
         match self.peek().clone() {
             Tok::Ident(ref name) if name.starts_with('.') => {
                 // Could be directive or local label.
+                let start = self.cur().clone();
                 let name = name.clone();
                 self.advance();
                 if self.eat(&Tok::Colon) {
                     // Local label (.Lxxx:)
-                    stmts.push(Stmt::Label(name));
+                    stmts.push(LocatedStmt {
+                        stmt: Stmt::Label(name),
+                        line: start.line,
+                        col: start.col,
+                    });
                 } else {
                     // Directive
-                    stmts.push(self.parse_directive(&name)?);
+                    stmts.push(LocatedStmt {
+                        stmt: self.parse_directive(&name)?,
+                        line: start.line,
+                        col: start.col,
+                    });
                 }
             }
             Tok::Ident(_) => {
+                let start = self.cur().clone();
                 let name = if let Tok::Ident(s) = self.peek().clone() { s } else { unreachable!() };
                 self.advance();
                 if self.eat(&Tok::Colon) {
                     // Label
-                    stmts.push(Stmt::Label(name));
+                    stmts.push(LocatedStmt {
+                        stmt: Stmt::Label(name),
+                        line: start.line,
+                        col: start.col,
+                    });
                     // There might be an instruction on the same line.
                     if !self.at_end_of_stmt() {
                         self.parse_line(stmts)?;
@@ -275,14 +304,23 @@ impl<'a> Parser<'a> {
                 } else {
                     // Instruction mnemonic — might have a condition suffix.
                     let mnemonic = self.resolve_mnemonic(&name)?;
-                    stmts.push(self.parse_instruction(&mnemonic)?);
+                    stmts.push(LocatedStmt {
+                        stmt: self.parse_instruction(&mnemonic)?,
+                        line: start.line,
+                        col: start.col,
+                    });
                 }
             }
             Tok::Integer(_) if self.numeric_label_definition_number().is_some() => {
+                let start = self.cur().clone();
                 let number = self.numeric_label_definition_number().unwrap();
                 self.advance();
                 self.expect(&Tok::Colon)?;
-                stmts.push(Stmt::Label(self.define_numeric_label(number)));
+                stmts.push(LocatedStmt {
+                    stmt: Stmt::Label(self.define_numeric_label(number)),
+                    line: start.line,
+                    col: start.col,
+                });
                 if !self.at_end_of_stmt() {
                     self.parse_line(stmts)?;
                 }

@@ -9,41 +9,51 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::BufWriter;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::encode::Inst;
 use crate::expr::{self, ClassifiedExpr, Expr, SymbolValue};
 use crate::macho::{self, BuildVersion, ObjectFile, Relocation, Section, SectionKind, Symbol};
 use crate::parse::{
-    self, BuildVersionDirective, Directive, LabelRef, LinkerOptimizationHintDirective, RelocKind,
-    Stmt,
+    self, BuildVersionDirective, Directive, LabelRef, LinkerOptimizationHintDirective, LocatedStmt,
+    RelocKind, Stmt,
 };
 use crate::reg::{GpReg, SP};
 
 /// Assemble a source file to a Mach-O object file.
 pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
     let src = fs::read_to_string(input)
-        .map_err(|e| AsmError(format!("{}: {}", input.display(), e)))?;
+        .map_err(|e| AsmError::new(format!("{}", e)).with_path(input))?;
 
-    let obj = assemble_source(&src)?;
+    let obj = assemble_source(&src)
+        .map_err(|e| e.with_source_context(input, &src))?;
 
     let file = fs::File::create(output)
-        .map_err(|e| AsmError(format!("{}: {}", output.display(), e)))?;
+        .map_err(|e| AsmError::new(format!("{}", e)).with_path(output))?;
     let mut w = BufWriter::new(file);
     macho::write_macho(&obj, &mut w)
-        .map_err(|e| AsmError(format!("writing {}: {}", output.display(), e)))?;
+        .map_err(|e| AsmError::new(format!("writing output: {}", e)).with_path(output))?;
 
     Ok(())
 }
 
 /// Assemble source text into an ObjectFile (library API).
 pub fn assemble_source(src: &str) -> Result<ObjectFile, AsmError> {
-    let stmts = parse::parse(src).map_err(|e| AsmError(e.to_string()))?;
-    assemble_stmts(&stmts)
+    let stmts = parse::parse_with_locations(src).map_err(AsmError::from)?;
+    assemble_located_stmts(&stmts)
 }
 
 /// Assemble pre-parsed statements into an ObjectFile.
 pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
+    let stmts: Vec<_> = stmts
+        .iter()
+        .cloned()
+        .map(|stmt| LocatedStmt { stmt, line: 0, col: 0 })
+        .collect();
+    assemble_located_stmts(&stmts)
+}
+
+fn assemble_located_stmts(stmts: &[LocatedStmt]) -> Result<ObjectFile, AsmError> {
     let mut asm = Assembler::new();
     asm.collect_layout(stmts)?;
     asm.prepare_expression_state(stmts)?;
@@ -96,21 +106,96 @@ pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
     obj
 }
 
-#[derive(Debug)]
-pub struct AsmError(pub String);
+#[derive(Debug, Clone)]
+pub struct AsmError {
+    pub path: Option<PathBuf>,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+    pub msg: String,
+    pub snippet: Option<String>,
+}
+
+impl AsmError {
+    pub fn new(msg: String) -> Self {
+        Self { path: None, line: None, col: None, msg, snippet: None }
+    }
+
+    pub fn at(line: u32, col: u32, msg: String) -> Self {
+        Self {
+            path: None,
+            line: Some(line),
+            col: Some(col),
+            msg,
+            snippet: None,
+        }
+    }
+
+    pub fn with_loc_if_absent(mut self, line: u32, col: u32) -> Self {
+        if self.line.is_none() && self.col.is_none() && line > 0 && col > 0 {
+            self.line = Some(line);
+            self.col = Some(col);
+        }
+        self
+    }
+
+    pub fn with_path(mut self, path: &Path) -> Self {
+        if self.path.is_none() {
+            self.path = Some(path.to_path_buf());
+        }
+        self
+    }
+
+    pub fn with_source_context(mut self, path: &Path, src: &str) -> Self {
+        self = self.with_path(path);
+        if self.snippet.is_none() {
+            if let Some(line) = self.line {
+                self.snippet = src
+                    .lines()
+                    .nth(line.saturating_sub(1) as usize)
+                    .map(|line| line.to_string());
+            }
+        }
+        self
+    }
+}
+
+#[allow(non_snake_case)]
+fn AsmError(msg: String) -> AsmError {
+    AsmError::new(msg)
+}
 
 impl std::fmt::Display for AsmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        match (&self.path, self.line, self.col) {
+            (Some(path), Some(line), Some(col)) => {
+                writeln!(f, "{}:{}:{}: error: {}", path.display(), line, col, self.msg)?;
+                if let Some(snippet) = &self.snippet {
+                    writeln!(f, "{}", snippet)?;
+                    write!(f, "{}^", " ".repeat(col.saturating_sub(1) as usize))?;
+                }
+                Ok(())
+            }
+            (Some(path), _, _) => write!(f, "{}: error: {}", path.display(), self.msg),
+            (None, Some(line), Some(col)) => write!(f, "{}:{}: error: {}", line, col, self.msg),
+            _ => write!(f, "error: {}", self.msg),
+        }
     }
 }
 
 impl std::error::Error for AsmError {}
 
+impl From<parse::ParseError> for AsmError {
+    fn from(err: parse::ParseError) -> Self {
+        AsmError::at(err.line, err.col, err.msg)
+    }
+}
+
 /// Internal assembler state.
 struct Assembler {
     /// Current section index in `sections`.
     section: usize,
+    current_line: u32,
+    current_col: u32,
     sections: Vec<Section>,
 
     /// Labels → (section index, offset within section).
@@ -154,6 +239,8 @@ struct CommonSymbol {
 struct Fixup {
     section: usize,
     offset: u32,
+    line: u32,
+    col: u32,
     expr: Expr,
     kind: FixupKind,
 }
@@ -395,6 +482,8 @@ impl Assembler {
     fn new() -> Self {
         Self {
             section: 0,
+            current_line: 0,
+            current_col: 0,
             sections: vec![Section::text()],
             labels: BTreeMap::new(),
             absolute_defs: BTreeMap::new(),
@@ -438,6 +527,8 @@ impl Assembler {
 
     fn reset_for_emission(&mut self) {
         self.section = 0;
+        self.current_line = 0;
+        self.current_col = 0;
         for section in &mut self.sections {
             section.data.clear();
             section.relocations.clear();
@@ -453,32 +544,41 @@ impl Assembler {
         self.eh_frame_rows.clear();
     }
 
-    fn prepare_expression_state(&mut self, _stmts: &[Stmt]) -> Result<(), AsmError> {
+    fn note_stmt_location(&mut self, line: u32, col: u32) {
+        self.current_line = line;
+        self.current_col = col;
+    }
+
+    fn prepare_expression_state(&mut self, _stmts: &[LocatedStmt]) -> Result<(), AsmError> {
         self.section_bases = self.section_base_addresses();
         self.absolute_symbols = self.resolve_absolute_symbols()?;
         Ok(())
     }
 
-    fn collect_layout(&mut self, stmts: &[Stmt]) -> Result<(), AsmError> {
+    fn collect_layout(&mut self, stmts: &[LocatedStmt]) -> Result<(), AsmError> {
         self.section = 0;
 
         for stmt in stmts {
-            match stmt {
+            match &stmt.stmt {
                 Stmt::Label(name) => {
                     if self.common_symbols.contains_key(name) {
-                        return Err(AsmError(format!("duplicate symbol '{}'", name)));
+                        return Err(AsmError(format!("duplicate symbol '{}'", name))
+                            .with_loc_if_absent(stmt.line, stmt.col));
                     }
                     self.note_symbol(name);
                     let offset = self.current_offset();
                     if self.labels.insert(name.clone(), (self.section, offset)).is_some() {
-                        return Err(AsmError(format!("duplicate label '{}'", name)));
+                        return Err(AsmError(format!("duplicate label '{}'", name))
+                            .with_loc_if_absent(stmt.line, stmt.col));
                     }
                 }
                 Stmt::Directive(dir) => {
-                    self.collect_directive_layout(dir)?;
+                    self.collect_directive_layout(dir)
+                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
                 }
                 Stmt::Instruction(_) | Stmt::InstructionWithReloc(_, _) => {
-                    self.reserve_initialized_bytes(4, "instruction")?;
+                    self.reserve_initialized_bytes(4, "instruction")
+                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
                 }
             }
         }
@@ -486,23 +586,31 @@ impl Assembler {
         Ok(())
     }
 
-    fn process(&mut self, stmts: &[Stmt]) -> Result<(), AsmError> {
+    fn process(&mut self, stmts: &[LocatedStmt]) -> Result<(), AsmError> {
         for stmt in stmts {
-            match stmt {
+            self.note_stmt_location(stmt.line, stmt.col);
+            match &stmt.stmt {
                 Stmt::Label(_) => {}
-                Stmt::Directive(dir) => self.process_directive(dir)?,
+                Stmt::Directive(dir) => {
+                    self.process_directive(dir)
+                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?
+                }
                 Stmt::Instruction(inst) => {
                     self.sections[self.section].has_instructions = true;
                     let word = inst.encode();
-                    self.emit_initialized_bytes(&word.to_le_bytes(), "instruction")?;
+                    self.emit_initialized_bytes(&word.to_le_bytes(), "instruction")
+                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
                 }
                 Stmt::InstructionWithReloc(inst, label_ref) => {
                     self.sections[self.section].has_instructions = true;
                     let offset = self.current_offset() as u32;
-                    self.emit_initialized_bytes(&inst.encode().to_le_bytes(), "fixup instruction")?;
+                    self.emit_initialized_bytes(&inst.encode().to_le_bytes(), "fixup instruction")
+                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
                     self.fixups.push(Fixup {
                         section: self.section,
                         offset,
+                        line: stmt.line,
+                        col: stmt.col,
                         expr: label_ref_expr(label_ref),
                         kind: match label_ref.kind {
                             RelocKind::Page21 => FixupKind::Page21,
@@ -649,6 +757,8 @@ impl Assembler {
                             self.fixups.push(Fixup {
                                 section: self.section,
                                 offset,
+                                line: self.current_line,
+                                col: self.current_col,
                                 expr: expr.clone(),
                                 kind: FixupKind::Data32,
                             });
@@ -669,6 +779,8 @@ impl Assembler {
                     self.fixups.push(Fixup {
                         section: self.section,
                         offset,
+                        line: self.current_line,
+                        col: self.current_col,
                         expr: expr.clone(),
                         kind: FixupKind::Data64,
                     });
@@ -1026,21 +1138,24 @@ impl Assembler {
     fn resolve_fixups(&mut self) -> Result<(), AsmError> {
         let fixups = std::mem::take(&mut self.fixups);
         for fixup in fixups {
-            match fixup.kind.clone() {
-                FixupKind::Branch26(template) => self.resolve_branch_or_reloc(fixup, template, 26, true)?,
-                FixupKind::Branch19(template) => self.resolve_branch_or_reloc(fixup, template, 19, false)?,
-                FixupKind::Branch14(template) => self.resolve_branch_or_reloc(fixup, template, 14, false)?,
-                FixupKind::Literal19(template) => self.resolve_literal_fixup(fixup, template)?,
-                FixupKind::Adr21(template) => self.resolve_adr_fixup(fixup, template)?,
-                FixupKind::Page21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true)?,
-                FixupKind::GotLoadPage21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGE21, true)?,
-                FixupKind::TlvpLoadPage21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGE21, true)?,
-                FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false)?,
-                FixupKind::GotLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGEOFF12, false)?,
-                FixupKind::TlvpLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGEOFF12, false)?,
-                FixupKind::Data32 => self.resolve_data32_fixup(fixup)?,
-                FixupKind::Data64 => self.resolve_data64_fixup(fixup)?,
-            }
+            let line = fixup.line;
+            let col = fixup.col;
+            let result = match fixup.kind.clone() {
+                FixupKind::Branch26(template) => self.resolve_branch_or_reloc(fixup, template, 26, true),
+                FixupKind::Branch19(template) => self.resolve_branch_or_reloc(fixup, template, 19, false),
+                FixupKind::Branch14(template) => self.resolve_branch_or_reloc(fixup, template, 14, false),
+                FixupKind::Literal19(template) => self.resolve_literal_fixup(fixup, template),
+                FixupKind::Adr21(template) => self.resolve_adr_fixup(fixup, template),
+                FixupKind::Page21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true),
+                FixupKind::GotLoadPage21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGE21, true),
+                FixupKind::TlvpLoadPage21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGE21, true),
+                FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false),
+                FixupKind::GotLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGEOFF12, false),
+                FixupKind::TlvpLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGEOFF12, false),
+                FixupKind::Data32 => self.resolve_data32_fixup(fixup),
+                FixupKind::Data64 => self.resolve_data64_fixup(fixup),
+            };
+            result.map_err(|e| e.with_loc_if_absent(line, col))?;
         }
         Ok(())
     }
@@ -2370,19 +2485,19 @@ mod tests {
     #[test]
     fn assemble_private_extern_requires_definition() {
         let err = assemble_source(".private_extern _hidden\n.text\nret\n").unwrap_err();
-        assert!(err.0.contains("private extern"), "got: {}", err.0);
+        assert!(err.msg.contains("private extern"), "got: {}", err);
     }
 
     #[test]
     fn assemble_weak_definition_requires_definition() {
         let err = assemble_source(".weak_definition _entry\n.text\nret\n").unwrap_err();
-        assert!(err.0.contains("weak definition"), "got: {}", err.0);
+        assert!(err.msg.contains("weak definition"), "got: {}", err);
     }
 
     #[test]
     fn assemble_weak_reference_requires_undefined_symbol() {
         let err = assemble_source(".weak_reference _helper\n.text\n_helper:\nret\n").unwrap_err();
-        assert!(err.0.contains("must remain undefined"), "got: {}", err.0);
+        assert!(err.msg.contains("must remain undefined"), "got: {}", err);
     }
 
     #[test]
@@ -2648,19 +2763,19 @@ mod tests {
     #[test]
     fn assemble_cfi_endproc_requires_active_proc() {
         let err = assemble_source(".cfi_endproc\n").unwrap_err();
-        assert!(err.0.contains(".cfi_endproc requires an active .cfi_startproc"), "got: {}", err.0);
+        assert!(err.msg.contains(".cfi_endproc requires an active .cfi_startproc"), "got: {}", err);
     }
 
     #[test]
     fn assemble_cfi_directive_requires_active_proc() {
         let err = assemble_source(".cfi_def_cfa_offset 16\n").unwrap_err();
-        assert!(err.0.contains("CFI directives require an active .cfi_startproc"), "got: {}", err.0);
+        assert!(err.msg.contains("CFI directives require an active .cfi_startproc"), "got: {}", err);
     }
 
     #[test]
     fn assemble_unterminated_cfi_proc_is_rejected() {
         let err = assemble_source(".text\nunterminated_target:\n.cfi_startproc\nret\n").unwrap_err();
-        assert!(err.0.contains("unterminated .cfi_startproc"), "got: {}", err.0);
+        assert!(err.msg.contains("unterminated .cfi_startproc"), "got: {}", err);
     }
 
     #[test]
@@ -2727,16 +2842,16 @@ mod tests {
     fn assemble_rejects_unsupported_build_version_platform() {
         let err = assemble_source(".build_version ios, 11, 0\n").unwrap_err();
         assert!(
-            err.0.contains("unsupported .build_version platform"),
+            err.msg.contains("unsupported .build_version platform"),
             "got: {}",
-            err.0
+            err
         );
     }
 
     #[test]
     fn assemble_rejects_unsupported_section() {
         let err = assemble_source(".section __TEXT,__foo\n.space 16\n").unwrap_err();
-        assert!(err.0.contains("unsupported section"), "got: {}", err.0);
+        assert!(err.msg.contains("unsupported section"), "got: {}", err);
     }
 
     #[test]
@@ -2767,7 +2882,7 @@ mod tests {
     #[test]
     fn assemble_bss_rejects_initialized_data() {
         let err = assemble_source(".section __DATA,__bss\n.byte 1\n").unwrap_err();
-        assert!(err.0.contains("zero-fill"), "got: {}", err.0);
+        assert!(err.msg.contains("zero-fill"), "got: {}", err);
     }
 
     #[test]
@@ -2957,7 +3072,7 @@ mod tests {
     #[test]
     fn assemble_word_symbolic_expression_is_rejected() {
         let err = assemble_source(".data\n.word foo\n").unwrap_err();
-        assert!(err.0.contains("absolute value"), "got: {}", err.0);
+        assert!(err.msg.contains("absolute value"), "got: {}", err);
     }
 
     #[test]
@@ -3017,19 +3132,19 @@ mod tests {
     #[test]
     fn assemble_ldr_literal_requires_local_label() {
         let err = assemble_source(".text\nldr x0, _ext\n").unwrap_err();
-        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
+        assert!(err.msg.contains("assembler-local label"), "got: {}", err);
     }
 
     #[test]
     fn assemble_ldr_literal_requires_same_section() {
         let err = assemble_source(".text\nldr x0, target\n.data\ntarget: .quad 42\n").unwrap_err();
-        assert!(err.0.contains("current section"), "got: {}", err.0);
+        assert!(err.msg.contains("current section"), "got: {}", err);
     }
 
     #[test]
     fn assemble_adr_requires_local_label() {
         let err = assemble_source(".text\nadr x0, _ext\n").unwrap_err();
-        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
+        assert!(err.msg.contains("assembler-local label"), "got: {}", err);
     }
 
     #[test]
@@ -3051,7 +3166,7 @@ mod tests {
     #[test]
     fn assemble_missing_numeric_local_label_is_rejected() {
         let err = assemble_source(".text\nb 1f\n").unwrap_err();
-        assert!(err.0.contains("local symbol '.Ltmp$1$1'"), "got: {}", err.0);
+        assert!(err.msg.contains("local symbol '.Ltmp$1$1'"), "got: {}", err);
     }
 
     #[test]
@@ -3120,42 +3235,42 @@ mod tests {
     #[test]
     fn assemble_branch19_requires_local_label() {
         let err = assemble_source(".text\nb.eq _foo\n").unwrap_err();
-        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
+        assert!(err.msg.contains("assembler-local label"), "got: {}", err);
     }
 
     #[test]
     fn assemble_branch14_requires_local_label() {
         let err = assemble_source(".text\ntbnz x0, #33, _foo\n").unwrap_err();
-        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
+        assert!(err.msg.contains("assembler-local label"), "got: {}", err);
     }
 
     #[test]
     fn assemble_branch_rejects_misaligned_local_target() {
         let err = assemble_source(".text\nb done\n.byte 0\ndone:\nret\n").unwrap_err();
-        assert!(err.0.contains("not 4-byte aligned"), "got: {}", err.0);
+        assert!(err.msg.contains("not 4-byte aligned"), "got: {}", err);
     }
 
     #[test]
     fn assemble_branch19_rejects_out_of_range_target() {
         let err = assemble_source(".text\ncbz x0, done\n.space 1048576\ndone:\nret\n").unwrap_err();
-        assert!(err.0.contains("out of range"), "got: {}", err.0);
+        assert!(err.msg.contains("out of range"), "got: {}", err);
     }
 
     #[test]
     fn assemble_branch14_rejects_out_of_range_target() {
         let err = assemble_source(".text\ntbz x0, #5, done\n.space 32768\ndone:\nret\n").unwrap_err();
-        assert!(err.0.contains("out of range"), "got: {}", err.0);
+        assert!(err.msg.contains("out of range"), "got: {}", err);
     }
 
     #[test]
     fn check_branch_offset_rejects_branch26_out_of_range() {
         let err = check_branch_offset(1i64 << 27, 26).unwrap_err();
-        assert!(err.0.contains("out of range"), "got: {}", err.0);
+        assert!(err.msg.contains("out of range"), "got: {}", err);
     }
 
     #[test]
     fn check_pcrel_offset_rejects_adr21_out_of_range() {
         let err = check_pcrel_offset(1i64 << 20, 21, "adr offset").unwrap_err();
-        assert!(err.0.contains("out of range"), "got: {}", err.0);
+        assert!(err.msg.contains("out of range"), "got: {}", err);
     }
 }
