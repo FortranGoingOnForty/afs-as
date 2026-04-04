@@ -104,6 +104,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "tls_bss_global",
+        source: "tls_bss_global.c",
+        driver: "extern int bump_tls_counter(int);\nint main(void) {\n    return (bump_tls_counter(4) != 4) || (bump_tls_counter(3) != 7);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "atomics",
         source: "atomics.c",
         driver: "extern int add_and_fetch(int);\nextern int load_then_store(int);\nint main(void) {\n    return (add_and_fetch(4) != 4) || (load_then_store(7) != 4) || (add_and_fetch(1) != 12);\n}\n",

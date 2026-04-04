@@ -144,7 +144,7 @@ fn assert_object_semantics(obj: &ObjectFile, src: &str) {
             src
         );
         match section.kind {
-            SectionKind::ZeroFill => assert!(
+            SectionKind::ZeroFill | SectionKind::ThreadLocalZeroFill => assert!(
                 section.data.is_empty(),
                 "zerofill section {},{} should not carry file-backed bytes\n---source---\n{}",
                 section.segment,
