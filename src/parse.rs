@@ -121,13 +121,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_int(&mut self) -> Result<i64, ParseError> {
-        match self.peek().clone() {
-            Tok::Integer(n) => { self.advance(); Ok(n) }
-            other => Err(self.err(format!("expected integer, got {}", other))),
-        }
-    }
-
     fn expect(&mut self, kind: &Tok) -> Result<(), ParseError> {
         if self.peek() == kind {
             self.advance();
@@ -315,6 +308,10 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn starts_const_expr(&self) -> bool {
+        matches!(self.peek(), Tok::Integer(_) | Tok::Minus | Tok::LParen)
+    }
+
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         self.parse_add_sub_expr()
     }
@@ -448,9 +445,15 @@ impl<'a> Parser<'a> {
             "fmov" => self.parse_fmov(),
 
             // System
-            "svc" => { let imm = self.expect_int()? as u16; Ok(Inst::Svc { imm16: imm }) }
+            "svc" => {
+                let imm = self.parse_const_expr("svc immediate")? as u16;
+                Ok(Inst::Svc { imm16: imm })
+            }
             "nop" => Ok(Inst::Nop),
-            "brk" => { let imm = self.expect_int()? as u16; Ok(Inst::Brk { imm16: imm }) }
+            "brk" => {
+                let imm = self.parse_const_expr("brk immediate")? as u16;
+                Ok(Inst::Brk { imm16: imm })
+            }
 
             _ => Err(self.err(format!("unknown mnemonic: {}", mnemonic))),
         }?;
@@ -507,8 +510,8 @@ impl<'a> Parser<'a> {
         let (rn, _) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
 
-        if let Tok::Integer(_) = self.peek() {
-            let imm = self.expect_int()? as u16;
+        if self.starts_const_expr() {
+            let imm = self.parse_const_expr("add/sub immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
             Ok(match (is_sub, sets_flags) {
                 (false, false) => Inst::AddImm { rd, rn, imm12: imm, shift, sf },
@@ -562,8 +565,8 @@ impl<'a> Parser<'a> {
 
     /// Parse the third operand of add/sub (immediate or register).
     fn parse_add_sub_operand(&mut self, rd: GpReg, rn: GpReg, sf: bool, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
-        if let Tok::Integer(_) = self.peek() {
-            let imm = self.expect_int()? as u16;
+        if self.starts_const_expr() {
+            let imm = self.parse_const_expr("add/sub immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
             Ok(match (is_sub, sets_flags) {
                 (false, false) => Inst::AddImm { rd, rn, imm12: imm, shift, sf },
@@ -585,8 +588,8 @@ impl<'a> Parser<'a> {
     fn parse_cmp(&mut self) -> Result<Inst, ParseError> {
         let (rn, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        if let Tok::Integer(_) = self.peek() {
-            let imm = self.expect_int()? as u16;
+        if self.starts_const_expr() {
+            let imm = self.parse_const_expr("cmp immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
             Ok(Inst::SubsImm { rd: XZR, rn, imm12: imm, shift, sf })
         } else {
@@ -641,8 +644,8 @@ impl<'a> Parser<'a> {
     fn parse_mov(&mut self) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        if let Tok::Integer(_) = self.peek() {
-            let imm = self.expect_int()?;
+        if self.starts_const_expr() {
+            let imm = self.parse_const_expr("mov immediate")?;
             if let Some(inst) = mov_alias_imm(rd, imm, sf) {
                 Ok(inst)
             } else {
@@ -666,7 +669,7 @@ impl<'a> Parser<'a> {
     fn parse_mov_wide(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let imm = self.expect_int()? as u16;
+        let imm = self.parse_const_expr("mov wide immediate")? as u16;
         let shift = self.parse_optional_lsl_amount()?;
         Ok(match mnemonic {
             "movz" => Inst::Movz { rd, imm16: imm, shift, sf },
@@ -681,7 +684,7 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let amount = self.expect_int()? as u8;
+        let amount = self.parse_const_expr("shift amount")? as u8;
         Ok(match mnemonic {
             "lsl" => Inst::LslImm { rd, rn, amount, sf },
             "lsr" => Inst::LsrImm { rd, rn, amount, sf },
@@ -691,8 +694,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_b(&mut self) -> Result<Stmt, ParseError> {
-        if let Tok::Integer(_) = self.peek() {
-            let offset = self.expect_int()? as i32;
+        if self.starts_const_expr() {
+            let offset = self.parse_const_expr("branch offset")? as i32;
             Ok(Stmt::Instruction(Inst::B { offset }))
         } else {
             let label = self.expect_ident()?;
@@ -704,8 +707,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_bl(&mut self) -> Result<Stmt, ParseError> {
-        if let Tok::Integer(_) = self.peek() {
-            let offset = self.expect_int()? as i32;
+        if self.starts_const_expr() {
+            let offset = self.parse_const_expr("branch offset")? as i32;
             Ok(Stmt::Instruction(Inst::Bl { offset }))
         } else {
             let label = self.expect_ident()?;
@@ -719,8 +722,8 @@ impl<'a> Parser<'a> {
     fn parse_bcond(&mut self, cond_str: &str) -> Result<Stmt, ParseError> {
         let cond = parse_condition(cond_str)
             .ok_or_else(|| self.err(format!("unknown condition: {}", cond_str)))?;
-        if let Tok::Integer(_) = self.peek() {
-            let offset = self.expect_int()? as i32;
+        if self.starts_const_expr() {
+            let offset = self.parse_const_expr("branch offset")? as i32;
             Ok(Stmt::Instruction(Inst::BCond { cond, offset }))
         } else {
             let label = self.expect_ident()?;
@@ -734,8 +737,8 @@ impl<'a> Parser<'a> {
     fn parse_cbz(&mut self, is_nz: bool) -> Result<Stmt, ParseError> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        if let Tok::Integer(_) = self.peek() {
-            let offset = self.expect_int()? as i32;
+        if self.starts_const_expr() {
+            let offset = self.parse_const_expr("cbz/cbnz offset")? as i32;
             let inst = if is_nz {
                 Inst::Cbnz { rt, offset, sf }
             } else {
@@ -768,8 +771,8 @@ impl<'a> Parser<'a> {
     fn parse_adrp(&mut self) -> Result<Stmt, ParseError> {
         let rd = self.parse_gp_reg()?;
         self.expect(&Tok::Comma)?;
-        if let Tok::Integer(_) = self.peek() {
-            let imm = self.expect_int()? as i32;
+        if self.starts_const_expr() {
+            let imm = self.parse_const_expr("adrp immediate")? as i32;
             Ok(Stmt::Instruction(Inst::Adrp { rd, imm }))
         } else {
             let label = self.expect_ident()?;
@@ -813,7 +816,7 @@ impl<'a> Parser<'a> {
         if self.eat(&Tok::RBracket) {
             // [Xn] or [Xn], #off (post-index)
             if self.eat(&Tok::Comma) {
-                let offset = self.expect_int()? as i16;
+                let offset = self.parse_const_expr("post-index offset")? as i16;
                 return Ok(if sf {
                     if is_load { Inst::LdrPost64 { rt, rn, offset } }
                     else { Inst::StrPost64 { rt, rn, offset } }
@@ -835,7 +838,7 @@ impl<'a> Parser<'a> {
 
         self.expect(&Tok::Comma)?;
         // Could be: register offset or immediate offset
-        let offset = self.expect_int()?;
+        let offset = self.parse_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
@@ -862,7 +865,11 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
         let rn = self.parse_gp_reg()?;
-        let offset = if self.eat(&Tok::Comma) { self.expect_int()? } else { 0 };
+        let offset = if self.eat(&Tok::Comma) {
+            self.parse_const_expr("memory offset")?
+        } else {
+            0
+        };
         self.expect(&Tok::RBracket)?;
         Ok(match mnemonic {
             "ldrb" => Inst::Ldrb { rt, rn, offset: offset as u16 },
@@ -883,7 +890,7 @@ impl<'a> Parser<'a> {
         if self.eat(&Tok::RBracket) {
             // Post-index: [Xn], #off
             self.expect(&Tok::Comma)?;
-            let offset = self.expect_int()? as i16;
+            let offset = self.parse_const_expr("pair post-index offset")? as i16;
             return Ok(if is_load {
                 Inst::LdpPost64 { rt1, rt2, rn, offset }
             } else {
@@ -892,7 +899,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
-        let offset = self.expect_int()? as i16;
+        let offset = self.parse_const_expr("pair offset")? as i16;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
@@ -1017,7 +1024,7 @@ impl<'a> Parser<'a> {
                     if s.to_lowercase() == "lsl" {
                         self.advance(); // comma
                         self.advance(); // lsl
-                        let amount = self.expect_int()?;
+                        let amount = self.parse_const_expr("lsl amount")?;
                         if amount == 12 { return Ok(true); }
                         return Err(self.err(format!("expected lsl #12, got lsl #{}", amount)));
                     }
@@ -1033,7 +1040,7 @@ impl<'a> Parser<'a> {
             if s.to_lowercase() != "lsl" {
                 return Err(self.err(format!("expected 'lsl', got '{}'", s)));
             }
-            let amount = self.expect_int()? as u8;
+            let amount = self.parse_const_expr("lsl amount")? as u8;
             Ok(amount)
         } else {
             Ok(0)
@@ -1153,6 +1160,11 @@ mod tests {
     #[test]
     fn parse_add_imm_lsl12() {
         assert_eq!(parse_inst("add x0, x1, #42, lsl #12"), Inst::AddImm { rd: X0, rn: X1, imm12: 42, shift: true, sf: true });
+    }
+
+    #[test]
+    fn parse_add_immediate_expression() {
+        assert_eq!(parse_inst("add x0, x1, #1 + 2"), Inst::AddImm { rd: X0, rn: X1, imm12: 3, shift: false, sf: true });
     }
 
     #[test]
@@ -1380,6 +1392,11 @@ mod tests {
     }
 
     #[test]
+    fn parse_svc_expression() {
+        assert_eq!(parse_inst("svc #0x40 + 0x40"), Inst::Svc { imm16: 0x80 });
+    }
+
+    #[test]
     fn parse_nop_() {
         assert_eq!(parse_inst("nop"), Inst::Nop);
     }
@@ -1555,6 +1572,11 @@ _main:
     }
 
     #[test]
+    fn parse_branch_expression() {
+        assert_eq!(parse_inst("b #4 + 4"), Inst::B { offset: 8 });
+    }
+
+    #[test]
     fn parse_negative_bl() {
         assert_eq!(parse_inst("bl #-16"), Inst::Bl { offset: -16 });
     }
@@ -1597,6 +1619,11 @@ _main:
     }
 
     #[test]
+    fn parse_mov_wide_expression() {
+        assert_eq!(parse_inst("movz x0, #1 + 1, lsl #4 + 12"), Inst::Movz { rd: X0, imm16: 2, shift: 16, sf: true });
+    }
+
+    #[test]
     fn parse_cbnz_w() {
         assert_eq!(parse_inst("cbnz w5, #8"), Inst::Cbnz { rt: W5, offset: 8, sf: false });
     }
@@ -1604,6 +1631,11 @@ _main:
     #[test]
     fn parse_cbz_w() {
         assert_eq!(parse_inst("cbz w0, #12"), Inst::Cbz { rt: W0, offset: 12, sf: false });
+    }
+
+    #[test]
+    fn parse_memory_offset_expression() {
+        assert_eq!(parse_inst("ldr x0, [x1, #4 + 4]"), Inst::LdrImm64 { rt: X0, rn: X1, offset: 8 });
     }
 
     #[test]
