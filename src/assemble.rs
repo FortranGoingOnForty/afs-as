@@ -45,6 +45,7 @@ pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
     asm.prepare_expression_state(stmts)?;
     asm.reset_for_emission();
     asm.process(stmts)?;
+    asm.resolve_fixups()?;
     asm.finish()
 }
 
@@ -117,6 +118,8 @@ struct Assembler {
     section_bases: Vec<u64>,
     /// Symbol attributes declared via directives.
     symbol_attrs: BTreeMap<String, SymbolAttrs>,
+    /// Unresolved fixups captured during emission.
+    fixups: Vec<Fixup>,
     /// Pending relocations for each section.
     pending_relocs: Vec<Vec<PendingReloc>>,
 }
@@ -133,6 +136,23 @@ struct SymbolAttrs {
 struct CommonSymbol {
     size: u64,
     align_pow2: u8,
+}
+
+#[derive(Debug, Clone)]
+struct Fixup {
+    section: usize,
+    offset: u32,
+    expr: Expr,
+    kind: FixupKind,
+}
+
+#[derive(Debug, Clone)]
+enum FixupKind {
+    Branch26(Inst),
+    Branch19(Inst),
+    Page21,
+    PageOff12,
+    Data64,
 }
 
 struct PendingReloc {
@@ -155,6 +175,7 @@ impl Assembler {
             common_symbols: BTreeMap::new(),
             section_bases: Vec::new(),
             symbol_attrs: BTreeMap::new(),
+            fixups: Vec::new(),
             pending_relocs: vec![Vec::new()],
         }
     }
@@ -175,6 +196,7 @@ impl Assembler {
             section.has_instructions = false;
             section.size = 0;
         }
+        self.fixups.clear();
         self.pending_relocs.clear();
         self.pending_relocs.resize_with(self.sections.len(), Vec::new);
     }
@@ -224,55 +246,18 @@ impl Assembler {
                 Stmt::InstructionWithReloc(inst, label_ref) => {
                     self.sections[self.section].has_instructions = true;
                     let offset = self.current_offset() as u32;
-                    match label_ref.kind {
-                        RelocKind::Page21 | RelocKind::PageOff12 => {
-                            let word = inst.encode();
-                            self.emit_initialized_bytes(&word.to_le_bytes(), "relocated instruction")?;
-
-                            let reloc_type = match label_ref.kind {
-                                RelocKind::Page21 => crate::macho::ARM64_RELOC_PAGE21,
-                                RelocKind::PageOff12 => crate::macho::ARM64_RELOC_PAGEOFF12,
-                                _ => unreachable!(),
-                            };
-                            let pcrel = matches!(label_ref.kind, RelocKind::Page21);
-                            self.pending_relocs[self.section].push(PendingReloc {
-                                section: self.section,
-                                offset,
-                                symbol: label_ref.symbol.clone(),
-                                length: 2,
-                                reloc_type,
-                                pcrel,
-                            });
-                        }
-                        RelocKind::Branch26 => {
-                            if let Some((section, target)) = self.labels.get(&label_ref.symbol) {
-                                self.ensure_same_section(*section, &label_ref.symbol)?;
-                                let resolved = self.resolve_branch_fixup(inst, (*target as i64) - (offset as i64), 26)?;
-                                self.emit_initialized_bytes(&resolved.encode().to_le_bytes(), "branch instruction")?;
-                            } else {
-                                let word = inst.encode();
-                                self.emit_initialized_bytes(&word.to_le_bytes(), "branch instruction")?;
-                                self.pending_relocs[self.section].push(PendingReloc {
-                                    section: self.section,
-                                    offset,
-                                    symbol: label_ref.symbol.clone(),
-                                    length: 2,
-                                    reloc_type: crate::macho::ARM64_RELOC_BRANCH26,
-                                    pcrel: true,
-                                });
-                            }
-                        }
-                        RelocKind::Branch19 => {
-                            let (section, target) = self.labels.get(&label_ref.symbol)
-                                .ok_or_else(|| AsmError(format!(
-                                    "branch target '{}' requires an assembler-local label",
-                                    label_ref.symbol
-                                )))?;
-                            self.ensure_same_section(*section, &label_ref.symbol)?;
-                            let resolved = self.resolve_branch_fixup(inst, (*target as i64) - (offset as i64), 19)?;
-                            self.emit_initialized_bytes(&resolved.encode().to_le_bytes(), "branch instruction")?;
-                        }
-                    }
+                    self.emit_initialized_bytes(&inst.encode().to_le_bytes(), "fixup instruction")?;
+                    self.fixups.push(Fixup {
+                        section: self.section,
+                        offset,
+                        expr: Expr::Symbol(label_ref.symbol.clone()),
+                        kind: match label_ref.kind {
+                            RelocKind::Page21 => FixupKind::Page21,
+                            RelocKind::PageOff12 => FixupKind::PageOff12,
+                            RelocKind::Branch26 => FixupKind::Branch26(inst.clone()),
+                            RelocKind::Branch19 => FixupKind::Branch19(inst.clone()),
+                        },
+                    });
                 }
             }
         }
@@ -376,7 +361,14 @@ impl Assembler {
             }
             Directive::Quad(vals) => {
                 for expr in vals {
-                    self.emit_quad_expr(expr)?;
+                    let offset = self.current_offset() as u32;
+                    self.emit_initialized_bytes(&0u64.to_le_bytes(), ".quad")?;
+                    self.fixups.push(Fixup {
+                        section: self.section,
+                        offset,
+                        expr: expr.clone(),
+                        kind: FixupKind::Data64,
+                    });
                 }
             }
             Directive::Ascii(bytes) => self.emit_initialized_bytes(bytes, ".ascii")?,
@@ -537,6 +529,175 @@ impl Assembler {
         Ok(())
     }
 
+    fn resolve_fixups(&mut self) -> Result<(), AsmError> {
+        let fixups = std::mem::take(&mut self.fixups);
+        for fixup in fixups {
+            match fixup.kind.clone() {
+                FixupKind::Branch26(template) => self.resolve_branch_or_reloc(fixup, template, 26, true)?,
+                FixupKind::Branch19(template) => self.resolve_branch_or_reloc(fixup, template, 19, false)?,
+                FixupKind::Page21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true)?,
+                FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false)?,
+                FixupKind::Data64 => self.resolve_data64_fixup(fixup)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn resolve_branch_or_reloc(
+        &mut self,
+        fixup: Fixup,
+        template: Inst,
+        bits: u8,
+        allow_external: bool,
+    ) -> Result<(), AsmError> {
+        let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, "branch target")?;
+        if let Some((target_section, target_offset)) = self.labels.get(&symbol) {
+            self.ensure_same_section(fixup.section, *target_section, &symbol)?;
+            let delta = (*target_offset as i64)
+                .checked_sub(fixup.offset as i64)
+                .and_then(|value| value.checked_add(addend))
+                .ok_or_else(|| AsmError("branch offset overflows i64".into()))?;
+            let resolved = self.resolve_branch_fixup(&template, delta, bits)?;
+            self.patch_section_data(fixup.section, fixup.offset, &resolved.encode().to_le_bytes(), "branch fixup")?;
+            return Ok(());
+        }
+
+        if !allow_external {
+            return Err(AsmError(format!(
+                "branch target '{}' requires an assembler-local label",
+                symbol
+            )));
+        }
+        if addend != 0 {
+            return Err(AsmError(format!(
+                "external branch target '{}' must not include an addend",
+                symbol
+            )));
+        }
+
+        self.record_pending_reloc(
+            fixup.section,
+            fixup.offset,
+            symbol,
+            2,
+            crate::macho::ARM64_RELOC_BRANCH26,
+            true,
+        );
+        Ok(())
+    }
+
+    fn resolve_page_fixup(
+        &mut self,
+        fixup: Fixup,
+        reloc_type: u32,
+        pcrel: bool,
+    ) -> Result<(), AsmError> {
+        let context = if pcrel { "page fixup" } else { "pageoff fixup" };
+        let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, context)?;
+        if addend != 0 {
+            return Err(AsmError(format!(
+                "{} for '{}' must not include an addend",
+                context, symbol
+            )));
+        }
+        self.record_pending_reloc(fixup.section, fixup.offset, symbol, 2, reloc_type, pcrel);
+        Ok(())
+    }
+
+    fn resolve_data64_fixup(&mut self, fixup: Fixup) -> Result<(), AsmError> {
+        match self.classify_expr(&fixup.expr)? {
+            ClassifiedExpr::Absolute(value) => {
+                self.patch_section_data(fixup.section, fixup.offset, &(value as u64).to_le_bytes(), ".quad")?;
+            }
+            ClassifiedExpr::Relocatable { symbol, addend } => {
+                self.patch_section_data(fixup.section, fixup.offset, &(addend as u64).to_le_bytes(), ".quad")?;
+                self.record_pending_reloc(
+                    fixup.section,
+                    fixup.offset,
+                    symbol,
+                    3,
+                    crate::macho::ARM64_RELOC_UNSIGNED,
+                    false,
+                );
+            }
+            ClassifiedExpr::Difference { minuend, subtrahend, addend } => {
+                self.patch_section_data(fixup.section, fixup.offset, &(addend as u64).to_le_bytes(), ".quad")?;
+                self.record_pending_reloc(
+                    fixup.section,
+                    fixup.offset,
+                    subtrahend,
+                    3,
+                    crate::macho::ARM64_RELOC_SUBTRACTOR,
+                    false,
+                );
+                self.record_pending_reloc(
+                    fixup.section,
+                    fixup.offset,
+                    minuend,
+                    3,
+                    crate::macho::ARM64_RELOC_UNSIGNED,
+                    false,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn require_relocatable_symbol(&self, expr: &Expr, context: &str) -> Result<(String, i64), AsmError> {
+        match self.classify_expr(expr)? {
+            ClassifiedExpr::Relocatable { symbol, addend } => Ok((symbol, addend)),
+            ClassifiedExpr::Absolute(_) => Err(AsmError(format!(
+                "{} must resolve to a relocatable symbol",
+                context
+            ))),
+            ClassifiedExpr::Difference { .. } => Err(AsmError(format!(
+                "{} must resolve to a single relocatable symbol",
+                context
+            ))),
+        }
+    }
+
+    fn patch_section_data(
+        &mut self,
+        section_index: usize,
+        offset: u32,
+        bytes: &[u8],
+        context: &str,
+    ) -> Result<(), AsmError> {
+        let start = offset as usize;
+        let end = start + bytes.len();
+        let section = &mut self.sections[section_index];
+        if end > section.data.len() {
+            return Err(AsmError(format!(
+                "{} exceeds section {},{} bounds",
+                context,
+                section.segment,
+                section.name
+            )));
+        }
+        section.data[start..end].copy_from_slice(bytes);
+        Ok(())
+    }
+
+    fn record_pending_reloc(
+        &mut self,
+        section: usize,
+        offset: u32,
+        symbol: String,
+        length: u8,
+        reloc_type: u32,
+        pcrel: bool,
+    ) {
+        self.pending_relocs[section].push(PendingReloc {
+            section,
+            offset,
+            symbol,
+            length,
+            reloc_type,
+            pcrel,
+        });
+    }
+
     fn record_common_symbol(&mut self, name: &str, size: u64, align_pow2: u8) -> Result<(), AsmError> {
         if align_pow2 > 15 {
             return Err(AsmError(format!(
@@ -668,8 +829,8 @@ impl Assembler {
         }
     }
 
-    fn ensure_same_section(&self, target_section: usize, symbol: &str) -> Result<(), AsmError> {
-        if target_section == self.section {
+    fn ensure_same_section(&self, current_section: usize, target_section: usize, symbol: &str) -> Result<(), AsmError> {
+        if target_section == current_section {
             Ok(())
         } else {
             Err(AsmError(format!(
@@ -736,50 +897,6 @@ impl Assembler {
                 context
             ))),
         }
-    }
-
-    fn emit_quad_expr(&mut self, expr: &Expr) -> Result<(), AsmError> {
-        let offset = self.current_offset() as u32;
-        match self.classify_expr(expr)? {
-            ClassifiedExpr::Absolute(value) => {
-                self.emit_initialized_bytes(&(value as u64).to_le_bytes(), ".quad")?;
-            }
-            ClassifiedExpr::Relocatable { symbol, addend } => {
-                self.emit_initialized_bytes(&(addend as u64).to_le_bytes(), ".quad")?;
-                self.pending_relocs[self.section].push(PendingReloc {
-                    section: self.section,
-                    offset,
-                    symbol,
-                    length: 3,
-                    reloc_type: crate::macho::ARM64_RELOC_UNSIGNED,
-                    pcrel: false,
-                });
-            }
-            ClassifiedExpr::Difference {
-                minuend,
-                subtrahend,
-                addend,
-            } => {
-                self.emit_initialized_bytes(&(addend as u64).to_le_bytes(), ".quad")?;
-                self.pending_relocs[self.section].push(PendingReloc {
-                    section: self.section,
-                    offset,
-                    symbol: subtrahend,
-                    length: 3,
-                    reloc_type: crate::macho::ARM64_RELOC_SUBTRACTOR,
-                    pcrel: false,
-                });
-                self.pending_relocs[self.section].push(PendingReloc {
-                    section: self.section,
-                    offset,
-                    symbol: minuend,
-                    length: 3,
-                    reloc_type: crate::macho::ARM64_RELOC_UNSIGNED,
-                    pcrel: false,
-                });
-            }
-        }
-        Ok(())
     }
 
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
