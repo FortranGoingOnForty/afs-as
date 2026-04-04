@@ -103,6 +103,12 @@ const CASES: &[ProbeCase] = &[
         driver: "extern int read_tls_plus_one(void);\nint main(void) { return read_tls_plus_one() != 6; }\n",
         support: None,
     },
+    ProbeCase {
+        name: "atomics",
+        source: "atomics.c",
+        driver: "extern int add_and_fetch(int);\nextern int load_then_store(int);\nint main(void) {\n    return (add_and_fetch(4) != 4) || (load_then_store(7) != 4) || (add_and_fetch(1) != 12);\n}\n",
+        support: None,
+    },
 ];
 
 fn probe_source_path(name: &str) -> PathBuf {
