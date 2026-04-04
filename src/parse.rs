@@ -589,6 +589,16 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn starts_non_register_literal_reference(&self) -> bool {
+        if self.numeric_label_ref_at(self.pos).is_some() {
+            return true;
+        }
+        match self.peek() {
+            Tok::Ident(name) => !looks_like_gp_register_name(name) && !looks_like_fp_register_name(name),
+            _ => false,
+        }
+    }
+
     fn define_numeric_label(&mut self, number: u32) -> String {
         let ordinal = self.numeric_labels.entry(number).or_insert(0);
         *ordinal += 1;
@@ -1231,6 +1241,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldr_str(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
+        if self.starts_fp_register_like_operand() {
+            return self.parse_ldr_str_fp(is_load);
+        }
+        self.parse_ldr_str_gp(is_load)
+    }
+
+    fn parse_ldr_str_gp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
 
@@ -1244,7 +1261,7 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::Instruction(inst));
         }
 
-        if is_load && self.starts_non_register_symbol_reference() {
+        if is_load && self.starts_non_register_literal_reference() {
             let label = self.parse_label_reference()?;
             let inst = if sf {
                 Inst::LdrLit64 { rt, offset: 0 }
@@ -1331,6 +1348,95 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Instruction(inst))
     }
 
+    fn parse_ldr_str_fp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
+        let (rt, is_double) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+
+        if is_load && self.starts_immediate_expr() {
+            let offset = self.parse_immediate_const_expr("ldr literal offset")? as i32;
+            let inst = if is_double {
+                Inst::LdrFpLit64 { rt, offset }
+            } else {
+                Inst::LdrFpLit32 { rt, offset }
+            };
+            return Ok(Stmt::Instruction(inst));
+        }
+
+        if is_load && self.starts_non_register_literal_reference() {
+            let label = self.parse_label_reference()?;
+            let inst = if is_double {
+                Inst::LdrFpLit64 { rt, offset: 0 }
+            } else {
+                Inst::LdrFpLit32 { rt, offset: 0 }
+            };
+            return Ok(Stmt::InstructionWithReloc(
+                inst,
+                LabelRef { symbol: label, kind: RelocKind::Literal19 },
+            ));
+        }
+
+        if !is_load && self.peek() != &Tok::LBracket {
+            return Err(self.err("STR expects a bracketed memory operand".into()));
+        }
+
+        self.expect(&Tok::LBracket)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+
+        if self.eat(&Tok::RBracket) {
+            if self.eat(&Tok::Comma) {
+                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                let inst = match (is_load, is_double) {
+                    (true, true) => Inst::LdrFpPost64 { rt, rn, offset },
+                    (false, true) => Inst::StrFpPost64 { rt, rn, offset },
+                    (true, false) => Inst::LdrFpPost32 { rt, rn, offset },
+                    (false, false) => Inst::StrFpPost32 { rt, rn, offset },
+                };
+                return Ok(Stmt::Instruction(inst));
+            }
+            let inst = match (is_load, is_double) {
+                (true, true) => Inst::LdrFpImm64 { rt, rn, offset: 0 },
+                (false, true) => Inst::StrFpImm64 { rt, rn, offset: 0 },
+                (true, false) => Inst::LdrFpImm32 { rt, rn, offset: 0 },
+                (false, false) => Inst::StrFpImm32 { rt, rn, offset: 0 },
+            };
+            return Ok(Stmt::Instruction(inst));
+        }
+
+        self.expect(&Tok::Comma)?;
+        if self.starts_register_like_operand() {
+            let (rm, extend, shift) = self.parse_reg_offset_operand(if is_double { 3 } else { 2 })?;
+            self.expect(&Tok::RBracket)?;
+            let inst = match (is_load, is_double) {
+                (true, true) => Inst::LdrFpReg64 { rt, rn, rm, extend, shift },
+                (false, true) => Inst::StrFpReg64 { rt, rn, rm, extend, shift },
+                (true, false) => Inst::LdrFpReg32 { rt, rn, rm, extend, shift },
+                (false, false) => Inst::StrFpReg32 { rt, rn, rm, extend, shift },
+            };
+            return Ok(Stmt::Instruction(inst));
+        }
+
+        let offset = self.parse_immediate_const_expr("memory offset")?;
+        self.expect(&Tok::RBracket)?;
+
+        if self.eat(&Tok::Bang) {
+            let inst = match (is_load, is_double) {
+                (true, true) => Inst::LdrFpPre64 { rt, rn, offset: offset as i16 },
+                (false, true) => Inst::StrFpPre64 { rt, rn, offset: offset as i16 },
+                (true, false) => Inst::LdrFpPre32 { rt, rn, offset: offset as i16 },
+                (false, false) => Inst::StrFpPre32 { rt, rn, offset: offset as i16 },
+            };
+            return Ok(Stmt::Instruction(inst));
+        }
+
+        let inst = match (is_load, is_double) {
+            (true, true) => Inst::LdrFpImm64 { rt, rn, offset: offset as u16 },
+            (false, true) => Inst::StrFpImm64 { rt, rn, offset: offset as u16 },
+            (true, false) => Inst::LdrFpImm32 { rt, rn, offset: offset as u16 },
+            (false, false) => Inst::StrFpImm32 { rt, rn, offset: offset as u16 },
+        };
+        Ok(Stmt::Instruction(inst))
+    }
+
     fn parse_ldrb_h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let rt = self.parse_gp_reg()?;
         self.expect(&Tok::Comma)?;
@@ -1375,7 +1481,7 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::Instruction(Inst::LdrswLit { rt, offset }));
         }
 
-        if self.starts_non_register_symbol_reference() {
+        if self.starts_non_register_literal_reference() {
             let label = self.parse_label_reference()?;
             return Ok(Stmt::InstructionWithReloc(
                 Inst::LdrswLit { rt, offset: 0 },
@@ -1670,6 +1776,10 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
     }
 
+    fn starts_fp_register_like_operand(&self) -> bool {
+        matches!(self.peek(), Tok::Ident(name) if looks_like_fp_register_name(name))
+    }
+
     fn parse_reg_offset_operand(
         &mut self,
         scale: u8,
@@ -1772,6 +1882,10 @@ fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
     if num > 31 { return None; }
     let _ = prefix;
     Some(FpReg::new(num))
+}
+
+fn looks_like_fp_register_name(name: &str) -> bool {
+    parse_fp_reg_name(name).is_some()
 }
 
 fn parse_condition(s: &str) -> Option<Cond> {
@@ -2237,6 +2351,42 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldr_d_base() {
+        assert_eq!(parse_inst("ldr d0, [x1]"), Inst::LdrFpImm64 { rt: D0, rn: X1, offset: 0 });
+    }
+
+    #[test]
+    fn parse_str_d_offset() {
+        assert_eq!(parse_inst("str d2, [x3, #16]"), Inst::StrFpImm64 { rt: D2, rn: X3, offset: 16 });
+    }
+
+    #[test]
+    fn parse_ldr_s_register_offset() {
+        assert_eq!(
+            parse_inst("ldr s4, [x5, x6]"),
+            Inst::LdrFpReg32 { rt: S4, rn: X5, rm: X6, extend: AddrExtend::Lsl, shift: false }
+        );
+    }
+
+    #[test]
+    fn parse_str_s_register_offset_with_extend() {
+        assert_eq!(
+            parse_inst("str s7, [x8, w9, uxtw #2]"),
+            Inst::StrFpReg32 { rt: S7, rn: X8, rm: W9, extend: AddrExtend::Uxtw, shift: true }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_d_post_index() {
+        assert_eq!(parse_inst("ldr d0, [sp], #8"), Inst::LdrFpPost64 { rt: D0, rn: SP, offset: 8 });
+    }
+
+    #[test]
+    fn parse_str_s_pre_index() {
+        assert_eq!(parse_inst("str s3, [sp, #-8]!"), Inst::StrFpPre32 { rt: S3, rn: SP, offset: -8 });
+    }
+
+    #[test]
     fn parse_ldrb_() {
         assert_eq!(parse_inst("ldrb w0, [x1, #3]"), Inst::Ldrb { rt: W0, rn: X1, offset: 3 });
     }
@@ -2282,12 +2432,42 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldr_d_literal_label() {
+        assert_eq!(
+            parse_stmts("ldr d10, target"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::LdrFpLit64 { rt: D10, offset: 0 },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_ldr_s_literal_offset() {
+        assert_eq!(parse_inst("ldr s11, #20"), Inst::LdrFpLit32 { rt: S11, offset: 20 });
+    }
+
+    #[test]
     fn parse_ldr_literal_numeric_local_label() {
         assert_eq!(
             parse_stmts("ldr x0, 1f\n1:\n"),
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::LdrLit64 { rt: X0, offset: 0 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19 },
+                ),
+                Stmt::Label(".Ltmp$1$1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_ldr_s_literal_numeric_local_label() {
+        assert_eq!(
+            parse_stmts("ldr s0, 1f\n1:\n"),
+            vec![
+                Stmt::InstructionWithReloc(
+                    Inst::LdrFpLit32 { rt: S0, offset: 0 },
                     LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19 },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),

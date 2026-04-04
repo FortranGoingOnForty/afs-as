@@ -905,6 +905,8 @@ impl Assembler {
             Inst::LdrLit64 { rt, .. } => Ok(Inst::LdrLit64 { rt: *rt, offset: checked }),
             Inst::LdrLit32 { rt, .. } => Ok(Inst::LdrLit32 { rt: *rt, offset: checked }),
             Inst::LdrswLit { rt, .. } => Ok(Inst::LdrswLit { rt: *rt, offset: checked }),
+            Inst::LdrFpLit64 { rt, .. } => Ok(Inst::LdrFpLit64 { rt: *rt, offset: checked }),
+            Inst::LdrFpLit32 { rt, .. } => Ok(Inst::LdrFpLit32 { rt: *rt, offset: checked }),
             _ => Err(AsmError("internal error: invalid literal fixup instruction".into())),
         }
     }
@@ -1797,6 +1799,18 @@ mod tests {
     fn assemble_ldrsw_literal_local_label() {
         let obj = assemble_source(".text\nldrsw x0, target\nret\ntarget:\n.word -1\n").unwrap();
         assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrswLit { rt: X0, offset: 8 }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_ldr_d_literal_local_label() {
+        let obj = assemble_source(".text\nldr d0, target\nret\n.p2align 3\ntarget:\n.quad 42\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrFpLit64 { rt: D0, offset: 8 }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_ldr_s_literal_local_label() {
+        let obj = assemble_source(".text\nldr s0, target\nret\ntarget:\n.word 42\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrFpLit32 { rt: S0, offset: 8 }.encode().to_le_bytes());
     }
 
     #[test]
