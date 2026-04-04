@@ -170,6 +170,7 @@ enum FixupKind {
     PageOff12,
     GotLoadPageOff12,
     TlvpLoadPageOff12,
+    Data32,
     Data64,
 }
 
@@ -607,8 +608,27 @@ impl Assembler {
             }
             Directive::Word(vals) => {
                 for expr in vals {
-                    let value = self.require_absolute_expr(expr, ".word expression")?;
-                    self.emit_initialized_bytes(&(value as u32).to_le_bytes(), ".word")?;
+                    match self.classify_expr(expr)? {
+                        ClassifiedExpr::Absolute(value) => {
+                            self.emit_initialized_bytes(&(value as u32).to_le_bytes(), ".word")?;
+                        }
+                        ClassifiedExpr::PointerToGot { .. } => {
+                            let offset = self.current_offset() as u32;
+                            self.emit_initialized_bytes(&0u32.to_le_bytes(), ".word")?;
+                            self.fixups.push(Fixup {
+                                section: self.section,
+                                offset,
+                                expr: expr.clone(),
+                                kind: FixupKind::Data32,
+                            });
+                        }
+                        _ => {
+                            return Err(AsmError(
+                                ".word expression must resolve to an absolute value or pointer-to-GOT relocation"
+                                    .into(),
+                            ));
+                        }
+                    }
                 }
             }
             Directive::Quad(vals) => {
@@ -987,6 +1007,7 @@ impl Assembler {
                 FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false)?,
                 FixupKind::GotLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGEOFF12, false)?,
                 FixupKind::TlvpLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGEOFF12, false)?,
+                FixupKind::Data32 => self.resolve_data32_fixup(fixup)?,
                 FixupKind::Data64 => self.resolve_data64_fixup(fixup)?,
             }
         }
@@ -1125,8 +1146,46 @@ impl Assembler {
                     false,
                 );
             }
+            ClassifiedExpr::PointerToGot { symbol, addend, pcrel } => {
+                self.patch_section_data(fixup.section, fixup.offset, &(addend as u64).to_le_bytes(), ".quad")?;
+                self.record_pending_reloc(
+                    fixup.section,
+                    fixup.offset,
+                    symbol,
+                    3,
+                    crate::macho::ARM64_RELOC_POINTER_TO_GOT,
+                    pcrel,
+                );
+            }
         }
         Ok(())
+    }
+
+    fn resolve_data32_fixup(&mut self, fixup: Fixup) -> Result<(), AsmError> {
+        match self.classify_expr(&fixup.expr)? {
+            ClassifiedExpr::Absolute(value) => {
+                self.patch_section_data(fixup.section, fixup.offset, &(value as u32).to_le_bytes(), ".word")?;
+                Ok(())
+            }
+            ClassifiedExpr::PointerToGot { symbol, addend, pcrel } => {
+                self.patch_section_data(fixup.section, fixup.offset, &(addend as u32).to_le_bytes(), ".word")?;
+                self.record_pending_reloc(
+                    fixup.section,
+                    fixup.offset,
+                    symbol,
+                    2,
+                    crate::macho::ARM64_RELOC_POINTER_TO_GOT,
+                    pcrel,
+                );
+                Ok(())
+            }
+            ClassifiedExpr::Relocatable { .. } | ClassifiedExpr::Difference { .. } => {
+                Err(AsmError(
+                    ".word expression must resolve to an absolute value or pointer-to-GOT relocation"
+                        .into(),
+                ))
+            }
+        }
     }
 
     fn require_relocatable_symbol(&self, expr: &Expr, context: &str) -> Result<(String, i64), AsmError> {
@@ -1136,7 +1195,7 @@ impl Assembler {
                 "{} must resolve to a relocatable symbol",
                 context
             ))),
-            ClassifiedExpr::Difference { .. } => Err(AsmError(format!(
+            ClassifiedExpr::Difference { .. } | ClassifiedExpr::PointerToGot { .. } => Err(AsmError(format!(
                 "{} must resolve to a single relocatable symbol",
                 context
             ))),
@@ -1404,7 +1463,9 @@ impl Assembler {
     fn require_absolute_expr(&self, expr: &Expr, context: &str) -> Result<i64, AsmError> {
         match self.classify_expr(expr)? {
             ClassifiedExpr::Absolute(value) => Ok(value),
-            _ => Err(AsmError(format!(
+            ClassifiedExpr::Relocatable { .. }
+            | ClassifiedExpr::Difference { .. }
+            | ClassifiedExpr::PointerToGot { .. } => Err(AsmError(format!(
                 "{} must resolve to an absolute value",
                 context
             ))),
@@ -2760,6 +2821,30 @@ mod tests {
         assert_eq!(relocs[0].length, 3);
         assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "foo");
         assert_eq!(&data_bytes(&obj)[1..9], &[0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn assemble_quad_got_expression_creates_pointer_to_got_relocation() {
+        let obj = assemble_source(".data\n.quad _puts@GOT\n").unwrap();
+        let relocs = data_relocs(&obj);
+        assert_eq!(relocs.len(), 1);
+        assert_eq!(relocs[0].reloc_type, crate::macho::ARM64_RELOC_POINTER_TO_GOT);
+        assert_eq!(relocs[0].length, 3);
+        assert!(!relocs[0].pcrel);
+        assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "_puts");
+        assert_eq!(&data_bytes(&obj)[..8], &[0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn assemble_word_got_pcrel_expression_creates_pointer_to_got_relocation() {
+        let obj = assemble_source(".text\n.long _puts@GOT - .\n").unwrap();
+        let relocs = text_relocs(&obj);
+        assert_eq!(relocs.len(), 1);
+        assert_eq!(relocs[0].reloc_type, crate::macho::ARM64_RELOC_POINTER_TO_GOT);
+        assert_eq!(relocs[0].length, 2);
+        assert!(relocs[0].pcrel);
+        assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "_puts");
+        assert_eq!(&text_bytes(&obj)[..4], &[0, 0, 0, 0]);
     }
 
     #[test]

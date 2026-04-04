@@ -5,7 +5,7 @@
 //! to their canonical forms.
 
 use crate::encode::{AddrExtend, BarrierOpt, Inst, RegExtend, RegShift};
-use crate::expr::{self, Expr};
+use crate::expr::{self, Expr, SymbolModifier};
 use crate::lex::{Tok, Token, Lexer, LexError};
 use crate::reg::*;
 
@@ -649,7 +649,26 @@ impl<'a> Parser<'a> {
             }
             Tok::Ident(symbol) => {
                 self.advance();
-                Ok(Expr::Symbol(symbol))
+                if self.eat(&Tok::At) {
+                    let modifier = self.expect_ident()?;
+                    let upper = modifier.to_ascii_uppercase();
+                    match upper.as_str() {
+                        "GOT" => Ok(Expr::ModifiedSymbol {
+                            symbol,
+                            modifier: SymbolModifier::Got,
+                        }),
+                        _ => Err(self.err(format!(
+                            "unsupported relocation modifier '@{}' in expression",
+                            modifier
+                        ))),
+                    }
+                } else {
+                    Ok(Expr::Symbol(symbol))
+                }
+            }
+            Tok::Dot => {
+                self.advance();
+                Ok(Expr::CurrentLocation)
             }
             Tok::LParen => {
                 self.advance();
@@ -3469,6 +3488,31 @@ _main:
             vec![Stmt::Directive(Directive::Quad(vec![Expr::Sub(
                 Box::new(Expr::Symbol("foo".into())),
                 Box::new(Expr::Int(1)),
+            )]))]
+        );
+    }
+
+    #[test]
+    fn parse_quad_got_expression() {
+        assert_eq!(
+            parse_stmts(".quad _puts@GOT"),
+            vec![Stmt::Directive(Directive::Quad(vec![Expr::ModifiedSymbol {
+                symbol: "_puts".into(),
+                modifier: SymbolModifier::Got,
+            }]))]
+        );
+    }
+
+    #[test]
+    fn parse_word_got_pcrel_expression() {
+        assert_eq!(
+            parse_stmts(".long _puts@GOT - ."),
+            vec![Stmt::Directive(Directive::Word(vec![Expr::Sub(
+                Box::new(Expr::ModifiedSymbol {
+                    symbol: "_puts".into(),
+                    modifier: SymbolModifier::Got,
+                }),
+                Box::new(Expr::CurrentLocation),
             )]))]
         );
     }

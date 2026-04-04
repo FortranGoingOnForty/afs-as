@@ -7,9 +7,16 @@ use std::fmt;
 pub enum Expr {
     Int(i64),
     Symbol(String),
+    ModifiedSymbol { symbol: String, modifier: SymbolModifier },
+    CurrentLocation,
     UnaryMinus(Box<Expr>),
     Add(Box<Expr>, Box<Expr>),
     Sub(Box<Expr>, Box<Expr>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolModifier {
+    Got,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +37,7 @@ pub enum ClassifiedExpr {
     Absolute(i64),
     Relocatable { symbol: String, addend: i64 },
     Difference { minuend: String, subtrahend: String, addend: i64 },
+    PointerToGot { symbol: String, addend: i64, pcrel: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +79,10 @@ pub fn eval_with_symbols(expr: &Expr, symbols: &BTreeMap<String, i64>) -> Result
             .get(symbol)
             .copied()
             .ok_or_else(|| EvalError::UndefinedSymbol(symbol.clone())),
+        Expr::ModifiedSymbol { symbol, .. } => {
+            Err(EvalError::UndefinedSymbol(format!("{}@GOT", symbol)))
+        }
+        Expr::CurrentLocation => Err(EvalError::UndefinedSymbol(".".into())),
         Expr::UnaryMinus(inner) => eval_with_symbols(inner, symbols)?
             .checked_neg()
             .ok_or(EvalError::Overflow),
@@ -101,22 +113,32 @@ pub fn classify(
     let mut defined_groups: BTreeMap<usize, Vec<(String, i64, i32)>> = BTreeMap::new();
     let mut defined_order = Vec::new();
     let mut remaining = Vec::new();
+    let mut got_terms = Vec::new();
+    let mut current_location_coeff = 0;
 
-    for (symbol, coeff) in terms {
-        match symbols.get(&symbol).copied().unwrap_or(SymbolValue::Undefined) {
-            SymbolValue::Absolute(value) => {
-                constant = checked_add(constant, checked_mul(value, coeff as i64)?)?;
-            }
-            SymbolValue::Defined { section, value } => {
-                if !defined_groups.contains_key(&section) {
-                    defined_order.push(section);
+    for (term, coeff) in terms {
+        match term {
+            Term::Plain(symbol) => match symbols.get(&symbol).copied().unwrap_or(SymbolValue::Undefined) {
+                SymbolValue::Absolute(value) => {
+                    constant = checked_add(constant, checked_mul(value, coeff as i64)?)?;
                 }
-                defined_groups
-                    .entry(section)
-                    .or_default()
-                    .push((symbol, value, coeff));
+                SymbolValue::Defined { section, value } => {
+                    if !defined_groups.contains_key(&section) {
+                        defined_order.push(section);
+                    }
+                    defined_groups
+                        .entry(section)
+                        .or_default()
+                        .push((symbol, value, coeff));
+                }
+                SymbolValue::Undefined => push_plain_term(&mut remaining, symbol, coeff),
+            },
+            Term::Modified { symbol, modifier: SymbolModifier::Got } => {
+                push_plain_term(&mut got_terms, symbol, coeff);
             }
-            SymbolValue::Undefined => push_term(&mut remaining, symbol, coeff),
+            Term::CurrentLocation => {
+                current_location_coeff += coeff;
+            }
         }
     }
 
@@ -139,7 +161,7 @@ pub fn classify(
                         checked_mul(checked_sub(*value, *anchor_value)?, *coeff as i64)?,
                     )?;
                 }
-                push_term(&mut remaining, anchor_symbol.clone(), section_sum);
+                push_plain_term(&mut remaining, anchor_symbol.clone(), section_sum);
             }
             other => {
                 return Err(ClassifyError::Illegal(format!(
@@ -151,6 +173,30 @@ pub fn classify(
     }
 
     remaining.retain(|(_, coeff)| *coeff != 0);
+    got_terms.retain(|(_, coeff)| *coeff != 0);
+
+    if !got_terms.is_empty() || current_location_coeff != 0 {
+        if !remaining.is_empty() {
+            return Err(ClassifyError::Illegal(
+                "pointer-to-GOT expression cannot be combined with plain relocatable symbols".into(),
+            ));
+        }
+        if got_terms.len() != 1 || got_terms[0].1 != 1 {
+            return Err(ClassifyError::Illegal(
+                "expression is not representable as a pointer-to-GOT relocation".into(),
+            ));
+        }
+        if current_location_coeff != 0 && current_location_coeff != -1 {
+            return Err(ClassifyError::Illegal(
+                "pointer-to-GOT expression may subtract current location only once".into(),
+            ));
+        }
+        return Ok(ClassifiedExpr::PointerToGot {
+            symbol: got_terms[0].0.clone(),
+            addend: constant,
+            pcrel: current_location_coeff == -1,
+        });
+    }
 
     match remaining.as_slice() {
         [] => Ok(ClassifiedExpr::Absolute(constant)),
@@ -178,6 +224,8 @@ fn collect_symbols(expr: &Expr, out: &mut Vec<String>) {
     match expr {
         Expr::Int(_) => {}
         Expr::Symbol(symbol) => out.push(symbol.clone()),
+        Expr::ModifiedSymbol { symbol, .. } => out.push(symbol.clone()),
+        Expr::CurrentLocation => {}
         Expr::UnaryMinus(inner) => collect_symbols(inner, out),
         Expr::Add(lhs, rhs) | Expr::Sub(lhs, rhs) => {
             collect_symbols(lhs, out);
@@ -190,7 +238,7 @@ fn linearize(
     expr: &Expr,
     sign: i32,
     constant: &mut i64,
-    terms: &mut Vec<(String, i32)>,
+    terms: &mut Vec<(Term, i32)>,
 ) -> Result<(), ClassifyError> {
     match expr {
         Expr::Int(value) => {
@@ -203,7 +251,15 @@ fn linearize(
             Ok(())
         }
         Expr::Symbol(symbol) => {
-            push_term(terms, symbol.clone(), sign);
+            push_term(terms, Term::Plain(symbol.clone()), sign);
+            Ok(())
+        }
+        Expr::ModifiedSymbol { symbol, modifier } => {
+            push_term(terms, Term::Modified { symbol: symbol.clone(), modifier: *modifier }, sign);
+            Ok(())
+        }
+        Expr::CurrentLocation => {
+            push_term(terms, Term::CurrentLocation, sign);
             Ok(())
         }
         Expr::UnaryMinus(inner) => linearize(inner, -sign, constant, terms),
@@ -218,7 +274,22 @@ fn linearize(
     }
 }
 
-fn push_term(terms: &mut Vec<(String, i32)>, symbol: String, delta: i32) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Term {
+    Plain(String),
+    Modified { symbol: String, modifier: SymbolModifier },
+    CurrentLocation,
+}
+
+fn push_term(terms: &mut Vec<(Term, i32)>, term: Term, delta: i32) {
+    if let Some((_, coeff)) = terms.iter_mut().find(|(existing, _)| *existing == term) {
+        *coeff += delta;
+    } else {
+        terms.push((term, delta));
+    }
+}
+
+fn push_plain_term(terms: &mut Vec<(String, i32)>, symbol: String, delta: i32) {
     if let Some((_, coeff)) = terms.iter_mut().find(|(name, _)| *name == symbol) {
         *coeff += delta;
     } else {
@@ -321,6 +392,43 @@ mod tests {
         assert_eq!(
             classify(&expr, &symbols).unwrap(),
             ClassifiedExpr::Relocatable { symbol: "foo".into(), addend: 4 }
+        );
+    }
+
+    #[test]
+    fn classify_pointer_to_got() {
+        let expr = Expr::ModifiedSymbol {
+            symbol: "_puts".into(),
+            modifier: SymbolModifier::Got,
+        };
+        let symbols = BTreeMap::new();
+        assert_eq!(
+            classify(&expr, &symbols).unwrap(),
+            ClassifiedExpr::PointerToGot {
+                symbol: "_puts".into(),
+                addend: 0,
+                pcrel: false,
+            }
+        );
+    }
+
+    #[test]
+    fn classify_pointer_to_got_pcrel() {
+        let expr = Expr::Sub(
+            Box::new(Expr::ModifiedSymbol {
+                symbol: "_puts".into(),
+                modifier: SymbolModifier::Got,
+            }),
+            Box::new(Expr::CurrentLocation),
+        );
+        let symbols = BTreeMap::new();
+        assert_eq!(
+            classify(&expr, &symbols).unwrap(),
+            ClassifiedExpr::PointerToGot {
+                symbol: "_puts".into(),
+                addend: 0,
+                pcrel: true,
+            }
         );
     }
 }

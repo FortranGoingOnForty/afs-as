@@ -214,6 +214,38 @@ fn corpus_clang_tlvp_load_matches_raw_object() {
 }
 
 #[test]
+fn corpus_got_pointer_data_matches_raw_object() {
+    let paths = assemble_fixture("got_pointer_data.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_relocations(&paths.obj)),
+        normalize_tool_output(&common::object_relocations(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_got_pointer_data_links_relocatable_with_support() {
+    let paths = assemble_fixture("got_pointer_data.s");
+    let root = paths.asm.parent().expect("temp root");
+    let support = root.join("link-support.o");
+    let ours_linked = root.join("ours-linked.o");
+    let ref_linked = root.join("ref-linked.o");
+
+    common::assemble_link_support(&support);
+    common::link_relocatable_with_system(&[&paths.obj, &support], &ours_linked);
+    common::link_relocatable_with_system(&[&paths.ref_obj, &support], &ref_linked);
+
+    assert_eq!(
+        normalize_tool_output(&common::object_undefined_symbols(&ours_linked)),
+        normalize_tool_output(&common::object_undefined_symbols(&ref_linked))
+    );
+}
+
+#[test]
 fn corpus_shifted_addsub_matches_text_bytes() {
     let paths = assemble_fixture("shifted_addsub.s");
     assert_eq!(
