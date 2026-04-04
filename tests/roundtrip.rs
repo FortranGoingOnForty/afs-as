@@ -127,9 +127,18 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_str64()      { roundtrip(".text\nstr x2, [x3, #32]\n"); }
 #[test] fn rt_ldr32()      { roundtrip(".text\nldr w4, [x5, #12]\n"); }
 #[test] fn rt_str32()      { roundtrip(".text\nstr w6, [x7, #16]\n"); }
+#[test] fn rt_ldr_lit64()  { roundtrip(".text\nldr x0, #8\n"); }
+#[test] fn rt_ldr_lit32()  { roundtrip(".text\nldr w1, #12\n"); }
+#[test] fn rt_ldr64_reg()  { roundtrip(".text\nldr x0, [x1, x2]\n"); }
+#[test] fn rt_ldr64_reg_uxtw() { roundtrip(".text\nldr x6, [x7, w8, uxtw #3]\n"); }
+#[test] fn rt_str64_reg()  { roundtrip(".text\nstr x12, [x13, x14]\n"); }
 #[test] fn rt_ldrb()       { roundtrip(".text\nldrb w0, [x1, #3]\n"); }
 #[test] fn rt_ldrh()       { roundtrip(".text\nldrh w2, [x3, #6]\n"); }
 #[test] fn rt_ldrsw()      { roundtrip(".text\nldrsw x0, [x1, #8]\n"); }
+#[test] fn rt_ldrh_reg()   { roundtrip(".text\nldrh w3, [x4, w5, uxtw #1]\n"); }
+#[test] fn rt_ldrb_reg()   { roundtrip(".text\nldrb w0, [x1, x2]\n"); }
+#[test] fn rt_ldrsw_reg()  { roundtrip(".text\nldrsw x6, [x7, w8, sxtw #2]\n"); }
+#[test] fn rt_ldrsw_lit()  { roundtrip(".text\nldrsw x1, #8\n"); }
 #[test] fn rt_stp_pre()    { roundtrip(".text\nstp x29, x30, [sp, #-16]!\n"); }
 #[test] fn rt_stp_post()   { roundtrip(".text\nstp x29, x30, [sp], #16\n"); }
 #[test] fn rt_ldp_pre()    { roundtrip(".text\nldp x29, x30, [sp, #-16]!\n"); }

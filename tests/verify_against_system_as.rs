@@ -12,7 +12,7 @@
 use std::io::Write;
 use std::process::Command;
 
-use afs_as::encode::Inst;
+use afs_as::encode::{AddrExtend, Inst};
 use afs_as::reg::*;
 
 /// Assemble a single ARM64 instruction with Apple `as` and return its 4-byte encoding.
@@ -118,9 +118,18 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_str64()    { verify("str x3, [x4, #32]",  Inst::StrImm64 { rt: X3, rn: X4, offset: 32 }); }
 #[test] fn sys_ldr32()    { verify("ldr w3, [x4, #12]",  Inst::LdrImm32 { rt: W3, rn: X4, offset: 12 }); }
 #[test] fn sys_str32()    { verify("str w3, [x4, #16]",  Inst::StrImm32 { rt: W3, rn: X4, offset: 16 }); }
+#[test] fn sys_ldr_lit64() { verify("ldr x0, #8", Inst::LdrLit64 { rt: X0, offset: 8 }); }
+#[test] fn sys_ldr_lit32() { verify("ldr w1, #12", Inst::LdrLit32 { rt: W1, offset: 12 }); }
+#[test] fn sys_ldr64_reg() { verify("ldr x0, [x1, x2]", Inst::LdrReg64 { rt: X0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }); }
+#[test] fn sys_ldr64_reg_uxtw() { verify("ldr x6, [x7, w8, uxtw #3]", Inst::LdrReg64 { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Uxtw, shift: true }); }
+#[test] fn sys_str64_reg() { verify("str x12, [x13, x14]", Inst::StrReg64 { rt: X12, rn: X13, rm: X14, extend: AddrExtend::Lsl, shift: false }); }
 #[test] fn sys_ldrb()     { verify("ldrb w0, [x1, #3]",  Inst::Ldrb { rt: W0, rn: X1, offset: 3 }); }
 #[test] fn sys_ldrh()     { verify("ldrh w0, [x1, #6]",  Inst::Ldrh { rt: W0, rn: X1, offset: 6 }); }
 #[test] fn sys_ldrsw()    { verify("ldrsw x0, [x1, #8]", Inst::Ldrsw { rt: X0, rn: X1, offset: 8 }); }
+#[test] fn sys_ldrh_reg() { verify("ldrh w3, [x4, w5, uxtw #1]", Inst::LdrhReg { rt: W3, rn: X4, rm: W5, extend: AddrExtend::Uxtw, shift: true }); }
+#[test] fn sys_ldrb_reg() { verify("ldrb w0, [x1, x2]", Inst::LdrbReg { rt: W0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }); }
+#[test] fn sys_ldrsw_reg() { verify("ldrsw x6, [x7, w8, sxtw #2]", Inst::LdrswReg { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Sxtw, shift: true }); }
+#[test] fn sys_ldrsw_lit() { verify("ldrsw x1, #8", Inst::LdrswLit { rt: X1, offset: 8 }); }
 
 // ---- Load/Store pair ----
 

@@ -46,6 +46,15 @@ fn corpus_numeric_local_labels_match_text_bytes() {
 }
 
 #[test]
+fn corpus_addressing_surface_matches_text_bytes() {
+    let paths = assemble_fixture("addressing_surface.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
 fn corpus_external_call_matches_relocations_and_symbols() {
     let paths = assemble_fixture("external_call.s");
 
