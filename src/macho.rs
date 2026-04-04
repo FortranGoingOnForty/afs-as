@@ -68,25 +68,13 @@ pub struct Relocation {
 }
 
 /// Assembled object file ready for Mach-O emission.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ObjectFile {
     pub text: Vec<u8>,
     pub data: Vec<u8>,
     pub symbols: Vec<Symbol>,
     pub text_relocs: Vec<Relocation>,
     pub text_align: u32,   // power of 2
-}
-
-impl Default for ObjectFile {
-    fn default() -> Self {
-        Self {
-            text: Vec::new(),
-            data: Vec::new(),
-            symbols: Vec::new(),
-            text_relocs: Vec::new(),
-            text_align: 0,
-        }
-    }
 }
 
 impl ObjectFile {
@@ -272,7 +260,7 @@ fn build_string_table(symbols: &[Symbol]) -> Vec<u8> {
         tab.push(0);
     }
     // Pad to 4-byte alignment.
-    while tab.len() % 4 != 0 {
+    while !tab.len().is_multiple_of(4) {
         tab.push(0);
     }
     tab

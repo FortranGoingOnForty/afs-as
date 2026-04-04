@@ -10,6 +10,7 @@
 pub mod encode;
 pub mod lex;
 pub mod parse;
+pub mod assemble;
 pub mod macho;
 
 /// ARM64 register definitions.
