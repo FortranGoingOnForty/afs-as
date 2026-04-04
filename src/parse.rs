@@ -549,6 +549,20 @@ impl<'a> Parser<'a> {
                     align_pow2,
                 }
             }
+            ".tbss" => {
+                let symbol = self.expect_ident()?;
+                self.expect(&Tok::Comma)?;
+                let size = self.parse_const_expr("tbss size expression")? as u64;
+                self.expect(&Tok::Comma)?;
+                let align_pow2 = self.parse_const_expr("tbss alignment expression")? as u32;
+                Directive::Zerofill {
+                    segment: "__DATA".into(),
+                    section: "__thread_bss".into(),
+                    symbol: Some(symbol),
+                    size,
+                    align_pow2,
+                }
+            }
             ".cfi_startproc" => Directive::CfiStartProc,
             ".cfi_endproc" => Directive::CfiEndProc,
             ".cfi_def_cfa" => {
@@ -5891,6 +5905,21 @@ mod tests {
                 section: "__bss".into(),
                 symbol: None,
                 size: 8,
+                align_pow2: 2,
+            })]
+        );
+    }
+
+    #[test]
+    fn parse_tbss_directive() {
+        let stmts = parse_stmts(".tbss _tls_counter$tlv$init, 4, 2");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Zerofill {
+                segment: "__DATA".into(),
+                section: "__thread_bss".into(),
+                symbol: Some("_tls_counter$tlv$init".into()),
+                size: 4,
                 align_pow2: 2,
             })]
         );

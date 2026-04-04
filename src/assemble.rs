@@ -1090,7 +1090,7 @@ impl Assembler {
     }
 
     fn reserve_initialized_bytes(&mut self, amount: u64, context: &str) -> Result<(), AsmError> {
-        if self.sections[self.section].kind == SectionKind::ZeroFill {
+        if self.sections[self.section].kind.is_zerofill() {
             return Err(AsmError(format!(
                 "{} is not supported in zero-fill section {},{}",
                 context, self.sections[self.section].segment, self.sections[self.section].name
@@ -1107,7 +1107,7 @@ impl Assembler {
     }
 
     fn emit_space(&mut self, amount: u64) -> Result<(), AsmError> {
-        if self.sections[self.section].kind == SectionKind::ZeroFill {
+        if self.sections[self.section].kind.is_zerofill() {
             self.sections[self.section].size += amount;
             return Ok(());
         }
@@ -1198,7 +1198,7 @@ impl Assembler {
         if padding == 0 {
             return Ok(());
         }
-        if self.sections[self.section].kind == SectionKind::ZeroFill {
+        if self.sections[self.section].kind.is_zerofill() {
             return self.emit_space(padding);
         }
 
@@ -1614,7 +1614,7 @@ impl Assembler {
             )));
         }
         let target = self.ensure_section(seg, sect)?;
-        if self.sections[target].kind != SectionKind::ZeroFill {
+        if !self.sections[target].kind.is_zerofill() {
             return Err(AsmError(format!(
                 ".zerofill requires a zero-fill section, got {},{}",
                 seg, sect
@@ -1664,7 +1664,7 @@ impl Assembler {
             )));
         }
         let target = self.ensure_section(seg, sect)?;
-        if self.sections[target].kind != SectionKind::ZeroFill {
+        if !self.sections[target].kind.is_zerofill() {
             return Err(AsmError(format!(
                 ".zerofill requires a zero-fill section, got {},{}",
                 seg, sect
@@ -1718,11 +1718,13 @@ impl Assembler {
             Ok(("__DATA", "__thread_data", SectionKind::ThreadLocalData))
         } else if seg_lower == "__data" && sect_lower == "__thread_vars" {
             Ok(("__DATA", "__thread_vars", SectionKind::ThreadLocalVariables))
+        } else if seg_lower == "__data" && sect_lower == "__thread_bss" {
+            Ok(("__DATA", "__thread_bss", SectionKind::ThreadLocalZeroFill))
         } else if seg_lower == "__data" && sect_lower == "__bss" {
             Ok(("__DATA", "__bss", SectionKind::ZeroFill))
         } else {
             Err(AsmError(format!(
-                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__const, __DATA,__data, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__bss)",
+                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__const, __DATA,__data, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__thread_bss, __DATA,__bss)",
                 seg, sect
             )))
         }
@@ -2577,7 +2579,7 @@ fn align_value(value: u64, power: u32) -> u64 {
 
 fn section_allocation_order(sections: &[Section]) -> Vec<usize> {
     let mut order: Vec<_> = (0..sections.len()).collect();
-    order.sort_by_key(|&index| sections[index].kind == SectionKind::ZeroFill);
+    order.sort_by_key(|&index| sections[index].kind.is_zerofill());
     order
 }
 
@@ -3292,6 +3294,47 @@ mod tests {
             obj.symbols[thread_vars.relocations[1].symbol_idx as usize].name,
             "_tls_value$tlv$init"
         );
+    }
+
+    #[test]
+    fn assemble_tbss_thread_local_zerofill() {
+        let obj = assemble_source(
+            ".tbss _tls_counter$tlv$init, 4, 2\n\
+             .section __DATA,__thread_vars\n\
+             .globl _tls_counter\n\
+             _tls_counter:\n\
+             .quad __tlv_bootstrap\n\
+             .quad 0\n\
+             .quad _tls_counter$tlv$init\n",
+        )
+        .unwrap();
+
+        let thread_bss = obj.section("__DATA", "__thread_bss").unwrap();
+        let thread_vars = obj.section("__DATA", "__thread_vars").unwrap();
+        assert!(thread_bss.data.is_empty());
+        assert_eq!(thread_bss.size, 4);
+        assert_eq!(thread_bss.align_pow2, 2);
+        assert_eq!(thread_vars.relocations.len(), 2);
+        assert_eq!(
+            obj.symbols[thread_vars.relocations[1].symbol_idx as usize].name,
+            "_tls_counter$tlv$init"
+        );
+        assert_eq!(
+            obj.symbols[thread_vars.relocations[1].symbol_idx as usize].name,
+            "_tls_counter$tlv$init"
+        );
+        let thread_bss_index = obj
+            .sections
+            .iter()
+            .position(|section| section.segment == "__DATA" && section.name == "__thread_bss")
+            .unwrap();
+        let tls_init = obj
+            .symbols
+                .iter()
+                .find(|sym| sym.name == "_tls_counter$tlv$init")
+                .unwrap();
+        assert_eq!(tls_init.section, (thread_bss_index + 1) as u8);
+        assert!(!tls_init.undefined);
     }
 
     #[test]

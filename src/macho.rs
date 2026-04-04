@@ -26,6 +26,7 @@ const S_ZEROFILL: u32 = 0x1;
 const S_CSTRING_LITERALS: u32 = 0x2;
 const S_COALESCED: u32 = 0x0B;
 const S_THREAD_LOCAL_REGULAR: u32 = 0x11;
+const S_THREAD_LOCAL_ZEROFILL: u32 = 0x12;
 const S_THREAD_LOCAL_VARIABLES: u32 = 0x13;
 const S_ATTR_DEBUG: u32 = 0x02000000;
 const S_ATTR_LIVE_SUPPORT: u32 = 0x08000000;
@@ -122,6 +123,7 @@ pub enum SectionKind {
     CStringLiterals,
     ConstData,
     ThreadLocalData,
+    ThreadLocalZeroFill,
     ThreadLocalVariables,
     CompactUnwind,
     EhFrame,
@@ -143,13 +145,14 @@ impl SectionKind {
             }
             Self::ZeroFill => S_ZEROFILL,
             Self::ThreadLocalData => S_THREAD_LOCAL_REGULAR,
+            Self::ThreadLocalZeroFill => S_THREAD_LOCAL_ZEROFILL,
             Self::ThreadLocalVariables => S_THREAD_LOCAL_VARIABLES,
             Self::Data | Self::ConstData => S_REGULAR,
         }
     }
 
-    fn is_zerofill(&self) -> bool {
-        matches!(self, Self::ZeroFill)
+    pub(crate) fn is_zerofill(&self) -> bool {
+        matches!(self, Self::ZeroFill | Self::ThreadLocalZeroFill)
     }
 }
 
@@ -1282,6 +1285,10 @@ mod tests {
     #[test]
     fn thread_local_sections_use_thread_local_flags() {
         assert_eq!(SectionKind::ThreadLocalData.flags(4, false), S_THREAD_LOCAL_REGULAR);
+        assert_eq!(
+            SectionKind::ThreadLocalZeroFill.flags(4, false),
+            S_THREAD_LOCAL_ZEROFILL
+        );
         assert_eq!(
             SectionKind::ThreadLocalVariables.flags(24, false),
             S_THREAD_LOCAL_VARIABLES
