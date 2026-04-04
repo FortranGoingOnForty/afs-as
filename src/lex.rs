@@ -31,8 +31,16 @@ pub enum Tok {
     Hash,
     /// `,` — operand separator
     Comma,
+    /// `+` — expression operator
+    Plus,
+    /// `-` — expression operator
+    Minus,
     /// `:` — label suffix
     Colon,
+    /// `(` — expression grouping
+    LParen,
+    /// `)` — expression grouping
+    RParen,
     /// `[` — addressing mode open
     LBracket,
     /// `]` — addressing mode close
@@ -60,7 +68,11 @@ impl fmt::Display for Tok {
             Tok::StringLit(s) => write!(f, "\"{}\"", s),
             Tok::Hash => write!(f, "#"),
             Tok::Comma => write!(f, ","),
+            Tok::Plus => write!(f, "+"),
+            Tok::Minus => write!(f, "-"),
             Tok::Colon => write!(f, ":"),
+            Tok::LParen => write!(f, "("),
+            Tok::RParen => write!(f, ")"),
             Tok::LBracket => write!(f, "["),
             Tok::RBracket => write!(f, "]"),
             Tok::Bang => write!(f, "!"),
@@ -195,7 +207,11 @@ impl<'a> Lexer<'a> {
         match ch {
             b'\n' => { self.advance(); return Ok(self.make_tok(Tok::Newline, line, col)); }
             b',' => { self.advance(); return Ok(self.make_tok(Tok::Comma, line, col)); }
+            b'+' => { self.advance(); return Ok(self.make_tok(Tok::Plus, line, col)); }
+            b'-' => { self.advance(); return Ok(self.make_tok(Tok::Minus, line, col)); }
             b':' => { self.advance(); return Ok(self.make_tok(Tok::Colon, line, col)); }
+            b'(' => { self.advance(); return Ok(self.make_tok(Tok::LParen, line, col)); }
+            b')' => { self.advance(); return Ok(self.make_tok(Tok::RParen, line, col)); }
             b'[' => { self.advance(); return Ok(self.make_tok(Tok::LBracket, line, col)); }
             b']' => { self.advance(); return Ok(self.make_tok(Tok::RBracket, line, col)); }
             b'!' => { self.advance(); return Ok(self.make_tok(Tok::Bang, line, col)); }
@@ -231,12 +247,6 @@ impl<'a> Lexer<'a> {
         if ch == b'"' {
             let s = self.read_string_literal()?;
             return Ok(self.make_tok(Tok::StringLit(s), line, col));
-        }
-
-        // Negative number (standalone, not after #). Can appear in directives.
-        if ch == b'-' && self.peek2().is_ascii_digit() {
-            let val = self.read_integer()?;
-            return Ok(self.make_tok(Tok::Integer(val), line, col));
         }
 
         // Number (standalone — can appear in directives like `.word 42`).
@@ -454,6 +464,19 @@ mod tests {
     }
 
     #[test]
+    fn expression_tokens() {
+        assert_eq!(tok_kinds("1 + foo - (2)"), vec![
+            Tok::Integer(1),
+            Tok::Plus,
+            Tok::Ident("foo".into()),
+            Tok::Minus,
+            Tok::LParen,
+            Tok::Integer(2),
+            Tok::RParen,
+        ]);
+    }
+
+    #[test]
     fn brackets() {
         assert_eq!(tok_kinds("[x0]"), vec![
             Tok::LBracket, Tok::Ident("x0".into()), Tok::RBracket,
@@ -524,6 +547,15 @@ mod tests {
         assert_eq!(tok_kinds(".byte 0x41, 0x42"), vec![
             Tok::Ident(".byte".into()),
             Tok::Integer(0x41), Tok::Comma, Tok::Integer(0x42),
+        ]);
+    }
+
+    #[test]
+    fn directive_negative_number_uses_minus_token() {
+        assert_eq!(tok_kinds(".word -1"), vec![
+            Tok::Ident(".word".into()),
+            Tok::Minus,
+            Tok::Integer(1),
         ]);
     }
 

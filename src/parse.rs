@@ -5,6 +5,7 @@
 //! to their canonical forms.
 
 use crate::encode::Inst;
+use crate::expr::{self, Expr};
 use crate::lex::{Tok, Token, Lexer, LexError};
 use crate::reg::*;
 
@@ -225,23 +226,23 @@ impl<'a> Parser<'a> {
                 Directive::Global(sym)
             }
             ".align" => {
-                let n = self.expect_int()? as u32;
+                let n = self.parse_const_expr("alignment expression")? as u32;
                 Directive::Align(n)
             }
             ".p2align" => {
-                let n = self.expect_int()? as u32;
+                let n = self.parse_const_expr("alignment expression")? as u32;
                 Directive::P2Align(n)
             }
             ".byte" => {
-                let vals = self.parse_int_list()?;
+                let vals = self.parse_const_expr_list("byte expression")?;
                 Directive::Byte(vals.into_iter().map(|v| v as u8).collect())
             }
             ".word" | ".long" => {
-                let vals = self.parse_int_list()?;
+                let vals = self.parse_const_expr_list("word expression")?;
                 Directive::Word(vals.into_iter().map(|v| v as u32).collect())
             }
             ".quad" => {
-                let vals = self.parse_int_list()?;
+                let vals = self.parse_const_expr_list("quad expression")?;
                 Directive::Quad(vals.into_iter().map(|v| v as u64).collect())
             }
             ".ascii" => {
@@ -263,7 +264,7 @@ impl<'a> Parser<'a> {
                 }
             }
             ".space" | ".skip" => {
-                let n = self.expect_int()? as u64;
+                let n = self.parse_const_expr("space expression")? as u64;
                 Directive::Space(n)
             }
             ".section" => {
@@ -299,12 +300,67 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Directive(dir))
     }
 
-    fn parse_int_list(&mut self) -> Result<Vec<i64>, ParseError> {
-        let mut vals = vec![self.expect_int()?];
+    fn parse_const_expr_list(&mut self, context: &str) -> Result<Vec<i64>, ParseError> {
+        let mut vals = vec![self.parse_const_expr(context)?];
         while self.eat(&Tok::Comma) {
-            vals.push(self.expect_int()?);
+            vals.push(self.parse_const_expr(context)?);
         }
         Ok(vals)
+    }
+
+    fn parse_const_expr(&mut self, context: &str) -> Result<i64, ParseError> {
+        let expr = self.parse_expr()?;
+        expr::eval_pure(&expr).map_err(|err| {
+            self.err(format!("{} must be a pure constant expression: {}", context, err))
+        })
+    }
+
+    fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+        self.parse_add_sub_expr()
+    }
+
+    fn parse_add_sub_expr(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_unary_expr()?;
+        loop {
+            if self.eat(&Tok::Plus) {
+                let rhs = self.parse_unary_expr()?;
+                expr = Expr::Add(Box::new(expr), Box::new(rhs));
+            } else if self.eat(&Tok::Minus) {
+                let rhs = self.parse_unary_expr()?;
+                expr = Expr::Sub(Box::new(expr), Box::new(rhs));
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    fn parse_unary_expr(&mut self) -> Result<Expr, ParseError> {
+        if self.eat(&Tok::Minus) {
+            Ok(Expr::UnaryMinus(Box::new(self.parse_unary_expr()?)))
+        } else {
+            self.parse_primary_expr()
+        }
+    }
+
+    fn parse_primary_expr(&mut self) -> Result<Expr, ParseError> {
+        match self.peek().clone() {
+            Tok::Integer(value) => {
+                self.advance();
+                Ok(Expr::Int(value))
+            }
+            Tok::Ident(symbol) => {
+                self.advance();
+                Ok(Expr::Symbol(symbol))
+            }
+            Tok::LParen => {
+                self.advance();
+                let expr = self.parse_expr()?;
+                self.expect(&Tok::RParen)?;
+                Ok(expr)
+            }
+            other => Err(self.err(format!("expected expression, got {}", other))),
+        }
     }
 
     fn parse_instruction(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
@@ -1366,9 +1422,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_align_directive_expression() {
+        let stmts = parse_stmts(".align 1 + 1");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Align(2))]);
+    }
+
+    #[test]
     fn parse_byte_directive() {
         let stmts = parse_stmts(".byte 0x41, 0x42, 0x43");
         assert_eq!(stmts, vec![Stmt::Directive(Directive::Byte(vec![0x41, 0x42, 0x43]))]);
+    }
+
+    #[test]
+    fn parse_word_directive_expression() {
+        let stmts = parse_stmts(".word 1 + 2 - 3");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Word(vec![0]))]);
+    }
+
+    #[test]
+    fn parse_quad_directive_parenthesized_expression() {
+        let stmts = parse_stmts(".quad -(1 + 2)");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Quad(vec![u64::MAX - 2]))]);
+    }
+
+    #[test]
+    fn parse_space_directive_expression() {
+        let stmts = parse_stmts(".space (2 + 3)");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Space(5))]);
     }
 
     #[test]
@@ -1429,6 +1509,14 @@ _main:
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.msg.contains("not yet supported"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn error_symbolic_directive_expression_requires_constant() {
+        let result = parse(".quad foo - 1");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.msg.contains("pure constant expression"), "got: {}", err.msg);
     }
 
     // ---- Case insensitivity ----
