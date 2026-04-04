@@ -330,6 +330,28 @@ fn corpus_cfi_saved_pairs_matches_load_commands_and_relocations() {
     assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
 }
 
+#[test]
+fn corpus_cfi_dwarf_fallback_matches_load_commands_relocations_and_eh_frame() {
+    let paths = assemble_fixture("cfi_dwarf_fallback.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+    let ours_eh_frame = common::object_section_bytes(&paths.obj, "__TEXT", "__eh_frame");
+    let ref_eh_frame = common::object_section_bytes(&paths.ref_obj, "__TEXT", "__eh_frame");
+
+    assert!(ours_load.contains("sectname __eh_frame"), "missing __eh_frame section:\n{}", ours_load);
+    assert!(ours_relocs.contains("__TEXT,__eh_frame"), "missing eh_frame relocations:\n{}", ours_relocs);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(ours_eh_frame, ref_eh_frame);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+}
+
 fn normalize_tool_output(text: &str) -> String {
     text.lines()
         .filter(|line| !line.trim_end().ends_with(".o:"))
