@@ -94,6 +94,20 @@ fn corpus_section_inventory_matches_load_commands_and_symbols() {
     assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
 }
 
+#[test]
+fn corpus_symbol_attributes_match_nm_output() {
+    let paths = assemble_fixture("symbol_attrs.s");
+
+    let ours_symbols = common::object_symbols_verbose(&paths.obj);
+    let ref_symbols = common::object_symbols_verbose(&paths.ref_obj);
+
+    assert!(ours_symbols.contains("_helper"), "missing private extern helper:\n{}", ours_symbols);
+    assert!(ours_symbols.contains("_entry"), "missing weak definition entry:\n{}", ours_symbols);
+    assert!(ours_symbols.contains("_puts"), "missing weak reference puts:\n{}", ours_symbols);
+
+    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+}
+
 fn normalize_tool_output(text: &str) -> String {
     text.lines()
         .filter(|line| !line.trim_end().ends_with(".o:"))

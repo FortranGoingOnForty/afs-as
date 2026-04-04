@@ -76,6 +76,10 @@ pub fn object_symbols(path: &Path) -> String {
     tool_output("nm", &["-a", path.to_str().expect("object path")])
 }
 
+pub fn object_symbols_verbose(path: &Path) -> String {
+    tool_output("nm", &["-m", path.to_str().expect("object path")])
+}
+
 pub fn link_with_system(obj_path: &Path, bin_path: &Path, entry: &str) {
     let sdk = Command::new("xcrun")
         .args(["--show-sdk-path"])
