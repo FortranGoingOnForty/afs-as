@@ -67,6 +67,12 @@ const CASES: &[ProbeCase] = &[
         driver: "extern int read_ext_plus_one(void);\nint main(void) { return read_ext_plus_one() != 42; }\n",
         support: Some("int ext_value = 41;\n"),
     },
+    ProbeCase {
+        name: "tls_global",
+        source: "tls_global.c",
+        driver: "extern int read_tls_plus_one(void);\nint main(void) { return read_tls_plus_one() != 6; }\n",
+        support: None,
+    },
 ];
 
 fn probe_source_path(name: &str) -> PathBuf {
