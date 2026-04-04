@@ -6,7 +6,7 @@
 //!
 //! Also provides the library API for the compiler to call directly.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::BufWriter;
 use std::path::Path;
@@ -94,7 +94,7 @@ struct Assembler {
     data: Vec<u8>,
 
     /// Labels → (section, offset).
-    labels: HashMap<String, (u8, u64)>,
+    labels: BTreeMap<String, (u8, u64)>,
     /// Global symbols.
     globals: Vec<String>,
 
@@ -119,7 +119,7 @@ impl Assembler {
             section: 0,
             text: Vec::new(),
             data: Vec::new(),
-            labels: HashMap::new(),
+            labels: BTreeMap::new(),
             globals: Vec::new(),
             text_relocs: Vec::new(),
             text_align: 0,

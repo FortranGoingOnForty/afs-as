@@ -217,7 +217,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- Padding to text_offset ----
     let current = HEADER_SIZE + sizeofcmds;
     let pad = (text_offset - current) as usize;
-    w.write_all(&vec![0u8; pad])?;
+    write_zeros(w, pad)?;
 
     // ---- Section data ----
     w.write_all(&obj.text)?;
@@ -226,9 +226,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- Padding to relocation alignment ----
     let written = text_offset + text_size + data_size;
     let reloc_pad = (reloc_offset - written) as usize;
-    if reloc_pad > 0 {
-        w.write_all(&vec![0u8; reloc_pad])?;
-    }
+    write_zeros(w, reloc_pad)?;
 
     // ---- Relocation entries (descending address order, as Apple ld expects) ----
     let mut sorted_relocs: Vec<_> = obj.text_relocs.iter().collect();
@@ -311,6 +309,18 @@ fn align_to(value: u32, align: u32) -> u32 {
 
 fn pack_version(major: u32, minor: u32, patch: u32) -> u32 {
     (major << 16) | (minor << 8) | patch
+}
+
+/// Write N zero bytes without heap allocation.
+fn write_zeros<W: Write>(w: &mut W, n: usize) -> io::Result<()> {
+    const BUF: [u8; 64] = [0u8; 64];
+    let mut remaining = n;
+    while remaining > 0 {
+        let chunk = remaining.min(BUF.len());
+        w.write_all(&BUF[..chunk])?;
+        remaining -= chunk;
+    }
+    Ok(())
 }
 
 fn write_u16<W: Write>(w: &mut W, v: u16) -> io::Result<()> {
