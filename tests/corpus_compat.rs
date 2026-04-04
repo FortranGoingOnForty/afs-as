@@ -127,6 +127,29 @@ fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
     assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
 }
 
+#[test]
+fn corpus_storage_directives_match_bytes_sections_and_symbols() {
+    let paths = assemble_fixture("storage_directives.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_data = common::object_section_bytes(&paths.obj, "__DATA", "__data");
+    let ref_data = common::object_section_bytes(&paths.ref_obj, "__DATA", "__data");
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_symbols = common::object_symbols_verbose(&paths.obj);
+    let ref_symbols = common::object_symbols_verbose(&paths.ref_obj);
+
+    assert!(ours_load.contains("sectname __bss"), "missing __bss section:\n{}", ours_load);
+    assert!(ours_symbols.contains("(common)"), "missing common symbol:\n{}", ours_symbols);
+    assert!(ours_symbols.contains("_scratch"), "missing zerofill symbol:\n{}", ours_symbols);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(ours_data, ref_data);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+}
+
 fn normalize_tool_output(text: &str) -> String {
     text.lines()
         .filter(|line| !line.trim_end().ends_with(".o:"))
