@@ -54,9 +54,12 @@ fn our_assemble(asm: &str) -> Vec<u8> {
     let stmts = parse::parse(asm).unwrap();
     let mut bytes = Vec::new();
     for stmt in &stmts {
-        if let Stmt::Instruction(inst) = stmt {
-            let word = inst.encode();
-            bytes.extend_from_slice(&word.to_le_bytes());
+        match stmt {
+            Stmt::Instruction(inst) | Stmt::InstructionWithReloc(inst, _) => {
+                let word = inst.encode();
+                bytes.extend_from_slice(&word.to_le_bytes());
+            }
+            _ => {}
         }
     }
     bytes
@@ -123,6 +126,8 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_ldrh()       { roundtrip(".text\nldrh w2, [x3, #6]\n"); }
 #[test] fn rt_ldrsw()      { roundtrip(".text\nldrsw x0, [x1, #8]\n"); }
 #[test] fn rt_stp_pre()    { roundtrip(".text\nstp x29, x30, [sp, #-16]!\n"); }
+#[test] fn rt_stp_post()   { roundtrip(".text\nstp x29, x30, [sp], #16\n"); }
+#[test] fn rt_ldp_pre()    { roundtrip(".text\nldp x29, x30, [sp, #-16]!\n"); }
 #[test] fn rt_ldp_post()   { roundtrip(".text\nldp x29, x30, [sp], #16\n"); }
 #[test] fn rt_stp_off()    { roundtrip(".text\nstp x19, x20, [sp, #16]\n"); }
 #[test] fn rt_ldp_off()    { roundtrip(".text\nldp x21, x22, [sp, #48]\n"); }

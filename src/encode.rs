@@ -128,6 +128,10 @@ pub enum Inst {
     LdpOff64 { rt1: GpReg, rt2: GpReg, rn: GpReg, offset: i16 },
     /// STP Xt1, Xt2, [Xn, #offset]!  (pre-index, 64-bit)
     StpPre64 { rt1: GpReg, rt2: GpReg, rn: GpReg, offset: i16 },
+    /// STP Xt1, Xt2, [Xn], #offset  (post-index, 64-bit)
+    StpPost64 { rt1: GpReg, rt2: GpReg, rn: GpReg, offset: i16 },
+    /// LDP Xt1, Xt2, [Xn, #offset]!  (pre-index, 64-bit)
+    LdpPre64 { rt1: GpReg, rt2: GpReg, rn: GpReg, offset: i16 },
     /// LDP Xt1, Xt2, [Xn], #offset  (post-index, 64-bit)
     LdpPost64 { rt1: GpReg, rt2: GpReg, rn: GpReg, offset: i16 },
 
@@ -330,6 +334,10 @@ impl Inst {
                 ldp_stp(0b10, 0b010, 1, *offset, *rt2, *rn, *rt1),
             Inst::StpPre64 { rt1, rt2, rn, offset } =>
                 ldp_stp(0b10, 0b011, 0, *offset, *rt2, *rn, *rt1),
+            Inst::StpPost64 { rt1, rt2, rn, offset } =>
+                ldp_stp(0b10, 0b001, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpPre64 { rt1, rt2, rn, offset } =>
+                ldp_stp(0b10, 0b011, 1, *offset, *rt2, *rn, *rt1),
             Inst::LdpPost64 { rt1, rt2, rn, offset } =>
                 ldp_stp(0b10, 0b001, 1, *offset, *rt2, *rn, *rt1),
 
@@ -530,7 +538,11 @@ mod tests {
     // ---- Load/Store pair ----
 
     #[test] fn stp_x29_x30_sp_pre_m16() { assert_eq!(Inst::StpPre64  { rt1: X29, rt2: X30, rn: SP, offset: -16 }.encode(), 0xA9BF7BFD); }
+    #[test] fn stp_x29_x30_sp_post_16() { assert_eq!(Inst::StpPost64 { rt1: X29, rt2: X30, rn: SP, offset: 16  }.encode(), 0xA8817BFD); }
+    #[test] fn ldp_x29_x30_sp_pre_m16() { assert_eq!(Inst::LdpPre64  { rt1: X29, rt2: X30, rn: SP, offset: -16 }.encode(), 0xA9FF7BFD); }
     #[test] fn ldp_x29_x30_sp_post_16() { assert_eq!(Inst::LdpPost64 { rt1: X29, rt2: X30, rn: SP, offset: 16  }.encode(), 0xA8C17BFD); }
+    #[test] fn stp_x19_x20_sp_post_32() { assert_eq!(Inst::StpPost64 { rt1: X19, rt2: X20, rn: SP, offset: 32  }.encode(), 0xA88253F3); }
+    #[test] fn ldp_x19_x20_sp_pre_m32() { assert_eq!(Inst::LdpPre64  { rt1: X19, rt2: X20, rn: SP, offset: -32 }.encode(), 0xA9FE53F3); }
     #[test] fn stp_x19_x20_sp_16()      { assert_eq!(Inst::StpOff64  { rt1: X19, rt2: X20, rn: SP, offset: 16  }.encode(), 0xA90153F3); }
     #[test] fn ldp_x19_x20_sp_16()      { assert_eq!(Inst::LdpOff64  { rt1: X19, rt2: X20, rn: SP, offset: 16  }.encode(), 0xA94153F3); }
 

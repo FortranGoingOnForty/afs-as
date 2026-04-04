@@ -786,9 +786,7 @@ impl<'a> Parser<'a> {
             return Ok(if is_load {
                 Inst::LdpPost64 { rt1, rt2, rn, offset }
             } else {
-                // STP post-index not yet in Inst — would need to add it.
-                // For now use pre-index as placeholder.
-                Inst::StpPre64 { rt1, rt2, rn, offset }
+                Inst::StpPost64 { rt1, rt2, rn, offset }
             });
         }
 
@@ -799,7 +797,7 @@ impl<'a> Parser<'a> {
         if self.eat(&Tok::Bang) {
             // Pre-index
             return Ok(if is_load {
-                Inst::LdpPost64 { rt1, rt2, rn, offset } // would need LdpPre
+                Inst::LdpPre64 { rt1, rt2, rn, offset }
             } else {
                 Inst::StpPre64 { rt1, rt2, rn, offset }
             });
@@ -1151,6 +1149,18 @@ mod tests {
     fn parse_ldp_post() {
         assert_eq!(parse_inst("ldp x29, x30, [sp], #16"),
             Inst::LdpPost64 { rt1: X29, rt2: X30, rn: SP, offset: 16 });
+    }
+
+    #[test]
+    fn parse_stp_post() {
+        assert_eq!(parse_inst("stp x29, x30, [sp], #16"),
+            Inst::StpPost64 { rt1: X29, rt2: X30, rn: SP, offset: 16 });
+    }
+
+    #[test]
+    fn parse_ldp_pre() {
+        assert_eq!(parse_inst("ldp x29, x30, [sp, #-16]!"),
+            Inst::LdpPre64 { rt1: X29, rt2: X30, rn: SP, offset: -16 });
     }
 
     #[test]
