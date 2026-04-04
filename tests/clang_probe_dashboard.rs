@@ -104,9 +104,21 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "tls_addr",
+        source: "tls_addr.c",
+        driver: "extern int *tls_value_addr(void);\nint main(void) {\n    int *ptr = tls_value_addr();\n    *ptr = 7;\n    return (*ptr != 7) || (*tls_value_addr() != 7);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "tls_bss_global",
         source: "tls_bss_global.c",
         driver: "extern int bump_tls_counter(int);\nint main(void) {\n    return (bump_tls_counter(4) != 4) || (bump_tls_counter(3) != 7);\n}\n",
+        support: None,
+    },
+    ProbeCase {
+        name: "tls_ptr_pass",
+        source: "tls_ptr_pass.c",
+        driver: "extern int bump_tls_via_ptr(void);\nint main(void) {\n    return (bump_tls_via_ptr() != 2) || (bump_tls_via_ptr() != 4);\n}\n",
         support: None,
     },
     ProbeCase {
