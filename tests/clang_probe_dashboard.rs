@@ -110,6 +110,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "atomic_exchange_cas",
+        source: "atomic_exchange_cas.c",
+        driver: "extern int swap_acqrel(int);\nextern long swap64_acqrel(long);\nextern int cas_acqrel(int, int);\nextern long cas64_acqrel(long, long);\nint main(void) {\n    return (swap_acqrel(4) != 0)\n        || (swap_acqrel(7) != 4)\n        || (cas_acqrel(7, 9) != 7)\n        || (cas_acqrel(0, 11) != 9)\n        || (swap64_acqrel(10) != 0)\n        || (swap64_acqrel(15) != 10)\n        || (cas64_acqrel(15, 21) != 15)\n        || (cas64_acqrel(0, 31) != 21);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "compare_chain",
         source: "compare_chain.c",
         driver: "extern int both_small(int, int);\nint main(void) {\n    return (both_small(1, 2) != 2) || (both_small(3, 9) != 1) || (both_small(30, 40) != 0);\n}\n",

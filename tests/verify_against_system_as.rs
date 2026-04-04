@@ -1027,6 +1027,50 @@ fn sys_ldaddal() {
     );
 }
 #[test]
+fn sys_swpal() {
+    verify(
+        "swpal w0, w0, [x8]",
+        Inst::Swpal32 {
+            rs: W0,
+            rt: W0,
+            rn: X8,
+        },
+    );
+}
+#[test]
+fn sys_swpal_x() {
+    verify(
+        "swpal x1, x2, [x3]",
+        Inst::Swpal64 {
+            rs: X1,
+            rt: X2,
+            rn: X3,
+        },
+    );
+}
+#[test]
+fn sys_casal() {
+    verify(
+        "casal w4, w5, [x6]",
+        Inst::Casal32 {
+            rs: W4,
+            rt: W5,
+            rn: X6,
+        },
+    );
+}
+#[test]
+fn sys_casal_x() {
+    verify(
+        "casal x7, x8, [x9]",
+        Inst::Casal64 {
+            rs: X7,
+            rt: X8,
+            rn: X9,
+        },
+    );
+}
+#[test]
 fn sys_ldrsw_lit() {
     verify("ldrsw x1, #8", Inst::LdrswLit { rt: X1, offset: 8 });
 }
