@@ -12,7 +12,7 @@
 use std::io::Write;
 use std::process::Command;
 
-use afs_as::encode::{AddrExtend, Inst, RegExtend, RegShift};
+use afs_as::encode::{AddrExtend, BarrierOpt, Inst, RegExtend, RegShift};
 use afs_as::reg::*;
 
 /// Assemble a single ARM64 instruction with Apple `as` and return its 4-byte encoding.
@@ -188,4 +188,12 @@ fn verify(asm: &str, inst: Inst) {
 
 #[test] fn sys_svc()      { verify("svc #0x80",         Inst::Svc { imm16: 0x80 }); }
 #[test] fn sys_nop()      { verify("nop",               Inst::Nop); }
+#[test] fn sys_yield()    { verify("yield",             Inst::Yield); }
+#[test] fn sys_wfe()      { verify("wfe",               Inst::Wfe); }
+#[test] fn sys_wfi()      { verify("wfi",               Inst::Wfi); }
+#[test] fn sys_sev()      { verify("sev",               Inst::Sev); }
+#[test] fn sys_sevl()     { verify("sevl",              Inst::Sevl); }
+#[test] fn sys_isb()      { verify("isb",               Inst::Isb { option: BarrierOpt::Sy }); }
+#[test] fn sys_dmb_ish()  { verify("dmb ish",           Inst::Dmb { option: BarrierOpt::Ish }); }
+#[test] fn sys_dsb_ishst(){ verify("dsb ishst",         Inst::Dsb { option: BarrierOpt::Ishst }); }
 #[test] fn sys_brk()      { verify("brk #42",           Inst::Brk { imm16: 42 }); }

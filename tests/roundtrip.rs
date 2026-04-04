@@ -184,6 +184,14 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_fmov_from()  { roundtrip(".text\nfmov x5, d6\n"); }
 #[test] fn rt_svc()        { roundtrip(".text\nsvc #0x80\n"); }
 #[test] fn rt_nop()        { roundtrip(".text\nnop\n"); }
+#[test] fn rt_yield()      { roundtrip(".text\nyield\n"); }
+#[test] fn rt_wfe()        { roundtrip(".text\nwfe\n"); }
+#[test] fn rt_wfi()        { roundtrip(".text\nwfi\n"); }
+#[test] fn rt_sev()        { roundtrip(".text\nsev\n"); }
+#[test] fn rt_sevl()       { roundtrip(".text\nsevl\n"); }
+#[test] fn rt_isb()        { roundtrip(".text\nisb\n"); }
+#[test] fn rt_dmb_ish()    { roundtrip(".text\ndmb ish\n"); }
+#[test] fn rt_dsb_ishst()  { roundtrip(".text\ndsb ishst\n"); }
 #[test] fn rt_brk()        { roundtrip(".text\nbrk #42\n"); }
 
 // ---- Test gap coverage ----
