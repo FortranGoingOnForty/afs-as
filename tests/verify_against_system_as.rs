@@ -139,6 +139,13 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_ldrb_reg() { verify("ldrb w0, [x1, x2]", Inst::LdrbReg { rt: W0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }); }
 #[test] fn sys_ldrsw_reg() { verify("ldrsw x6, [x7, w8, sxtw #2]", Inst::LdrswReg { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Sxtw, shift: true }); }
 #[test] fn sys_ldrsw_lit() { verify("ldrsw x1, #8", Inst::LdrswLit { rt: X1, offset: 8 }); }
+#[test] fn sys_ldr_d() { verify("ldr d0, [x1]", Inst::LdrFpImm64 { rt: D0, rn: X1, offset: 0 }); }
+#[test] fn sys_str_d_off() { verify("str d2, [x3, #16]", Inst::StrFpImm64 { rt: D2, rn: X3, offset: 16 }); }
+#[test] fn sys_ldr_s_reg() { verify("ldr s4, [x5, x6]", Inst::LdrFpReg32 { rt: S4, rn: X5, rm: X6, extend: AddrExtend::Lsl, shift: false }); }
+#[test] fn sys_str_s_reg_uxtw() { verify("str s7, [x8, w9, uxtw #2]", Inst::StrFpReg32 { rt: S7, rn: X8, rm: W9, extend: AddrExtend::Uxtw, shift: true }); }
+#[test] fn sys_ldr_d_lit() { verify("ldr d10, #8", Inst::LdrFpLit64 { rt: D10, offset: 8 }); }
+#[test] fn sys_ldr_d_post() { verify("ldr d0, [sp], #8", Inst::LdrFpPost64 { rt: D0, rn: SP, offset: 8 }); }
+#[test] fn sys_str_s_pre() { verify("str s3, [sp, #-8]!", Inst::StrFpPre32 { rt: S3, rn: SP, offset: -8 }); }
 
 // ---- Address generation ----
 
