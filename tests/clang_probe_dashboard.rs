@@ -68,6 +68,12 @@ const CASES: &[ProbeCase] = &[
         support: Some("int ext_value = 41;\n"),
     },
     ProbeCase {
+        name: "extern_puts",
+        source: "extern_puts.c",
+        driver: "extern int call_puts(void);\nint main(void) { return call_puts() < 0; }\n",
+        support: None,
+    },
+    ProbeCase {
         name: "tls_global",
         source: "tls_global.c",
         driver: "extern int read_tls_plus_one(void);\nint main(void) { return read_tls_plus_one() != 6; }\n",
