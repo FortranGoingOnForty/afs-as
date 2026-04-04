@@ -126,6 +126,53 @@ pub fn link_with_system(obj_path: &Path, bin_path: &Path, entry: &str) {
     );
 }
 
+pub fn assemble_link_support(output: &Path) {
+    let support_src = "\
+.text
+.build_version macos, 11, 0 sdk_version 15, 5
+.p2align 2
+.globl _puts
+_puts:
+    ret
+.p2align 2
+.globl _ext
+_ext:
+    ret
+.p2align 2
+.globl _other
+_other:
+    ret
+.p2align 2
+.globl _exit
+_exit:
+    ret
+";
+    let asm_path = output.with_extension("s");
+    fs::write(&asm_path, support_src).expect("write link support source");
+    assemble_with_system(&asm_path, output);
+}
+
+pub fn link_relocatable_with_system(obj_paths: &[&Path], out_path: &Path) {
+    let mut cmd = Command::new("ld");
+    cmd.arg("-r");
+    for path in obj_paths {
+        cmd.arg(path);
+    }
+    cmd.arg("-o").arg(out_path);
+
+    let output = cmd.output().expect("run ld -r");
+    assert!(
+        output.status.success(),
+        "ld -r failed for {}: {}",
+        out_path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+pub fn object_undefined_symbols(path: &Path) -> String {
+    tool_output("nm", &["-u", path.to_str().expect("object path")])
+}
+
 pub fn run_binary(bin_path: &Path) -> (i32, String, String) {
     let output = Command::new(bin_path).output().expect("run binary");
     (

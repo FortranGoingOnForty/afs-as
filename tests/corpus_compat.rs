@@ -143,6 +143,24 @@ fn corpus_external_branches_match_relocations_and_symbols() {
 }
 
 #[test]
+fn corpus_external_branches_link_relocatable_with_support() {
+    let paths = assemble_fixture("external_branches.s");
+    let root = paths.asm.parent().expect("temp root");
+    let support = root.join("link-support.o");
+    let ours_linked = root.join("ours-linked.o");
+    let ref_linked = root.join("ref-linked.o");
+
+    common::assemble_link_support(&support);
+    common::link_relocatable_with_system(&[&paths.obj, &support], &ours_linked);
+    common::link_relocatable_with_system(&[&paths.ref_obj, &support], &ref_linked);
+
+    assert_eq!(
+        normalize_tool_output(&common::object_undefined_symbols(&ours_linked)),
+        normalize_tool_output(&common::object_undefined_symbols(&ref_linked))
+    );
+}
+
+#[test]
 fn fixture_paths_are_resolved_from_corpus_directory() {
     let path = common::fixture_path("hello_world.s");
     assert!(path.ends_with("tests/corpus/hello_world.s"));
@@ -237,6 +255,24 @@ fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
 }
 
 #[test]
+fn corpus_macho_writer_mix_links_relocatable_with_support() {
+    let paths = assemble_fixture("macho_writer_mix.s");
+    let root = paths.asm.parent().expect("temp root");
+    let support = root.join("link-support.o");
+    let ours_linked = root.join("ours-linked.o");
+    let ref_linked = root.join("ref-linked.o");
+
+    common::assemble_link_support(&support);
+    common::link_relocatable_with_system(&[&paths.obj, &support], &ours_linked);
+    common::link_relocatable_with_system(&[&paths.ref_obj, &support], &ref_linked);
+
+    assert_eq!(
+        normalize_tool_output(&common::object_undefined_symbols(&ours_linked)),
+        normalize_tool_output(&common::object_undefined_symbols(&ref_linked))
+    );
+}
+
+#[test]
 fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
     let paths = assemble_fixture("expression_symbols.s");
 
@@ -253,6 +289,24 @@ fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
     assert_eq!(ours_data, ref_data);
     assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
     assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+}
+
+#[test]
+fn corpus_expression_symbols_link_relocatable_with_support() {
+    let paths = assemble_fixture("expression_symbols.s");
+    let root = paths.asm.parent().expect("temp root");
+    let support = root.join("link-support.o");
+    let ours_linked = root.join("ours-linked.o");
+    let ref_linked = root.join("ref-linked.o");
+
+    common::assemble_link_support(&support);
+    common::link_relocatable_with_system(&[&paths.obj, &support], &ours_linked);
+    common::link_relocatable_with_system(&[&paths.ref_obj, &support], &ref_linked);
+
+    assert_eq!(
+        normalize_tool_output(&common::object_undefined_symbols(&ours_linked)),
+        normalize_tool_output(&common::object_undefined_symbols(&ref_linked))
+    );
 }
 
 #[test]
