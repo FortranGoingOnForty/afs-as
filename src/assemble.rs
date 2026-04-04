@@ -2221,6 +2221,25 @@ impl Assembler {
             });
         }
 
+        let section_base_page_reloc_targets: BTreeSet<_> = self
+            .pending_relocs
+            .iter()
+            .flat_map(|relocs| relocs.iter())
+            .filter(|reloc| {
+                reloc.reloc_type == macho::ARM64_RELOC_PAGE21
+                    || reloc.reloc_type == macho::ARM64_RELOC_PAGEOFF12
+            })
+            .filter_map(|reloc| match &reloc.target {
+                PendingRelocTarget::Symbol(symbol) => Some(symbol.clone()),
+                PendingRelocTarget::Raw(_) => None,
+            })
+            .filter(|symbol| {
+                self.labels
+                    .get(symbol)
+                    .map(|(_, offset)| *offset == 0)
+                    .unwrap_or(false)
+            })
+            .collect();
         let page_reloc_targets: BTreeSet<_> = self
             .pending_relocs
             .iter()
@@ -2240,6 +2259,20 @@ impl Assembler {
             let rank_b = symbol_class_rank(b);
             rank_a.cmp(&rank_b).then_with(|| match rank_a {
                 0 => {
+                    let a_is_primary_text_temp = a.name == "ltmp0";
+                    let b_is_primary_text_temp = b.name == "ltmp0";
+                    let a_base_reloc_target = !a.name.starts_with("ltmp")
+                        && section_base_page_reloc_targets.contains(&a.name);
+                    let b_base_reloc_target = !b.name.starts_with("ltmp")
+                        && section_base_page_reloc_targets.contains(&b.name);
+                    a_is_primary_text_temp
+                        .cmp(&b_is_primary_text_temp)
+                        .reverse()
+                        .then_with(|| {
+                    a_base_reloc_target
+                        .cmp(&b_base_reloc_target)
+                        .reverse()
+                        .then_with(|| {
                     if a.section == b.section && a.value == b.value {
                         let a_is_section_temp = a.name.starts_with("ltmp");
                         let b_is_section_temp = b.name.starts_with("ltmp");
@@ -2259,6 +2292,8 @@ impl Assembler {
                         .unwrap_or(usize::MAX)
                         .cmp(&symbol_order.get(&b.name).copied().unwrap_or(usize::MAX))
                         .then_with(|| a.name.cmp(&b.name))
+                        })
+                        })
                 }
                 _ => a.name.cmp(&b.name),
             })
@@ -3686,6 +3721,80 @@ mod tests {
             .position(|name| *name == "ltmp1")
             .expect("ltmp1 symbol");
         assert!(msg_index < ltmp1_index, "symbols: {:?}", names);
+    }
+
+    #[test]
+    fn assemble_section_base_reloc_target_sorts_ahead_of_later_section_temps() {
+        let obj = assemble_source(
+            ".build_version macos, 11, 0 sdk_version 15, 5\n\
+             .subsections_via_symbols\n\
+             .globl _stress_1\n\
+             .text\n\
+             .p2align 2\n\
+             _stress_1:\n\
+               adrp x11, cstr0_1@PAGE\n\
+               add x11, x11, cstr0_1@PAGEOFF\n\
+               adrp x13, data0_1@PAGE\n\
+               add x13, x13, data0_1@PAGEOFF\n\
+               ret\n\
+             .section __TEXT,__cstring,cstring_literals\n\
+             cstr0_1:\n\
+               .asciz \"stress-1-a\"\n\
+             cstr1_1:\n\
+               .asciz \"stress-1-b\"\n\
+             .section __TEXT,__const\n\
+             const0_1:\n\
+               .quad data0_1\n\
+             .data\n\
+             .p2align 3\n\
+             data0_1:\n\
+               .quad cstr0_1\n\
+             .zerofill __DATA,__bss,_scratch_1,32,4\n",
+        )
+        .unwrap();
+        let names: Vec<_> = obj.symbols.iter().map(|sym| sym.name.as_str()).collect();
+        let data0_index = names
+            .iter()
+            .position(|name| *name == "data0_1")
+            .expect("data0_1 symbol");
+        let ltmp1_index = names
+            .iter()
+            .position(|name| *name == "ltmp1")
+            .expect("ltmp1 symbol");
+        assert!(data0_index < ltmp1_index, "symbols: {:?}", names);
+    }
+
+    #[test]
+    fn assemble_tls_init_symbol_stays_after_thread_data_section_temp() {
+        let obj = assemble_source(
+            ".text\n\
+             .globl _read_tls_plus_one\n\
+             _read_tls_plus_one:\n\
+               adrp x0, _tls_value@TLVPPAGE\n\
+               ldr x0, [x0, _tls_value@TLVPPAGEOFF]\n\
+               ret\n\
+             .section __DATA,__thread_data,thread_local_regular\n\
+             .p2align 2\n\
+             _tls_value$tlv$init:\n\
+               .long 5\n\
+             .section __DATA,__thread_vars,thread_local_variables\n\
+             .globl _tls_value\n\
+             _tls_value:\n\
+               .quad __tlv_bootstrap\n\
+               .quad 0\n\
+               .quad _tls_value$tlv$init\n",
+        )
+        .unwrap();
+        let names: Vec<_> = obj.symbols.iter().map(|sym| sym.name.as_str()).collect();
+        let ltmp1_index = names
+            .iter()
+            .position(|name| *name == "ltmp1")
+            .expect("ltmp1 symbol");
+        let tls_init_index = names
+            .iter()
+            .position(|name| *name == "_tls_value$tlv$init")
+            .expect("tls init symbol");
+        assert!(ltmp1_index < tls_init_index, "symbols: {:?}", names);
     }
 
     #[test]
