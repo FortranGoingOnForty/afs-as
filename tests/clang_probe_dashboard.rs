@@ -98,16 +98,40 @@ const CASES: &[ProbeCase] = &[
         support: Some("int ext_value = 29;\nint *ext_ptr = &ext_value;\n"),
     },
     ProbeCase {
+        name: "ext_byte_ptr",
+        source: "ext_byte_ptr.c",
+        driver: "extern int read_ext_byte3(void);\nint main(void) { return read_ext_byte3() != 77; }\n",
+        support: Some("unsigned char ext_storage[] = {1, 2, 3, 77, 5};\nunsigned char *ext_bytes = ext_storage;\n"),
+    },
+    ProbeCase {
+        name: "ext_short_ptr",
+        source: "ext_short_ptr.c",
+        driver: "extern int read_ext_short2(void);\nint main(void) { return read_ext_short2() != 321; }\n",
+        support: Some("unsigned short ext_storage[] = {7, 9, 321, 11};\nunsigned short *ext_shorts = ext_storage;\n"),
+    },
+    ProbeCase {
         name: "ext_str_index",
         source: "ext_str_index.c",
         driver: "extern int second_ext_char(void);\nint main(void) { return second_ext_char() != 'Q'; }\n",
         support: Some("const char *ext_str = \"zQ\";\n"),
     },
     ProbeCase {
+        name: "ext_ptr_to_struct",
+        source: "ext_ptr_to_struct.c",
+        driver: "extern int read_ext_pair_ptr_b(void);\nint main(void) { return read_ext_pair_ptr_b() != 19; }\n",
+        support: Some("struct Pair { int a; int b; };\nstatic struct Pair pair = {8, 19};\nstruct Pair *ext_pair_ptr = &pair;\n"),
+    },
+    ProbeCase {
         name: "func_ptr",
         source: "func_ptr.c",
         driver: "extern int call_helper_ptr(int);\nint main(void) {\n    return (call_helper_ptr(4) != 15) || (call_helper_ptr(-1) != 0);\n}\n",
         support: Some("int helper(int x) { return x * 3; }\n"),
+    },
+    ProbeCase {
+        name: "func_slot_array",
+        source: "func_slot_array.c",
+        driver: "extern int call_helper_slot1(int);\nint main(void) {\n    return (call_helper_slot1(2) != 35) || (call_helper_slot1(-3) != 0);\n}\n",
+        support: Some("int helper_a(int x) { return x + 1; }\nint helper_b(int x) { return x * 7; }\nint (*helper_slots[2])(int) = {helper_a, helper_b};\n"),
     },
     ProbeCase {
         name: "func_slot",
