@@ -545,8 +545,16 @@ pub enum Inst {
     },
     /// LDRB Wt, [Xn, #offset]  (byte load, zero-extend)
     Ldrb { rt: GpReg, rn: GpReg, offset: u16 },
+    /// LDRSB Wt, [Xn, #offset]  (byte load, sign-extend to 32)
+    Ldrsb32 { rt: GpReg, rn: GpReg, offset: u16 },
+    /// LDRSB Xt, [Xn, #offset]  (byte load, sign-extend to 64)
+    Ldrsb64 { rt: GpReg, rn: GpReg, offset: u16 },
     /// LDRH Wt, [Xn, #offset]  (halfword load, zero-extend)
     Ldrh { rt: GpReg, rn: GpReg, offset: u16 },
+    /// LDRSH Wt, [Xn, #offset]  (halfword load, sign-extend to 32)
+    Ldrsh32 { rt: GpReg, rn: GpReg, offset: u16 },
+    /// LDRSH Xt, [Xn, #offset]  (halfword load, sign-extend to 64)
+    Ldrsh64 { rt: GpReg, rn: GpReg, offset: u16 },
     /// STRB Wt, [Xn, #offset]
     Strb { rt: GpReg, rn: GpReg, offset: u16 },
     /// STRH Wt, [Xn, #offset]
@@ -561,8 +569,40 @@ pub enum Inst {
         extend: AddrExtend,
         shift: bool,
     },
+    /// LDRSB Wt, [Xn, Rm{, extend}]
+    LdrsbReg32 {
+        rt: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        extend: AddrExtend,
+        shift: bool,
+    },
+    /// LDRSB Xt, [Xn, Rm{, extend}]
+    LdrsbReg64 {
+        rt: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        extend: AddrExtend,
+        shift: bool,
+    },
     /// LDRH Wt, [Xn, Rm{, extend}]
     LdrhReg {
+        rt: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        extend: AddrExtend,
+        shift: bool,
+    },
+    /// LDRSH Wt, [Xn, Rm{, extend}]
+    LdrshReg32 {
+        rt: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        extend: AddrExtend,
+        shift: bool,
+    },
+    /// LDRSH Xt, [Xn, Rm{, extend}]
+    LdrshReg64 {
         rt: GpReg,
         rn: GpReg,
         rm: GpReg,
@@ -653,10 +693,18 @@ pub enum Inst {
     StrPre32 { rt: GpReg, rn: GpReg, offset: i16 },
     /// LDRB Wt, [Xn, #offset]!  (pre-index, byte)
     LdrbPre { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRSB Wt, [Xn, #offset]!  (pre-index, byte)
+    LdrsbPre32 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRSB Xt, [Xn, #offset]!  (pre-index, byte)
+    LdrsbPre64 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STRB Wt, [Xn, #offset]!  (pre-index, byte)
     StrbPre { rt: GpReg, rn: GpReg, offset: i16 },
     /// LDRH Wt, [Xn, #offset]!  (pre-index, halfword)
     LdrhPre { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRSH Wt, [Xn, #offset]!  (pre-index, halfword)
+    LdrshPre32 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRSH Xt, [Xn, #offset]!  (pre-index, halfword)
+    LdrshPre64 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STRH Wt, [Xn, #offset]!  (pre-index, halfword)
     StrhPre { rt: GpReg, rn: GpReg, offset: i16 },
     /// LDR Xt, [Xn, #offset]!  (pre-index, 64-bit)
@@ -679,10 +727,18 @@ pub enum Inst {
     StrPost32 { rt: GpReg, rn: GpReg, offset: i16 },
     /// LDRB Wt, [Xn], #offset  (post-index, byte)
     LdrbPost { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRSB Wt, [Xn], #offset  (post-index, byte)
+    LdrsbPost32 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRSB Xt, [Xn], #offset  (post-index, byte)
+    LdrsbPost64 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STRB Wt, [Xn], #offset  (post-index, byte)
     StrbPost { rt: GpReg, rn: GpReg, offset: i16 },
     /// LDRH Wt, [Xn], #offset  (post-index, halfword)
     LdrhPost { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRSH Wt, [Xn], #offset  (post-index, halfword)
+    LdrshPost32 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRSH Xt, [Xn], #offset  (post-index, halfword)
+    LdrshPost64 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STRH Wt, [Xn], #offset  (post-index, halfword)
     StrhPost { rt: GpReg, rn: GpReg, offset: i16 },
     /// LDR Xt, [Xn], #offset  (post-index, 64-bit)
@@ -1414,9 +1470,35 @@ impl Inst {
                 let uoff = *offset as u32;
                 (0b00_111_0_01_01 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
+            Inst::Ldrsb32 { rt, rn, offset } => {
+                let uoff = *offset as u32;
+                (0b111_001 << 24) | (0b11 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldrsb64 { rt, rn, offset } => {
+                let uoff = *offset as u32;
+                (0b111_001 << 24) | (0b10 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
+            }
             Inst::Ldrh { rt, rn, offset } => {
                 let uoff = (*offset / 2) as u32;
                 (0b01_111_0_01_01 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldrsh32 { rt, rn, offset } => {
+                let uoff = (*offset / 2) as u32;
+                (0b01 << 30)
+                    | (0b111_001 << 24)
+                    | (0b11 << 22)
+                    | (uoff << 10)
+                    | (rn.enc() << 5)
+                    | rt.enc()
+            }
+            Inst::Ldrsh64 { rt, rn, offset } => {
+                let uoff = (*offset / 2) as u32;
+                (0b01 << 30)
+                    | (0b111_001 << 24)
+                    | (0b10 << 22)
+                    | (uoff << 10)
+                    | (rn.enc() << 5)
+                    | rt.enc()
             }
             Inst::Strb { rt, rn, offset } => {
                 let uoff = *offset as u32;
@@ -1437,6 +1519,20 @@ impl Inst {
                 extend,
                 shift,
             } => ldst_reg(0b00, 0b01, *rm, *extend, *shift, *rn, *rt),
+            Inst::LdrsbReg32 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            } => ldst_reg(0b00, 0b11, *rm, *extend, *shift, *rn, *rt),
+            Inst::LdrsbReg64 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            } => ldst_reg(0b00, 0b10, *rm, *extend, *shift, *rn, *rt),
             Inst::LdrhReg {
                 rt,
                 rn,
@@ -1444,6 +1540,20 @@ impl Inst {
                 extend,
                 shift,
             } => ldst_reg(0b01, 0b01, *rm, *extend, *shift, *rn, *rt),
+            Inst::LdrshReg32 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            } => ldst_reg(0b01, 0b11, *rm, *extend, *shift, *rn, *rt),
+            Inst::LdrshReg64 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            } => ldst_reg(0b01, 0b10, *rm, *extend, *shift, *rn, *rt),
             Inst::StrbReg {
                 rt,
                 rn,
@@ -1509,16 +1619,40 @@ impl Inst {
             Inst::LdrPre32 { rt, rn, offset } => ldst_idx(0b10, 0b01, *offset, 0b11, *rn, *rt),
             Inst::StrPre32 { rt, rn, offset } => ldst_idx(0b10, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrbPre { rt, rn, offset } => ldst_idx(0b00, 0b01, *offset, 0b11, *rn, *rt),
+            Inst::LdrsbPre32 { rt, rn, offset } => {
+                ldst_idx(0b00, 0b11, *offset, 0b11, *rn, *rt)
+            }
+            Inst::LdrsbPre64 { rt, rn, offset } => {
+                ldst_idx(0b00, 0b10, *offset, 0b11, *rn, *rt)
+            }
             Inst::StrbPre { rt, rn, offset } => ldst_idx(0b00, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrhPre { rt, rn, offset } => ldst_idx(0b01, 0b01, *offset, 0b11, *rn, *rt),
+            Inst::LdrshPre32 { rt, rn, offset } => {
+                ldst_idx(0b01, 0b11, *offset, 0b11, *rn, *rt)
+            }
+            Inst::LdrshPre64 { rt, rn, offset } => {
+                ldst_idx(0b01, 0b10, *offset, 0b11, *rn, *rt)
+            }
             Inst::StrhPre { rt, rn, offset } => ldst_idx(0b01, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrPre64 { rt, rn, offset } => ldst_idx(0b11, 0b01, *offset, 0b11, *rn, *rt),
             Inst::StrPre64 { rt, rn, offset } => ldst_idx(0b11, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrPost32 { rt, rn, offset } => ldst_idx(0b10, 0b01, *offset, 0b01, *rn, *rt),
             Inst::StrPost32 { rt, rn, offset } => ldst_idx(0b10, 0b00, *offset, 0b01, *rn, *rt),
             Inst::LdrbPost { rt, rn, offset } => ldst_idx(0b00, 0b01, *offset, 0b01, *rn, *rt),
+            Inst::LdrsbPost32 { rt, rn, offset } => {
+                ldst_idx(0b00, 0b11, *offset, 0b01, *rn, *rt)
+            }
+            Inst::LdrsbPost64 { rt, rn, offset } => {
+                ldst_idx(0b00, 0b10, *offset, 0b01, *rn, *rt)
+            }
             Inst::StrbPost { rt, rn, offset } => ldst_idx(0b00, 0b00, *offset, 0b01, *rn, *rt),
             Inst::LdrhPost { rt, rn, offset } => ldst_idx(0b01, 0b01, *offset, 0b01, *rn, *rt),
+            Inst::LdrshPost32 { rt, rn, offset } => {
+                ldst_idx(0b01, 0b11, *offset, 0b01, *rn, *rt)
+            }
+            Inst::LdrshPost64 { rt, rn, offset } => {
+                ldst_idx(0b01, 0b10, *offset, 0b01, *rn, *rt)
+            }
             Inst::StrhPost { rt, rn, offset } => ldst_idx(0b01, 0b00, *offset, 0b01, *rn, *rt),
             Inst::LdrPost64 { rt, rn, offset } => ldst_idx(0b11, 0b01, *offset, 0b01, *rn, *rt),
             Inst::StrPost64 { rt, rn, offset } => ldst_idx(0b11, 0b00, *offset, 0b01, *rn, *rt),
@@ -3099,6 +3233,30 @@ mod tests {
         );
     }
     #[test]
+    fn ldrsb_w0_x1_3() {
+        assert_eq!(
+            Inst::Ldrsb32 {
+                rt: W0,
+                rn: X1,
+                offset: 3
+            }
+            .encode(),
+            0x39C00C20
+        );
+    }
+    #[test]
+    fn ldrsb_x0_x1_3() {
+        assert_eq!(
+            Inst::Ldrsb64 {
+                rt: X0,
+                rn: X1,
+                offset: 3
+            }
+            .encode(),
+            0x39800C20
+        );
+    }
+    #[test]
     fn ldrb_w9_x1_post_1() {
         assert_eq!(
             Inst::LdrbPost {
@@ -3111,6 +3269,18 @@ mod tests {
         );
     }
     #[test]
+    fn ldrsb_w0_x1_post_1() {
+        assert_eq!(
+            Inst::LdrsbPost32 {
+                rt: W0,
+                rn: X1,
+                offset: 1
+            }
+            .encode(),
+            0x38C01420
+        );
+    }
+    #[test]
     fn ldrh_w10_x11_2() {
         assert_eq!(
             Inst::Ldrh {
@@ -3120,6 +3290,30 @@ mod tests {
             }
             .encode(),
             0x7940056A
+        );
+    }
+    #[test]
+    fn ldrsh_w0_x1_4() {
+        assert_eq!(
+            Inst::Ldrsh32 {
+                rt: W0,
+                rn: X1,
+                offset: 4
+            }
+            .encode(),
+            0x79C00820
+        );
+    }
+    #[test]
+    fn ldrsh_x0_x1_4() {
+        assert_eq!(
+            Inst::Ldrsh64 {
+                rt: X0,
+                rn: X1,
+                offset: 4
+            }
+            .encode(),
+            0x79800820
         );
     }
     #[test]
@@ -3171,6 +3365,30 @@ mod tests {
         );
     }
     #[test]
+    fn ldrsh_w0_x1_pre_2() {
+        assert_eq!(
+            Inst::LdrshPre32 {
+                rt: W0,
+                rn: X1,
+                offset: 2
+            }
+            .encode(),
+            0x78C02C20
+        );
+    }
+    #[test]
+    fn ldrsh_x0_x1_pre_2() {
+        assert_eq!(
+            Inst::LdrshPre64 {
+                rt: X0,
+                rn: X1,
+                offset: 2
+            }
+            .encode(),
+            0x78802C20
+        );
+    }
+    #[test]
     fn strh_w5_x6_post_2() {
         assert_eq!(
             Inst::StrhPost {
@@ -3209,6 +3427,34 @@ mod tests {
         );
     }
     #[test]
+    fn ldrsb_w0_x1_x2() {
+        assert_eq!(
+            Inst::LdrsbReg32 {
+                rt: W0,
+                rn: X1,
+                rm: X2,
+                extend: AddrExtend::Lsl,
+                shift: false
+            }
+            .encode(),
+            0x38E26820
+        );
+    }
+    #[test]
+    fn ldrsb_x0_x1_x2() {
+        assert_eq!(
+            Inst::LdrsbReg64 {
+                rt: X0,
+                rn: X1,
+                rm: X2,
+                extend: AddrExtend::Lsl,
+                shift: false
+            }
+            .encode(),
+            0x38A26820
+        );
+    }
+    #[test]
     fn ldrh_w3_x4_w5_uxtw1() {
         assert_eq!(
             Inst::LdrhReg {
@@ -3220,6 +3466,34 @@ mod tests {
             }
             .encode(),
             0x78655883
+        );
+    }
+    #[test]
+    fn ldrsh_w0_x1_w2_uxtw1() {
+        assert_eq!(
+            Inst::LdrshReg32 {
+                rt: W0,
+                rn: X1,
+                rm: W2,
+                extend: AddrExtend::Uxtw,
+                shift: true
+            }
+            .encode(),
+            0x78E25820
+        );
+    }
+    #[test]
+    fn ldrsh_x0_x1_w2_sxtw1() {
+        assert_eq!(
+            Inst::LdrshReg64 {
+                rt: X0,
+                rn: X1,
+                rm: W2,
+                extend: AddrExtend::Sxtw,
+                shift: true
+            }
+            .encode(),
+            0x78A2D820
         );
     }
     #[test]

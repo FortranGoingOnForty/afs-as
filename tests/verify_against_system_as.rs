@@ -897,11 +897,33 @@ fn sys_ldrb() {
     );
 }
 #[test]
+fn sys_ldrsb() {
+    verify(
+        "ldrsb w0, [x1, #3]",
+        Inst::Ldrsb32 {
+            rt: W0,
+            rn: X1,
+            offset: 3,
+        },
+    );
+}
+#[test]
 fn sys_ldrb_post() {
     verify(
         "ldrb w9, [x1], #1",
         Inst::LdrbPost {
             rt: W9,
+            rn: X1,
+            offset: 1,
+        },
+    );
+}
+#[test]
+fn sys_ldrsb_post() {
+    verify(
+        "ldrsb x9, [x1], #1",
+        Inst::LdrsbPost64 {
+            rt: X9,
             rn: X1,
             offset: 1,
         },
@@ -915,6 +937,17 @@ fn sys_ldrh() {
             rt: W0,
             rn: X1,
             offset: 6,
+        },
+    );
+}
+#[test]
+fn sys_ldrsh() {
+    verify(
+        "ldrsh x0, [x1, #4]",
+        Inst::Ldrsh64 {
+            rt: X0,
+            rn: X1,
+            offset: 4,
         },
     );
 }
@@ -967,6 +1000,19 @@ fn sys_ldrh_reg() {
     verify(
         "ldrh w3, [x4, w5, uxtw #1]",
         Inst::LdrhReg {
+            rt: W3,
+            rn: X4,
+            rm: W5,
+            extend: AddrExtend::Uxtw,
+            shift: true,
+        },
+    );
+}
+#[test]
+fn sys_ldrsh_reg() {
+    verify(
+        "ldrsh w3, [x4, w5, uxtw #1]",
+        Inst::LdrshReg32 {
             rt: W3,
             rn: X4,
             rm: W5,

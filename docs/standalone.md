@@ -167,7 +167,7 @@ Major covered families include:
   - literal `ldr` / `ldrsw`
 - load/store:
   - `ldr`, `str`
-  - `ldrb`, `ldrh`, `ldrsw`
+  - `ldrb`, `ldrsb`, `ldrh`, `ldrsh`, `ldrsw`
   - `strb`, `strh`
   - `ldp`, `stp`
   - integer, FP scalar, and FP pair forms across the supported addressing modes

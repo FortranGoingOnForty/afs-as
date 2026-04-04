@@ -417,12 +417,24 @@ fn rt_ldrb() {
     roundtrip(".text\nldrb w0, [x1, #3]\n");
 }
 #[test]
+fn rt_ldrsb() {
+    roundtrip(".text\nldrsb w0, [x1, #3]\n");
+}
+#[test]
 fn rt_ldrb_post() {
     roundtrip(".text\nldrb w9, [x1], #1\n");
 }
 #[test]
+fn rt_ldrsb_post() {
+    roundtrip(".text\nldrsb x9, [x1], #1\n");
+}
+#[test]
 fn rt_ldrh() {
     roundtrip(".text\nldrh w2, [x3, #6]\n");
+}
+#[test]
+fn rt_ldrsh() {
+    roundtrip(".text\nldrsh x0, [x1, #4]\n");
 }
 #[test]
 fn rt_strb() {
@@ -443,6 +455,10 @@ fn rt_ldrsw() {
 #[test]
 fn rt_ldrh_reg() {
     roundtrip(".text\nldrh w3, [x4, w5, uxtw #1]\n");
+}
+#[test]
+fn rt_ldrsh_reg() {
+    roundtrip(".text\nldrsh w3, [x4, w5, uxtw #1]\n");
 }
 #[test]
 fn rt_ldrb_reg() {

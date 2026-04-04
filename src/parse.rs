@@ -1107,7 +1107,9 @@ impl<'a> Parser<'a> {
 
             // Load/store
             "ldrb" => self.parse_ldstb_h("ldrb"),
+            "ldrsb" => self.parse_ldst_signed_b_h("ldrsb"),
             "ldrh" => self.parse_ldstb_h("ldrh"),
+            "ldrsh" => self.parse_ldst_signed_b_h("ldrsh"),
             "strb" => self.parse_ldstb_h("strb"),
             "strh" => self.parse_ldstb_h("strh"),
             "stp" => self.parse_ldp_stp(false),
@@ -2746,6 +2748,39 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_ldst_signed_b_h_offset_inst(
+        &self,
+        mnemonic: &str,
+        rt: GpReg,
+        sf: bool,
+        rn: GpReg,
+        offset: i16,
+    ) -> Inst {
+        match (mnemonic, sf) {
+            ("ldrsb", false) => Inst::Ldrsb32 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            ("ldrsb", true) => Inst::Ldrsb64 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            ("ldrsh", false) => Inst::Ldrsh32 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            ("ldrsh", true) => Inst::Ldrsh64 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            _ => unreachable!(),
+        }
+    }
+
     fn parse_ldstb_h_reg_inst(
         &self,
         mnemonic: &str,
@@ -2788,12 +2823,72 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_ldst_signed_b_h_reg_inst(
+        &self,
+        mnemonic: &str,
+        rt_and_sf: (GpReg, bool),
+        rn: GpReg,
+        rm: GpReg,
+        extend: AddrExtend,
+        shift: bool,
+    ) -> Inst {
+        let (rt, sf) = rt_and_sf;
+        match (mnemonic, sf) {
+            ("ldrsb", false) => Inst::LdrsbReg32 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            },
+            ("ldrsb", true) => Inst::LdrsbReg64 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            },
+            ("ldrsh", false) => Inst::LdrshReg32 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            },
+            ("ldrsh", true) => Inst::LdrshReg64 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            },
+            _ => unreachable!(),
+        }
+    }
+
     fn parse_ldstb_h_pre_inst(&self, mnemonic: &str, rt: GpReg, rn: GpReg, offset: i16) -> Inst {
         match mnemonic {
             "ldrb" => Inst::LdrbPre { rt, rn, offset },
             "ldrh" => Inst::LdrhPre { rt, rn, offset },
             "strb" => Inst::StrbPre { rt, rn, offset },
             "strh" => Inst::StrhPre { rt, rn, offset },
+            _ => unreachable!(),
+        }
+    }
+
+    fn parse_ldst_signed_b_h_pre_inst(
+        &self,
+        mnemonic: &str,
+        rt: GpReg,
+        sf: bool,
+        rn: GpReg,
+        offset: i16,
+    ) -> Inst {
+        match (mnemonic, sf) {
+            ("ldrsb", false) => Inst::LdrsbPre32 { rt, rn, offset },
+            ("ldrsb", true) => Inst::LdrsbPre64 { rt, rn, offset },
+            ("ldrsh", false) => Inst::LdrshPre32 { rt, rn, offset },
+            ("ldrsh", true) => Inst::LdrshPre64 { rt, rn, offset },
             _ => unreachable!(),
         }
     }
@@ -2810,6 +2905,23 @@ impl<'a> Parser<'a> {
             "ldrh" => Inst::LdrhPost { rt, rn, offset },
             "strb" => Inst::StrbPost { rt, rn, offset },
             "strh" => Inst::StrhPost { rt, rn, offset },
+            _ => unreachable!(),
+        }
+    }
+
+    fn parse_ldst_signed_b_h_post_inst(
+        &self,
+        mnemonic: &str,
+        rt: GpReg,
+        sf: bool,
+        rn: GpReg,
+        offset: i16,
+    ) -> Inst {
+        match (mnemonic, sf) {
+            ("ldrsb", false) => Inst::LdrsbPost32 { rt, rn, offset },
+            ("ldrsb", true) => Inst::LdrsbPost64 { rt, rn, offset },
+            ("ldrsh", false) => Inst::LdrshPost32 { rt, rn, offset },
+            ("ldrsh", true) => Inst::LdrshPost64 { rt, rn, offset },
             _ => unreachable!(),
         }
     }
@@ -2845,6 +2957,52 @@ impl<'a> Parser<'a> {
             return Ok(self.parse_ldstb_h_pre_inst(mnemonic, rt, rn, offset));
         }
         Ok(self.parse_ldstb_h_offset_inst(mnemonic, rt, rn, offset))
+    }
+
+    fn parse_ldst_signed_b_h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        self.expect(&Tok::LBracket)?;
+        let rn = self.parse_gp_reg()?;
+        if self.eat(&Tok::RBracket) {
+            if self.eat(&Tok::Comma) {
+                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                return Ok(self.parse_ldst_signed_b_h_post_inst(mnemonic, rt, sf, rn, offset));
+            }
+            return Ok(self.parse_ldst_signed_b_h_offset_inst(
+                mnemonic, rt, sf, rn, 0,
+            ));
+        }
+
+        self.expect(&Tok::Comma)?;
+        if self.starts_register_like_operand() {
+            let scale = match mnemonic {
+                "ldrsb" => 0,
+                "ldrsh" => 1,
+                _ => unreachable!(),
+            };
+            let (rm, extend, shift) = self.parse_reg_offset_operand(scale)?;
+            self.expect(&Tok::RBracket)?;
+            return Ok(self.parse_ldst_signed_b_h_reg_inst(
+                mnemonic,
+                (rt, sf),
+                rn,
+                rm,
+                extend,
+                shift,
+            ));
+        }
+
+        let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+        self.expect(&Tok::RBracket)?;
+        if self.eat(&Tok::Bang) {
+            return Ok(self.parse_ldst_signed_b_h_pre_inst(
+                mnemonic, rt, sf, rn, offset,
+            ));
+        }
+        Ok(self.parse_ldst_signed_b_h_offset_inst(
+            mnemonic, rt, sf, rn, offset,
+        ))
     }
 
     fn parse_ldrsw(&mut self) -> Result<Stmt, ParseError> {
@@ -4947,6 +5105,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldrsb_32() {
+        assert_eq!(
+            parse_inst("ldrsb w0, [x1, #3]"),
+            Inst::Ldrsb32 {
+                rt: W0,
+                rn: X1,
+                offset: 3
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldrsb_post_index_64() {
+        assert_eq!(
+            parse_inst("ldrsb x9, [x1], #1"),
+            Inst::LdrsbPost64 {
+                rt: X9,
+                rn: X1,
+                offset: 1
+            }
+        );
+    }
+
+    #[test]
     fn parse_ldrb_post_index() {
         assert_eq!(
             parse_inst("ldrb w9, [x1], #1"),
@@ -5011,6 +5193,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldrsh_register_offset_32() {
+        assert_eq!(
+            parse_inst("ldrsh w3, [x4, w5, uxtw #1]"),
+            Inst::LdrshReg32 {
+                rt: W3,
+                rn: X4,
+                rm: W5,
+                extend: AddrExtend::Uxtw,
+                shift: true
+            }
+        );
+    }
+
+    #[test]
     fn parse_strh_pre_index() {
         assert_eq!(
             parse_inst("strh w5, [x6, #2]!"),
@@ -5032,6 +5228,18 @@ mod tests {
                 rm: W8,
                 extend: AddrExtend::Sxtw,
                 shift: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldrsh_pre_index_64() {
+        assert_eq!(
+            parse_inst("ldrsh x5, [x6, #2]!"),
+            Inst::LdrshPre64 {
+                rt: X5,
+                rn: X6,
+                offset: 2
             }
         );
     }
