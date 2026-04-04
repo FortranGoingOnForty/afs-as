@@ -19,6 +19,7 @@ const LC_SEGMENT_64: u32 = 0x19;
 const LC_SYMTAB: u32 = 0x02;
 const LC_DYSYMTAB: u32 = 0x0B;
 const LC_BUILD_VERSION: u32 = 0x32;
+const LC_LINKER_OPTIMIZATION_HINT: u32 = 0x2E;
 
 const S_REGULAR: u32 = 0x0;
 const S_ZEROFILL: u32 = 0x1;
@@ -57,6 +58,7 @@ const SECTION_SIZE: u32 = 80;
 const SYMTAB_CMD_SIZE: u32 = 24;
 const DYSYMTAB_CMD_SIZE: u32 = 80;
 const BUILD_VERSION_CMD_SIZE: u32 = 24;
+const LINKEDIT_DATA_CMD_SIZE: u32 = 16;
 const NLIST_SIZE: u32 = 16;
 const RELOC_SIZE: u32 = 8;
 
@@ -178,6 +180,7 @@ pub struct ObjectFile {
     pub symbols: Vec<Symbol>,
     pub flags: u32,
     pub build_version: BuildVersion,
+    pub linker_optimization_hints: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -195,6 +198,7 @@ impl ObjectFile {
             symbols: Vec::new(),
             flags: 0,
             build_version: BuildVersion::default(),
+            linker_optimization_hints: Vec::new(),
         }
     }
 
@@ -227,8 +231,13 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
 
     // Compute layout.
     let segment_cmdsize = SEGMENT_CMD_SIZE + nsects * SECTION_SIZE;
-    let ncmds: u32 = 4; // LC_SEGMENT_64, LC_BUILD_VERSION, LC_SYMTAB, LC_DYSYMTAB
-    let sizeofcmds = segment_cmdsize + BUILD_VERSION_CMD_SIZE + SYMTAB_CMD_SIZE + DYSYMTAB_CMD_SIZE;
+    let has_loh = !obj.linker_optimization_hints.is_empty();
+    let ncmds: u32 = 4 + has_loh as u32; // LC_SEGMENT_64, LC_BUILD_VERSION, optional LOH, LC_SYMTAB, LC_DYSYMTAB
+    let sizeofcmds = segment_cmdsize
+        + BUILD_VERSION_CMD_SIZE
+        + if has_loh { LINKEDIT_DATA_CMD_SIZE } else { 0 }
+        + SYMTAB_CMD_SIZE
+        + DYSYMTAB_CMD_SIZE;
 
     let content_offset = HEADER_SIZE + sizeofcmds;
     let mut layouts = vec![SectionLayout::default(); obj.sections.len()];
@@ -289,8 +298,12 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         }
     }
 
-    // Symbol table follows relocations.
-    let symoff = reloc_cursor;
+    // Linker optimization hints, when present, follow relocations.
+    let lohoff = reloc_cursor;
+    let lohsize = obj.linker_optimization_hints.len() as u32;
+
+    // Symbol table follows linker optimization hints.
+    let symoff = lohoff + lohsize;
     let nsyms = obj.symbols.len() as u32;
     let sym_size = nsyms * NLIST_SIZE;
 
@@ -371,6 +384,13 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     write_u32(w, obj.build_version.sdk)?;
     write_u32(w, 0)?;               // ntools
 
+    if has_loh {
+        write_u32(w, LC_LINKER_OPTIMIZATION_HINT)?;
+        write_u32(w, LINKEDIT_DATA_CMD_SIZE)?;
+        write_u32(w, lohoff)?;
+        write_u32(w, lohsize)?;
+    }
+
     // ---- LC_SYMTAB ----
     write_u32(w, LC_SYMTAB)?;
     write_u32(w, SYMTAB_CMD_SIZE)?;
@@ -416,6 +436,10 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         for rel in &sorted_relocs {
             write_reloc(w, rel)?;
         }
+    }
+
+    if has_loh {
+        w.write_all(&obj.linker_optimization_hints)?;
     }
 
     // ---- Symbol table ----
@@ -1143,6 +1167,54 @@ mod tests {
         assert_eq!(platform, PLATFORM_MACOS);
         assert_eq!(minos, pack_version(11, 0, 0));
         assert_eq!(sdk, pack_version(15, 5, 0));
+    }
+
+    #[test]
+    fn linker_optimization_hint_command_uses_object_metadata() {
+        let mut obj = ObjectFile::new();
+        obj.linker_optimization_hints = vec![7, 2, 0, 4, 0, 0, 0, 0];
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let ncmds = u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]) as usize;
+        let mut offset = HEADER_SIZE as usize;
+        let mut found = None;
+        for _ in 0..ncmds {
+            let cmd = u32::from_le_bytes([
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ]);
+            let cmdsize = u32::from_le_bytes([
+                buf[offset + 4],
+                buf[offset + 5],
+                buf[offset + 6],
+                buf[offset + 7],
+            ]) as usize;
+            if cmd == LC_LINKER_OPTIMIZATION_HINT {
+                let dataoff = u32::from_le_bytes([
+                    buf[offset + 8],
+                    buf[offset + 9],
+                    buf[offset + 10],
+                    buf[offset + 11],
+                ]) as usize;
+                let datasize = u32::from_le_bytes([
+                    buf[offset + 12],
+                    buf[offset + 13],
+                    buf[offset + 14],
+                    buf[offset + 15],
+                ]) as usize;
+                found = Some((dataoff, datasize));
+                break;
+            }
+            offset += cmdsize;
+        }
+
+        let (dataoff, datasize) = found.expect("missing LC_LINKER_OPTIMIZATION_HINT");
+        assert_eq!(datasize, 8);
+        assert_eq!(&buf[dataoff..dataoff + datasize], &[7, 2, 0, 4, 0, 0, 0, 0]);
     }
 
     #[test]

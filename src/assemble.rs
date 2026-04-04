@@ -14,7 +14,9 @@ use std::path::Path;
 use crate::encode::Inst;
 use crate::expr::{self, ClassifiedExpr, Expr, SymbolValue};
 use crate::macho::{self, BuildVersion, ObjectFile, Relocation, Section, SectionKind, Symbol};
-use crate::parse::{self, BuildVersionDirective, Directive, RelocKind, Stmt};
+use crate::parse::{
+    self, BuildVersionDirective, Directive, LinkerOptimizationHintDirective, RelocKind, Stmt,
+};
 use crate::reg::{GpReg, SP};
 
 /// Assemble a source file to a Mach-O object file.
@@ -127,6 +129,7 @@ struct Assembler {
     pending_relocs: Vec<Vec<PendingReloc>>,
     subsections_via_symbols: bool,
     build_version: Option<BuildVersionDirective>,
+    linker_optimization_hints: Vec<LinkerOptimizationHint>,
     active_cfi_proc: Option<CfiProcState>,
     compact_unwind_rows: Vec<CompactUnwindRow>,
     eh_frame_rows: Vec<EhFrameRecord>,
@@ -173,6 +176,12 @@ struct PendingReloc {
     length: u8,
     reloc_type: u32,
     pcrel: bool,
+}
+
+#[derive(Debug, Clone)]
+struct LinkerOptimizationHint {
+    kind: String,
+    labels: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -363,6 +372,7 @@ impl Assembler {
             pending_relocs: vec![Vec::new()],
             subsections_via_symbols: false,
             build_version: None,
+            linker_optimization_hints: Vec::new(),
             active_cfi_proc: None,
             compact_unwind_rows: Vec::new(),
             eh_frame_rows: Vec::new(),
@@ -402,6 +412,7 @@ impl Assembler {
         self.pending_relocs.clear();
         self.pending_relocs.resize_with(self.sections.len(), Vec::new);
         self.active_cfi_proc = None;
+        self.linker_optimization_hints.clear();
         self.compact_unwind_rows.clear();
         self.eh_frame_rows.clear();
     }
@@ -551,6 +562,9 @@ impl Assembler {
             Directive::BuildVersion(build_version) => {
                 self.record_build_version(build_version)?;
             }
+            Directive::LinkerOptimizationHint(hint) => {
+                self.record_linker_optimization_hint(hint);
+            }
             Directive::Ignored(_) => {}
         }
         Ok(())
@@ -635,6 +649,9 @@ impl Assembler {
             }
             Directive::BuildVersion(build_version) => {
                 self.record_build_version(build_version)?;
+            }
+            Directive::LinkerOptimizationHint(hint) => {
+                self.record_linker_optimization_hint(hint);
             }
             Directive::Ignored(_) => {}
         }
@@ -802,6 +819,13 @@ impl Assembler {
                 Ok(())
             }
         }
+    }
+
+    fn record_linker_optimization_hint(&mut self, hint: &LinkerOptimizationHintDirective) {
+        self.linker_optimization_hints.push(LinkerOptimizationHint {
+            kind: hint.kind.clone(),
+            labels: hint.labels.clone(),
+        });
     }
 
     fn reserve_initialized_bytes(&mut self, amount: u64, context: &str) -> Result<(), AsmError> {
@@ -1553,7 +1577,7 @@ impl Assembler {
         for (name, (section, offset)) in &self.labels {
             if !self.symbol_attrs.contains_key(name)
                 && !name.starts_with("ltmp")
-                && !is_generated_temp_symbol(name)
+                && !is_hidden_local_object_symbol(name)
             {
                 let value = section_bases[*section] + offset;
                 symbols.push(Symbol {
@@ -1767,6 +1791,8 @@ impl Assembler {
                 })
         });
 
+        let linker_optimization_hints = self.build_linker_optimization_hint_data()?;
+
         for relocs in self.pending_relocs {
             for pending in relocs {
                 let sym_idx = symbols
@@ -1789,7 +1815,45 @@ impl Assembler {
             symbols,
             flags,
             build_version,
+            linker_optimization_hints,
         })
+    }
+
+    fn build_linker_optimization_hint_data(&self) -> Result<Vec<u8>, AsmError> {
+        let mut data = Vec::new();
+        for hint in &self.linker_optimization_hints {
+            let Some(kind) = linker_optimization_hint_kind(&hint.kind) else {
+                continue;
+            };
+            if hint.labels.len() > u8::MAX as usize {
+                return Err(AsmError(format!(
+                    ".loh {} has too many labels ({})",
+                    hint.kind,
+                    hint.labels.len()
+                )));
+            }
+            data.push(kind);
+            data.push(hint.labels.len() as u8);
+            for label in &hint.labels {
+                let (section, offset) = self.labels.get(label).copied().ok_or_else(|| {
+                    AsmError(format!(".loh {} references undefined label '{}'", hint.kind, label))
+                })?;
+                if self.sections[section].kind != SectionKind::Text {
+                    return Err(AsmError(format!(
+                        ".loh {} requires __TEXT,__text labels, got '{}' in {},{}",
+                        hint.kind,
+                        label,
+                        self.sections[section].segment,
+                        self.sections[section].name
+                    )));
+                }
+                append_uleb128(&mut data, offset);
+            }
+        }
+        while !data.is_empty() && !data.len().is_multiple_of(8) {
+            data.push(0);
+        }
+        Ok(data)
     }
 
     fn resolve_absolute_symbols(&self) -> Result<BTreeMap<String, i64>, AsmError> {
@@ -1994,12 +2058,34 @@ fn symbol_class_rank(symbol: &Symbol) -> u8 {
     }
 }
 
-fn is_assembler_local_symbol(name: &str) -> bool {
-    name.starts_with(".L")
+fn linker_optimization_hint_kind(name: &str) -> Option<u8> {
+    match name {
+        "AdrpAdd" => Some(7),
+        "AdrpLdrGot" => Some(8),
+        _ => None,
+    }
 }
 
-fn is_generated_temp_symbol(name: &str) -> bool {
-    name.starts_with(".Ltmp$")
+fn append_uleb128(out: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn is_assembler_local_symbol(name: &str) -> bool {
+    name.starts_with(".L") || name.starts_with('L')
+}
+
+fn is_hidden_local_object_symbol(name: &str) -> bool {
+    name.starts_with(".Ltmp$") || name.starts_with('L')
 }
 
 #[cfg(test)]
@@ -2742,6 +2828,36 @@ mod tests {
                 .map(|sym| sym.name.as_str())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn assemble_uppercase_l_labels_do_not_emit_object_symbols() {
+        let obj = assemble_source(".text\n.globl _f\n_f:\nLtmp0:\n  ret\n").unwrap();
+        assert!(
+            !obj.symbols.iter().any(|sym| sym.name == "Ltmp0"),
+            "uppercase-L temp labels leaked into symbol table: {:?}",
+            obj.symbols
+                .iter()
+                .map(|sym| sym.name.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn assemble_linker_optimization_hint_emits_payload() {
+        let obj = assemble_source(
+            ".text\n\
+             .globl _f\n\
+             _f:\n\
+             Lloh0:\n\
+               adrp x0, _ext@PAGE\n\
+             Lloh1:\n\
+               add x0, x0, _ext@PAGEOFF\n\
+               ret\n\
+               .loh AdrpAdd Lloh0, Lloh1\n",
+        )
+        .unwrap();
+        assert_eq!(obj.linker_optimization_hints, vec![7, 2, 0, 4, 0, 0, 0, 0]);
     }
 
     #[test]

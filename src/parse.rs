@@ -88,6 +88,7 @@ pub enum Directive {
     Section(String, String),
     SubsectionsViaSymbols,
     BuildVersion(BuildVersionDirective),
+    LinkerOptimizationHint(LinkerOptimizationHintDirective),
     Ignored(String),
 }
 
@@ -103,6 +104,12 @@ pub struct BuildVersionDirective {
     pub platform: String,
     pub minos: VersionTriple,
     pub sdk: Option<VersionTriple>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkerOptimizationHintDirective {
+    pub kind: String,
+    pub labels: Vec<String>,
 }
 
 /// Parse error with source location.
@@ -476,6 +483,17 @@ impl<'a> Parser<'a> {
                     return Err(self.err("unexpected tokens after .build_version".into()));
                 }
                 Directive::BuildVersion(BuildVersionDirective { platform, minos, sdk })
+            }
+            ".loh" => {
+                let kind = self.expect_ident()?;
+                let mut labels = Vec::new();
+                while !self.at_end_of_stmt() {
+                    if self.eat(&Tok::Comma) {
+                        continue;
+                    }
+                    labels.push(self.expect_ident()?);
+                }
+                Directive::LinkerOptimizationHint(LinkerOptimizationHintDirective { kind, labels })
             }
             _ if name.starts_with(".cfi_") => {
                 return Err(self.err(format!(
@@ -3196,6 +3214,20 @@ mod tests {
                 minos: VersionTriple { major: 14, minor: 1, patch: 0 },
                 sdk: None,
             }))]
+        );
+    }
+
+    #[test]
+    fn parse_linker_optimization_hint() {
+        let stmts = parse_stmts(".loh AdrpAdd Lloh0, Lloh1");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::LinkerOptimizationHint(
+                LinkerOptimizationHintDirective {
+                    kind: "AdrpAdd".into(),
+                    labels: vec!["Lloh0".into(), "Lloh1".into()],
+                }
+            ))]
         );
     }
 
