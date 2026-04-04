@@ -767,6 +767,18 @@ pub enum Inst {
     Ldaddal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDADDAL Xs, Xt, [Xn]
     Ldaddal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDCLRAL Ws, Wt, [Xn]
+    Ldclral32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDCLRAL Xs, Xt, [Xn]
+    Ldclral64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDEORAL Ws, Wt, [Xn]
+    Ldeoral32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDEORAL Xs, Xt, [Xn]
+    Ldeoral64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSETAL Ws, Wt, [Xn]
+    Ldsetal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSETAL Xs, Xt, [Xn]
+    Ldsetal64 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// SWPAL Ws, Wt, [Xn]
     Swpal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// SWPAL Xs, Xt, [Xn]
@@ -1683,6 +1695,24 @@ impl Inst {
             }
             Inst::Ldaddal64 { rs, rt, rn } => {
                 0xF8E00000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldclral32 { rs, rt, rn } => {
+                0xB8E01000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldclral64 { rs, rt, rn } => {
+                0xF8E01000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldeoral32 { rs, rt, rn } => {
+                0xB8E02000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldeoral64 { rs, rt, rn } => {
+                0xF8E02000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsetal32 { rs, rt, rn } => {
+                0xB8E03000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsetal64 { rs, rt, rn } => {
+                0xF8E03000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Swpal32 { rs, rt, rn } => {
                 0xB8E08000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
@@ -3554,6 +3584,42 @@ mod tests {
             }
             .encode(),
             0xF8E00108
+        );
+    }
+    #[test]
+    fn ldclral_w12_w13_x14() {
+        assert_eq!(
+            Inst::Ldclral32 {
+                rs: W12,
+                rt: W13,
+                rn: X14
+            }
+            .encode(),
+            0xB8EC11CD
+        );
+    }
+    #[test]
+    fn ldeoral_x9_x10_x11() {
+        assert_eq!(
+            Inst::Ldeoral64 {
+                rs: X9,
+                rt: X10,
+                rn: X11
+            }
+            .encode(),
+            0xF8E9216A
+        );
+    }
+    #[test]
+    fn ldsetal_w0_w1_x2() {
+        assert_eq!(
+            Inst::Ldsetal32 {
+                rs: W0,
+                rt: W1,
+                rn: X2
+            }
+            .encode(),
+            0xB8E03041
         );
     }
     #[test]

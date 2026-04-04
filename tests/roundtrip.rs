@@ -481,6 +481,18 @@ fn rt_ldaddal() {
     roundtrip(".text\nldaddal w0, w8, [x8]\n");
 }
 #[test]
+fn rt_ldclral() {
+    roundtrip(".text\nldclral w12, w13, [x14]\n");
+}
+#[test]
+fn rt_ldeoral() {
+    roundtrip(".text\nldeoral x9, x10, [x11]\n");
+}
+#[test]
+fn rt_ldsetal() {
+    roundtrip(".text\nldsetal w0, w1, [x2]\n");
+}
+#[test]
 fn rt_swpal() {
     roundtrip(".text\nswpal w0, w0, [x8]\n");
 }

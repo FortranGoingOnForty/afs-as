@@ -174,7 +174,7 @@ Major covered families include:
 - scalar atomic memory:
   - `ldapr`
   - `stlr`
-  - `ldaddal`
+  - `ldaddal`, `ldclral`, `ldeoral`, `ldsetal`
   - `swpal`
   - `casal`
 - floating point:

@@ -1073,6 +1073,39 @@ fn sys_ldaddal() {
     );
 }
 #[test]
+fn sys_ldclral() {
+    verify(
+        "ldclral w12, w13, [x14]",
+        Inst::Ldclral32 {
+            rs: W12,
+            rt: W13,
+            rn: X14,
+        },
+    );
+}
+#[test]
+fn sys_ldeoral() {
+    verify(
+        "ldeoral x9, x10, [x11]",
+        Inst::Ldeoral64 {
+            rs: X9,
+            rt: X10,
+            rn: X11,
+        },
+    );
+}
+#[test]
+fn sys_ldsetal() {
+    verify(
+        "ldsetal w0, w1, [x2]",
+        Inst::Ldsetal32 {
+            rs: W0,
+            rt: W1,
+            rn: X2,
+        },
+    );
+}
+#[test]
 fn sys_swpal() {
     verify(
         "swpal w0, w0, [x8]",

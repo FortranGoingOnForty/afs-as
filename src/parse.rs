@@ -1035,6 +1035,15 @@ impl<'a> Parser<'a> {
         if mnemonic == "ldaddal" {
             return self.parse_ldaddal();
         }
+        if mnemonic == "ldclral" {
+            return self.parse_ldclral();
+        }
+        if mnemonic == "ldeoral" {
+            return self.parse_ldeoral();
+        }
+        if mnemonic == "ldsetal" {
+            return self.parse_ldsetal();
+        }
         if mnemonic == "swpal" {
             return self.parse_swpal();
         }
@@ -1306,6 +1315,12 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Instruction(match (mnemonic, sf) {
             ("ldaddal", true) => Inst::Ldaddal64 { rs, rt, rn },
             ("ldaddal", false) => Inst::Ldaddal32 { rs, rt, rn },
+            ("ldclral", true) => Inst::Ldclral64 { rs, rt, rn },
+            ("ldclral", false) => Inst::Ldclral32 { rs, rt, rn },
+            ("ldeoral", true) => Inst::Ldeoral64 { rs, rt, rn },
+            ("ldeoral", false) => Inst::Ldeoral32 { rs, rt, rn },
+            ("ldsetal", true) => Inst::Ldsetal64 { rs, rt, rn },
+            ("ldsetal", false) => Inst::Ldsetal32 { rs, rt, rn },
             ("swpal", true) => Inst::Swpal64 { rs, rt, rn },
             ("swpal", false) => Inst::Swpal32 { rs, rt, rn },
             ("casal", true) => Inst::Casal64 { rs, rt, rn },
@@ -1316,6 +1331,18 @@ impl<'a> Parser<'a> {
 
     fn parse_ldaddal(&mut self) -> Result<Stmt, ParseError> {
         self.parse_atomic_rmw("ldaddal")
+    }
+
+    fn parse_ldclral(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_atomic_rmw("ldclral")
+    }
+
+    fn parse_ldeoral(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_atomic_rmw("ldeoral")
+    }
+
+    fn parse_ldsetal(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_atomic_rmw("ldsetal")
     }
 
     fn parse_swpal(&mut self) -> Result<Stmt, ParseError> {
@@ -5268,6 +5295,42 @@ mod tests {
                 rs: W0,
                 rt: W8,
                 rn: X8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldclral_w() {
+        assert_eq!(
+            parse_inst("ldclral w12, w13, [x14]"),
+            Inst::Ldclral32 {
+                rs: W12,
+                rt: W13,
+                rn: X14
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldeoral_x() {
+        assert_eq!(
+            parse_inst("ldeoral x9, x10, [x11]"),
+            Inst::Ldeoral64 {
+                rs: X9,
+                rt: X10,
+                rn: X11
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldsetal_w() {
+        assert_eq!(
+            parse_inst("ldsetal w0, w1, [x2]"),
+            Inst::Ldsetal32 {
+                rs: W0,
+                rt: W1,
+                rn: X2
             }
         );
     }
