@@ -149,6 +149,7 @@ pub struct ObjectFile {
     pub symbols: Vec<Symbol>,
 }
 
+#[derive(Clone, Copy, Default)]
 struct SectionLayout {
     addr: u64,
     offset: u32,
@@ -197,11 +198,15 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     let sizeofcmds = segment_cmdsize + BUILD_VERSION_CMD_SIZE + SYMTAB_CMD_SIZE + DYSYMTAB_CMD_SIZE;
 
     let content_offset = HEADER_SIZE + sizeofcmds;
-    let mut layouts = Vec::with_capacity(obj.sections.len());
+    let mut layouts = vec![SectionLayout::default(); obj.sections.len()];
     let mut file_cursor = content_offset;
     let mut vm_cursor = 0u64;
 
-    for section in &obj.sections {
+    let mut allocation_order: Vec<_> = (0..obj.sections.len()).collect();
+    allocation_order.sort_by_key(|&index| obj.sections[index].kind.is_zerofill());
+
+    for index in allocation_order {
+        let section = &obj.sections[index];
         if !section.kind.is_zerofill() && section.data.len() as u64 != section.size {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -228,12 +233,12 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
             offset
         };
 
-        layouts.push(SectionLayout {
+        layouts[index] = SectionLayout {
             addr,
             offset,
             reloff: 0,
             nreloc: 0,
-        });
+        };
     }
 
     // Relocations follow section data (aligned to 8 bytes for relocation_info).

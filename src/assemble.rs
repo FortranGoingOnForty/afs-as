@@ -615,11 +615,12 @@ impl Assembler {
     }
 
     fn section_base_addresses(&self) -> Vec<u64> {
-        let mut bases = Vec::with_capacity(self.sections.len());
+        let mut bases = vec![0u64; self.sections.len()];
         let mut addr = 0u64;
-        for section in &self.sections {
+        for index in section_allocation_order(&self.sections) {
+            let section = &self.sections[index];
             addr = align_value(addr, section.align_pow2);
-            bases.push(addr);
+            bases[index] = addr;
             addr += section.size;
         }
         bases
@@ -1009,6 +1010,12 @@ fn align_value(value: u64, power: u32) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
 }
 
+fn section_allocation_order(sections: &[Section]) -> Vec<usize> {
+    let mut order: Vec<_> = (0..sections.len()).collect();
+    order.sort_by_key(|&index| sections[index].kind == SectionKind::ZeroFill);
+    order
+}
+
 fn check_branch_offset(offset: i64, bits: u8) -> Result<i32, AsmError> {
     if offset % 4 != 0 {
         return Err(AsmError(format!("branch offset {} is not 4-byte aligned", offset)));
@@ -1282,6 +1289,26 @@ mod tests {
         assert_eq!(bss.size, 8);
         assert_eq!(bss.align_pow2, 2);
         assert!(!obj.symbols.iter().any(|sym| sym.name.is_empty()));
+    }
+
+    #[test]
+    fn assemble_zerofill_keeps_declared_section_order_and_trailing_address() {
+        let obj = assemble_source(
+            ".text\nret\n.zerofill __DATA,__bss,_scratch,16,4\n.data\n.byte 1\n"
+        )
+        .unwrap();
+
+        let section_names: Vec<_> = obj.sections.iter()
+            .map(|section| (section.segment.as_str(), section.name.as_str()))
+            .collect();
+        assert_eq!(
+            section_names,
+            vec![("__TEXT", "__text"), ("__DATA", "__bss"), ("__DATA", "__data")]
+        );
+
+        let scratch = obj.symbols.iter().find(|sym| sym.name == "_scratch").unwrap();
+        assert_eq!(scratch.section, 2);
+        assert_eq!(scratch.value, 16);
     }
 
     #[test]
