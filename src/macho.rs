@@ -4,6 +4,7 @@
 //! Implements the minimum viable subset: header, segment with supported Mach-O
 //! sections, symbol table, dynamic symbol table, build version, and relocations.
 
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 
 // ---- Mach-O Constants ----
@@ -296,7 +297,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // String table follows symbol table.
     let stroff = symoff + sym_size;
     let strtab = build_string_table(&obj.symbols);
-    let strsize = strtab.len() as u32;
+    let strsize = strtab.bytes.len() as u32;
 
     // Classify symbols for LC_DYSYMTAB.
     let nlocalsym = obj.symbols.iter().filter(|s| !s.global && !s.undefined).count() as u32;
@@ -419,7 +420,10 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
 
     // ---- Symbol table ----
     for (i, sym) in obj.symbols.iter().enumerate() {
-        let str_offset = string_offset(&strtab, &sym.name);
+        let str_offset = *strtab
+            .offsets
+            .get(&sym.name)
+            .expect("string table offset for symbol");
         let mut n_type = if sym.undefined || sym.common {
             N_UNDF
         } else if sym.absolute {
@@ -455,38 +459,62 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     }
 
     // ---- String table ----
-    w.write_all(&strtab)?;
+    w.write_all(&strtab.bytes)?;
 
     Ok(())
 }
 
 // ---- Helpers ----
 
-fn build_string_table(symbols: &[Symbol]) -> Vec<u8> {
-    let mut tab = vec![0u8]; // string table starts with a null byte
-    for sym in symbols {
-        tab.extend_from_slice(sym.name.as_bytes());
-        tab.push(0);
-    }
-    // Apple pads the object string table to 8-byte alignment.
-    while !tab.len().is_multiple_of(8) {
-        tab.push(0);
-    }
-    tab
+struct StringTable {
+    bytes: Vec<u8>,
+    offsets: BTreeMap<String, u32>,
 }
 
-fn string_offset(strtab: &[u8], name: &str) -> usize {
-    let name_bytes = name.as_bytes();
-    // Search for the null-terminated name in the string table.
-    let mut pos = 1; // skip initial null
-    while pos < strtab.len() {
-        let end = strtab[pos..].iter().position(|&b| b == 0).unwrap() + pos;
-        if &strtab[pos..end] == name_bytes {
-            return pos;
-        }
-        pos = end + 1;
+fn build_string_table(symbols: &[Symbol]) -> StringTable {
+    let mut names: Vec<&str> = symbols.iter().map(|sym| sym.name.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+
+    // Match clang's integrated assembler: names are finalized in descending
+    // reverse-lexicographic order so suffix-related symbols can share bytes.
+    names.sort_by(|left, right| right.bytes().rev().cmp(left.bytes().rev()));
+
+    let mut bytes = vec![0u8];
+    let mut offsets = BTreeMap::new();
+    for name in names {
+        let offset = suffix_string_offset(&bytes, name).unwrap_or_else(|| {
+            let offset = bytes.len() as u32;
+            bytes.extend_from_slice(name.as_bytes());
+            bytes.push(0);
+            offset
+        });
+        offsets.insert(name.to_string(), offset);
     }
-    0 // fallback to empty string
+
+    // Apple pads the object string table to 8-byte alignment.
+    while !bytes.len().is_multiple_of(8) {
+        bytes.push(0);
+    }
+
+    StringTable { bytes, offsets }
+}
+
+fn suffix_string_offset(strtab: &[u8], name: &str) -> Option<u32> {
+    let name_bytes = name.as_bytes();
+    if strtab.len() < name_bytes.len() + 1 {
+        return None;
+    }
+
+    for pos in 1..=strtab.len() - name_bytes.len() - 1 {
+        if &strtab[pos..pos + name_bytes.len()] == name_bytes
+            && strtab[pos + name_bytes.len()] == 0
+        {
+            return Some(pos as u32);
+        }
+    }
+
+    None
 }
 
 fn write_reloc<W: Write>(w: &mut W, rel: &Relocation) -> io::Result<()> {
@@ -627,9 +655,139 @@ mod tests {
         ];
         let strtab = build_string_table(&syms);
 
-        assert_eq!(strtab[0], 0); // initial null
-        assert_eq!(string_offset(&strtab, "_main"), 1);
-        assert_eq!(string_offset(&strtab, "msg"), 7);
+        assert_eq!(strtab.bytes[0], 0); // initial null
+        assert_eq!(strtab.offsets["_main"], 1);
+        assert_eq!(strtab.offsets["msg"], 7);
+    }
+
+    #[test]
+    fn string_table_orders_names_by_reverse_lexicographic_suffix_order() {
+        let syms = vec![
+            Symbol {
+                name: "_ext".into(),
+                section: 0,
+                value: 0,
+                global: true,
+                undefined: true,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "ccc".into(),
+                section: 1,
+                value: 4,
+                global: false,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "_bbb".into(),
+                section: 1,
+                value: 0,
+                global: true,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "_aaa".into(),
+                section: 1,
+                value: 8,
+                global: true,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "ltmp0".into(),
+                section: 1,
+                value: 0,
+                global: false,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+        ];
+        let strtab = build_string_table(&syms);
+
+        assert_eq!(strtab.bytes, b"\0_ext\0ccc\0_bbb\0_aaa\0ltmp0\0\0\0\0\0\0\0");
+        assert_eq!(strtab.offsets["_ext"], 1);
+        assert_eq!(strtab.offsets["ccc"], 6);
+        assert_eq!(strtab.offsets["_bbb"], 10);
+        assert_eq!(strtab.offsets["_aaa"], 15);
+        assert_eq!(strtab.offsets["ltmp0"], 20);
+    }
+
+    #[test]
+    fn string_table_reuses_suffix_bytes() {
+        let syms = vec![
+            Symbol {
+                name: "_aaa".into(),
+                section: 1,
+                value: 0,
+                global: true,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "aaa".into(),
+                section: 1,
+                value: 4,
+                global: false,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "ltmp0".into(),
+                section: 1,
+                value: 0,
+                global: false,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+        ];
+        let strtab = build_string_table(&syms);
+
+        assert_eq!(strtab.bytes, b"\0_aaa\0ltmp0\0\0\0\0\0");
+        assert_eq!(strtab.offsets["_aaa"], 1);
+        assert_eq!(strtab.offsets["aaa"], 2);
+        assert_eq!(strtab.offsets["ltmp0"], 6);
     }
 
     #[test]
