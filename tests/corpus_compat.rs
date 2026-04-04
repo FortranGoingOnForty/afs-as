@@ -280,13 +280,54 @@ fn corpus_metadata_directives_match_header_and_load_commands() {
 }
 
 #[test]
-fn corpus_cfi_surface_matches_text_bytes() {
+fn corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations() {
     let paths = assemble_fixture("cfi_surface.s");
 
-    assert_eq!(
-        common::object_text_bytes(&paths.obj),
-        common::object_text_bytes(&paths.ref_obj)
-    );
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+
+    assert!(ours_load.contains("sectname __compact_unwind"), "missing compact unwind section:\n{}", ours_load);
+    assert!(ours_relocs.contains("__compact_unwind"), "missing compact unwind relocations:\n{}", ours_relocs);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+}
+
+#[test]
+fn corpus_cfi_nostack_matches_load_commands_and_relocations() {
+    let paths = assemble_fixture("cfi_nostack.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+}
+
+#[test]
+fn corpus_cfi_saved_pairs_matches_load_commands_and_relocations() {
+    let paths = assemble_fixture("cfi_saved_pairs.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
 }
 
 fn normalize_tool_output(text: &str) -> String {
