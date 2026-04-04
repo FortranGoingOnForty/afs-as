@@ -1,3 +1,1206 @@
-//! ARM64 assembly text parser.
+//! ARM64 assembly parser.
 //!
-//! Parses .s files into structured instruction streams.
+//! Parses tokenized assembly into structured statements: instructions (as `Inst`),
+//! labels, and directives. Resolves instruction aliases (cmp, mov, tst, etc.)
+//! to their canonical forms.
+
+use crate::encode::Inst;
+use crate::lex::{Tok, Token, Lexer, LexError};
+use crate::reg::*;
+
+use std::fmt;
+
+/// A parsed assembly statement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stmt {
+    Label(String),
+    Instruction(Inst),
+    Directive(Directive),
+}
+
+/// Assembly directives.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Directive {
+    Text,
+    Data,
+    Global(String),
+    Align(u32),
+    P2Align(u32),
+    Byte(Vec<u8>),
+    Word(Vec<u32>),
+    Quad(Vec<u64>),
+    Ascii(Vec<u8>),
+    Asciz(Vec<u8>),
+    Space(u64),
+    Section(String, String),
+    SubsectionsViaSymbols,
+    BuildVersion { platform: String, version: String },
+}
+
+/// Parse error with source location.
+#[derive(Debug, Clone)]
+pub struct ParseError {
+    pub line: u32,
+    pub col: u32,
+    pub msg: String,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}: error: {}", self.line, self.col, self.msg)
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<LexError> for ParseError {
+    fn from(e: LexError) -> Self {
+        ParseError { line: e.line, col: e.col, msg: e.msg }
+    }
+}
+
+/// Parse assembly source text into a list of statements.
+pub fn parse(src: &str) -> Result<Vec<Stmt>, ParseError> {
+    let tokens = Lexer::tokenize(src)?;
+    let mut p = Parser::new(&tokens);
+    p.parse_program()
+}
+
+struct Parser<'a> {
+    tokens: &'a [Token],
+    pos: usize,
+}
+
+impl<'a> Parser<'a> {
+    fn new(tokens: &'a [Token]) -> Self {
+        Self { tokens, pos: 0 }
+    }
+
+    fn peek(&self) -> &Tok {
+        if self.pos < self.tokens.len() { &self.tokens[self.pos].kind } else { &Tok::Eof }
+    }
+
+    fn cur(&self) -> &Token {
+        &self.tokens[self.pos.min(self.tokens.len() - 1)]
+    }
+
+    fn advance(&mut self) -> &Token {
+        let t = &self.tokens[self.pos.min(self.tokens.len() - 1)];
+        if self.pos < self.tokens.len() { self.pos += 1; }
+        t
+    }
+
+    fn expect_ident(&mut self) -> Result<String, ParseError> {
+        match self.peek().clone() {
+            Tok::Ident(s) => { self.advance(); Ok(s) }
+            other => Err(self.err(format!("expected identifier, got {}", other))),
+        }
+    }
+
+    fn expect_int(&mut self) -> Result<i64, ParseError> {
+        match self.peek().clone() {
+            Tok::Integer(n) => { self.advance(); Ok(n) }
+            other => Err(self.err(format!("expected integer, got {}", other))),
+        }
+    }
+
+    fn expect(&mut self, kind: &Tok) -> Result<(), ParseError> {
+        if self.peek() == kind {
+            self.advance();
+            Ok(())
+        } else {
+            Err(self.err(format!("expected {}, got {}", kind, self.peek())))
+        }
+    }
+
+    fn eat(&mut self, kind: &Tok) -> bool {
+        if self.peek() == kind { self.advance(); true } else { false }
+    }
+
+    fn err(&self, msg: String) -> ParseError {
+        let t = self.cur();
+        ParseError { line: t.line, col: t.col, msg }
+    }
+
+    fn at_end_of_stmt(&self) -> bool {
+        matches!(self.peek(), Tok::Newline | Tok::Eof)
+    }
+
+    fn skip_newlines(&mut self) {
+        while self.peek() == &Tok::Newline { self.advance(); }
+    }
+
+    fn parse_program(&mut self) -> Result<Vec<Stmt>, ParseError> {
+        let mut stmts = Vec::new();
+        self.skip_newlines();
+        while self.peek() != &Tok::Eof {
+            self.parse_line(&mut stmts)?;
+            self.skip_newlines();
+        }
+        Ok(stmts)
+    }
+
+    fn parse_line(&mut self, stmts: &mut Vec<Stmt>) -> Result<(), ParseError> {
+        // A line can be: label, directive, instruction, or empty.
+        match self.peek().clone() {
+            Tok::Ident(ref name) if name.starts_with('.') => {
+                // Could be directive or local label.
+                let name = name.clone();
+                self.advance();
+                if self.eat(&Tok::Colon) {
+                    // Local label (.Lxxx:)
+                    stmts.push(Stmt::Label(name));
+                } else {
+                    // Directive
+                    stmts.push(self.parse_directive(&name)?);
+                }
+            }
+            Tok::Ident(_) => {
+                let name = if let Tok::Ident(s) = self.peek().clone() { s } else { unreachable!() };
+                self.advance();
+                if self.eat(&Tok::Colon) {
+                    // Label
+                    stmts.push(Stmt::Label(name));
+                    // There might be an instruction on the same line.
+                    if !self.at_end_of_stmt() {
+                        self.parse_line(stmts)?;
+                    }
+                } else {
+                    // Instruction mnemonic — might have a condition suffix.
+                    let mnemonic = self.resolve_mnemonic(&name)?;
+                    stmts.push(Stmt::Instruction(self.parse_instruction(&mnemonic)?));
+                }
+            }
+            Tok::Newline | Tok::Eof => {}
+            _ => return Err(self.err(format!("unexpected token: {}", self.peek()))),
+        }
+        Ok(())
+    }
+
+    /// Handle conditional branch mnemonics: "b" followed by ".eq", ".ne", etc.
+    fn resolve_mnemonic(&mut self, name: &str) -> Result<String, ParseError> {
+        if name == "b" {
+            // Check for .cond suffix
+            if let Tok::Ident(ref cond) = self.peek().clone() {
+                if cond.starts_with('.') {
+                    let full = format!("b{}", cond);
+                    self.advance();
+                    return Ok(full);
+                }
+            }
+        }
+        Ok(name.to_lowercase())
+    }
+
+    fn parse_directive(&mut self, name: &str) -> Result<Stmt, ParseError> {
+        let dir = match name {
+            ".text" => Directive::Text,
+            ".data" => Directive::Data,
+            ".global" | ".globl" => {
+                let sym = self.expect_ident()?;
+                Directive::Global(sym)
+            }
+            ".align" => {
+                let n = self.expect_int()? as u32;
+                Directive::Align(n)
+            }
+            ".p2align" => {
+                let n = self.expect_int()? as u32;
+                Directive::P2Align(n)
+            }
+            ".byte" => {
+                let vals = self.parse_int_list()?;
+                Directive::Byte(vals.into_iter().map(|v| v as u8).collect())
+            }
+            ".word" | ".long" => {
+                let vals = self.parse_int_list()?;
+                Directive::Word(vals.into_iter().map(|v| v as u32).collect())
+            }
+            ".quad" => {
+                let vals = self.parse_int_list()?;
+                Directive::Quad(vals.into_iter().map(|v| v as u64).collect())
+            }
+            ".ascii" => {
+                if let Tok::StringLit(s) = self.peek().clone() {
+                    self.advance();
+                    Directive::Ascii(s.into_bytes())
+                } else {
+                    return Err(self.err("expected string after .ascii".into()));
+                }
+            }
+            ".asciz" | ".string" => {
+                if let Tok::StringLit(s) = self.peek().clone() {
+                    self.advance();
+                    let mut bytes = s.into_bytes();
+                    bytes.push(0); // null terminator
+                    Directive::Asciz(bytes)
+                } else {
+                    return Err(self.err("expected string after .asciz".into()));
+                }
+            }
+            ".space" | ".skip" => {
+                let n = self.expect_int()? as u64;
+                Directive::Space(n)
+            }
+            ".section" => {
+                let seg = self.expect_ident()?;
+                self.expect(&Tok::Comma)?;
+                let sect = self.expect_ident()?;
+                Directive::Section(seg, sect)
+            }
+            ".subsections_via_symbols" => Directive::SubsectionsViaSymbols,
+            ".build_version" => {
+                let platform = self.expect_ident()?;
+                self.expect(&Tok::Comma)?;
+                // Version can be complex — just collect tokens until newline.
+                let mut ver = String::new();
+                while !self.at_end_of_stmt() {
+                    ver.push_str(&format!("{}", self.peek()));
+                    self.advance();
+                }
+                Directive::BuildVersion { platform, version: ver }
+            }
+            _ => {
+                // Unknown directive — skip to end of line.
+                while !self.at_end_of_stmt() { self.advance(); }
+                return Ok(Stmt::Directive(Directive::Text)); // placeholder
+            }
+        };
+        Ok(Stmt::Directive(dir))
+    }
+
+    fn parse_int_list(&mut self) -> Result<Vec<i64>, ParseError> {
+        let mut vals = vec![self.expect_int()?];
+        while self.eat(&Tok::Comma) {
+            vals.push(self.expect_int()?);
+        }
+        Ok(vals)
+    }
+
+    fn parse_instruction(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        match mnemonic {
+            // ---- Data processing (register + immediate) ----
+            "add" => self.parse_add_sub(false, false),
+            "sub" => self.parse_add_sub(true, false),
+            "adds" => self.parse_add_sub(false, true),
+            "subs" => self.parse_add_sub(true, true),
+            "cmp" => self.parse_cmp(),
+            "cmn" => self.parse_cmn(),
+            "mul" => self.parse_3reg("mul"),
+            "sdiv" => self.parse_3reg("sdiv"),
+            "udiv" => self.parse_3reg("udiv"),
+
+            // Logic
+            "and" => self.parse_logic("and"),
+            "orr" => self.parse_logic("orr"),
+            "eor" => self.parse_logic("eor"),
+            "ands" => self.parse_logic("ands"),
+            "tst" => self.parse_tst(),
+
+            // Move
+            "mov" => self.parse_mov(),
+            "movz" => self.parse_mov_wide("movz"),
+            "movk" => self.parse_mov_wide("movk"),
+            "movn" => self.parse_mov_wide("movn"),
+
+            // Shifts
+            "lsl" => self.parse_shift("lsl"),
+            "lsr" => self.parse_shift("lsr"),
+            "asr" => self.parse_shift("asr"),
+
+            // Branches
+            "b" => self.parse_b(),
+            "bl" => self.parse_bl(),
+            "ret" => self.parse_ret(),
+            "br" => { let rn = self.parse_gp_reg()?; Ok(Inst::Br { rn }) }
+            "blr" => { let rn = self.parse_gp_reg()?; Ok(Inst::Blr { rn }) }
+            "cbz" => self.parse_cbz(false),
+            "cbnz" => self.parse_cbz(true),
+
+            // Conditional branches: b.eq, b.ne, b.lt, etc.
+            m if m.starts_with("b.") => self.parse_bcond(&m[2..]),
+
+            // Address
+            "adrp" => self.parse_adrp(),
+
+            // Load/store
+            "ldr" => self.parse_ldr_str(true),
+            "str" => self.parse_ldr_str(false),
+            "ldrb" => self.parse_ldrb_h("ldrb"),
+            "ldrh" => self.parse_ldrb_h("ldrh"),
+            "ldrsw" => self.parse_ldrb_h("ldrsw"),
+            "stp" => self.parse_ldp_stp(false),
+            "ldp" => self.parse_ldp_stp(true),
+
+            // FP arithmetic (double)
+            "fadd" => self.parse_fp_arith("fadd"),
+            "fsub" => self.parse_fp_arith("fsub"),
+            "fmul" => self.parse_fp_arith("fmul"),
+            "fdiv" => self.parse_fp_arith("fdiv"),
+            "fneg" => self.parse_fp_unary("fneg"),
+            "fabs" => self.parse_fp_unary("fabs"),
+            "fsqrt" => self.parse_fp_unary("fsqrt"),
+            "fcmp" => self.parse_fcmp(),
+            "fmadd" => self.parse_fmadd(),
+
+            // FP conversion
+            "fcvtzs" => self.parse_fcvtzs(),
+            "scvtf" => self.parse_scvtf(),
+            "fmov" => self.parse_fmov(),
+
+            // System
+            "svc" => { let imm = self.expect_int()? as u16; Ok(Inst::Svc { imm16: imm }) }
+            "nop" => Ok(Inst::Nop),
+            "brk" => { let imm = self.expect_int()? as u16; Ok(Inst::Brk { imm16: imm }) }
+
+            _ => Err(self.err(format!("unknown mnemonic: {}", mnemonic))),
+        }
+    }
+
+    // ---- Register parsing helpers ----
+
+    fn parse_gp_reg(&mut self) -> Result<GpReg, ParseError> {
+        let name = self.expect_ident()?;
+        parse_gp_reg_name(&name).ok_or_else(|| self.err(format!("expected GP register, got '{}'", name)))
+    }
+
+    /// Returns (register, is_64bit).
+    fn parse_gp_reg_with_size(&mut self) -> Result<(GpReg, bool), ParseError> {
+        let name = self.expect_ident()?;
+        let lower = name.to_lowercase();
+        if lower == "sp" || lower == "xzr" {
+            return Ok((parse_gp_reg_name(&lower).unwrap(), true));
+        }
+        if lower == "wzr" {
+            return Ok((WZR, false));
+        }
+        if lower.starts_with('x') {
+            let reg = parse_gp_reg_name(&lower).ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
+            Ok((reg, true))
+        } else if lower.starts_with('w') {
+            let reg = parse_gp_reg_name(&lower).ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
+            Ok((reg, false))
+        } else {
+            Err(self.err(format!("expected GP register, got '{}'", name)))
+        }
+    }
+
+    fn parse_fp_reg_with_size(&mut self) -> Result<(FpReg, bool), ParseError> {
+        let name = self.expect_ident()?;
+        let lower = name.to_lowercase();
+        if lower.starts_with('d') {
+            let reg = parse_fp_reg_name(&lower).ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
+            Ok((reg, true)) // double
+        } else if lower.starts_with('s') {
+            let reg = parse_fp_reg_name(&lower).ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
+            Ok((reg, false)) // single
+        } else {
+            Err(self.err(format!("expected FP register, got '{}'", name)))
+        }
+    }
+
+    // ---- Instruction-specific parsers ----
+
+    fn parse_add_sub(&mut self, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+
+        if let Tok::Integer(_) = self.peek() {
+            let imm = self.expect_int()? as u16;
+            let shift = self.parse_optional_lsl12()?;
+            Ok(match (is_sub, sets_flags) {
+                (false, false) => Inst::AddImm { rd, rn, imm12: imm, shift, sf },
+                (true, false)  => Inst::SubImm { rd, rn, imm12: imm, shift, sf },
+                (false, true)  => Inst::AddsImm { rd, rn, imm12: imm, shift, sf },
+                (true, true)   => Inst::SubsImm { rd, rn, imm12: imm, shift, sf },
+            })
+        } else {
+            let (rm, _) = self.parse_gp_reg_with_size()?;
+            Ok(match (is_sub, sets_flags) {
+                (false, false) => Inst::AddReg { rd, rn, rm, sf },
+                (true, false)  => Inst::SubReg { rd, rn, rm, sf },
+                (false, true)  => Inst::AddsReg { rd, rn, rm, sf },
+                (true, true)   => Inst::SubsReg { rd, rn, rm, sf },
+            })
+        }
+    }
+
+    fn parse_cmp(&mut self) -> Result<Inst, ParseError> {
+        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        if let Tok::Integer(_) = self.peek() {
+            let imm = self.expect_int()? as u16;
+            let shift = self.parse_optional_lsl12()?;
+            Ok(Inst::SubsImm { rd: XZR, rn, imm12: imm, shift, sf })
+        } else {
+            let (rm, _) = self.parse_gp_reg_with_size()?;
+            Ok(Inst::SubsReg { rd: XZR, rn, rm, sf })
+        }
+    }
+
+    fn parse_cmn(&mut self) -> Result<Inst, ParseError> {
+        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_gp_reg_with_size()?;
+        Ok(Inst::AddsReg { rd: XZR, rn, rm, sf })
+    }
+
+    fn parse_tst(&mut self) -> Result<Inst, ParseError> {
+        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_gp_reg_with_size()?;
+        Ok(Inst::AndsReg { rd: XZR, rn, rm, sf })
+    }
+
+    fn parse_3reg(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_gp_reg_with_size()?;
+        Ok(match mnemonic {
+            "mul" => Inst::Mul { rd, rn, rm, sf },
+            "sdiv" => Inst::Sdiv { rd, rn, rm, sf },
+            "udiv" => Inst::Udiv { rd, rn, rm, sf },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_logic(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_gp_reg_with_size()?;
+        Ok(match mnemonic {
+            "and" => Inst::AndReg { rd, rn, rm, sf },
+            "orr" => Inst::OrrReg { rd, rn, rm, sf },
+            "eor" => Inst::EorReg { rd, rn, rm, sf },
+            "ands" => Inst::AndsReg { rd, rn, rm, sf },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_mov(&mut self) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        if let Tok::Integer(_) = self.peek() {
+            // MOV Xd, #imm → MOVZ
+            let imm = self.expect_int()?;
+            if (0..=0xFFFF).contains(&imm) {
+                Ok(Inst::Movz { rd, imm16: imm as u16, shift: 0, sf })
+            } else if imm < 0 {
+                // MOV with negative → MOVN
+                let inverted = !imm as u16;
+                Ok(Inst::Movn { rd, imm16: inverted, shift: 0, sf })
+            } else {
+                Err(self.err(format!("immediate {} too large for MOV, use MOVZ/MOVK sequence", imm)))
+            }
+        } else {
+            // MOV Xd, Xm → ORR Xd, XZR, Xm
+            let (rm, _) = self.parse_gp_reg_with_size()?;
+            Ok(Inst::OrrReg { rd, rn: XZR, rm, sf })
+        }
+    }
+
+    fn parse_mov_wide(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let imm = self.expect_int()? as u16;
+        let shift = self.parse_optional_lsl_amount()?;
+        Ok(match mnemonic {
+            "movz" => Inst::Movz { rd, imm16: imm, shift, sf },
+            "movk" => Inst::Movk { rd, imm16: imm, shift, sf },
+            "movn" => Inst::Movn { rd, imm16: imm, shift, sf },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_shift(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let amount = self.expect_int()? as u8;
+        Ok(match mnemonic {
+            "lsl" => Inst::LslImm { rd, rn, amount, sf },
+            "lsr" => Inst::LsrImm { rd, rn, amount, sf },
+            "asr" => Inst::AsrImm { rd, rn, amount, sf },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_b(&mut self) -> Result<Inst, ParseError> {
+        let offset = self.expect_int()? as i32;
+        Ok(Inst::B { offset })
+    }
+
+    fn parse_bl(&mut self) -> Result<Inst, ParseError> {
+        let offset = self.expect_int()? as i32;
+        Ok(Inst::Bl { offset })
+    }
+
+    fn parse_bcond(&mut self, cond_str: &str) -> Result<Inst, ParseError> {
+        let cond = parse_condition(cond_str)
+            .ok_or_else(|| self.err(format!("unknown condition: {}", cond_str)))?;
+        let offset = self.expect_int()? as i32;
+        Ok(Inst::BCond { cond, offset })
+    }
+
+    fn parse_cbz(&mut self, is_nz: bool) -> Result<Inst, ParseError> {
+        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let offset = self.expect_int()? as i32;
+        if is_nz {
+            Ok(Inst::Cbnz { rt, offset, sf })
+        } else {
+            Ok(Inst::Cbz { rt, offset, sf })
+        }
+    }
+
+    fn parse_ret(&mut self) -> Result<Inst, ParseError> {
+        if self.at_end_of_stmt() {
+            Ok(Inst::Ret { rn: X30 })
+        } else {
+            let rn = self.parse_gp_reg()?;
+            Ok(Inst::Ret { rn })
+        }
+    }
+
+    fn parse_adrp(&mut self) -> Result<Inst, ParseError> {
+        let rd = self.parse_gp_reg()?;
+        self.expect(&Tok::Comma)?;
+        // Can be #imm or label@PAGE — for now handle immediate and label.
+        if let Tok::Integer(_) = self.peek() {
+            let imm = self.expect_int()? as i32;
+            Ok(Inst::Adrp { rd, imm })
+        } else {
+            // Label reference — store as 0, will be resolved by linker.
+            // Skip label name and @PAGE modifier.
+            let _label = self.expect_ident()?;
+            if self.eat(&Tok::At) {
+                let _modifier = self.expect_ident()?; // PAGE, PAGEOFF, etc.
+            }
+            Ok(Inst::Adrp { rd, imm: 0 })
+        }
+    }
+
+    fn parse_ldr_str(&mut self, is_load: bool) -> Result<Inst, ParseError> {
+        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+
+        // Handle label references for LDR (literal pool loads)
+        if let Tok::Ident(_) = self.peek() {
+            if !matches!(self.peek(), Tok::Ident(ref s) if s == "sp" || s == "xzr" || s.starts_with('x') || s.starts_with('w')) {
+                // It's a label reference — skip for now.
+                self.advance();
+                if self.eat(&Tok::At) { self.advance(); }
+                let inst = if sf {
+                    if is_load { Inst::LdrImm64 { rt, rn: X0, offset: 0 } }
+                    else { Inst::StrImm64 { rt, rn: X0, offset: 0 } }
+                } else {
+                    if is_load { Inst::LdrImm32 { rt, rn: X0, offset: 0 } }
+                    else { Inst::StrImm32 { rt, rn: X0, offset: 0 } }
+                };
+                return Ok(inst);
+            }
+        }
+
+        self.expect(&Tok::LBracket)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+
+        if self.eat(&Tok::RBracket) {
+            // [Xn] or [Xn], #off (post-index)
+            if self.eat(&Tok::Comma) {
+                let offset = self.expect_int()? as i16;
+                return Ok(if sf {
+                    if is_load { Inst::LdrPost64 { rt, rn, offset } }
+                    else { Inst::StrPost64 { rt, rn, offset } }
+                } else {
+                    // 32-bit post-index not yet in Inst — use 64-bit for now.
+                    if is_load { Inst::LdrPost64 { rt, rn, offset } }
+                    else { Inst::StrPost64 { rt, rn, offset } }
+                });
+            }
+            // [Xn] with no offset → unsigned offset 0
+            return Ok(if sf {
+                if is_load { Inst::LdrImm64 { rt, rn, offset: 0 } }
+                else { Inst::StrImm64 { rt, rn, offset: 0 } }
+            } else {
+                if is_load { Inst::LdrImm32 { rt, rn, offset: 0 } }
+                else { Inst::StrImm32 { rt, rn, offset: 0 } }
+            });
+        }
+
+        self.expect(&Tok::Comma)?;
+        // Could be: register offset or immediate offset
+        let offset = self.expect_int()?;
+        self.expect(&Tok::RBracket)?;
+
+        if self.eat(&Tok::Bang) {
+            // Pre-index: [Xn, #off]!
+            return Ok(if is_load {
+                Inst::LdrPre64 { rt, rn, offset: offset as i16 }
+            } else {
+                Inst::StrPre64 { rt, rn, offset: offset as i16 }
+            });
+        }
+
+        // Unsigned offset: [Xn, #off]
+        Ok(if sf {
+            if is_load { Inst::LdrImm64 { rt, rn, offset: offset as u16 } }
+            else { Inst::StrImm64 { rt, rn, offset: offset as u16 } }
+        } else {
+            if is_load { Inst::LdrImm32 { rt, rn, offset: offset as u16 } }
+            else { Inst::StrImm32 { rt, rn, offset: offset as u16 } }
+        })
+    }
+
+    fn parse_ldrb_h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rt = self.parse_gp_reg()?;
+        self.expect(&Tok::Comma)?;
+        self.expect(&Tok::LBracket)?;
+        let rn = self.parse_gp_reg()?;
+        let offset = if self.eat(&Tok::Comma) { self.expect_int()? } else { 0 };
+        self.expect(&Tok::RBracket)?;
+        Ok(match mnemonic {
+            "ldrb" => Inst::Ldrb { rt, rn, offset: offset as u16 },
+            "ldrh" => Inst::Ldrh { rt, rn, offset: offset as u16 },
+            "ldrsw" => Inst::Ldrsw { rt, rn, offset: offset as u16 },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_ldp_stp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
+        let (rt1, _sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rt2, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        self.expect(&Tok::LBracket)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+
+        if self.eat(&Tok::RBracket) {
+            // Post-index: [Xn], #off
+            self.expect(&Tok::Comma)?;
+            let offset = self.expect_int()? as i16;
+            return Ok(if is_load {
+                Inst::LdpPost64 { rt1, rt2, rn, offset }
+            } else {
+                // STP post-index not yet in Inst — would need to add it.
+                // For now use pre-index as placeholder.
+                Inst::StpPre64 { rt1, rt2, rn, offset }
+            });
+        }
+
+        self.expect(&Tok::Comma)?;
+        let offset = self.expect_int()? as i16;
+        self.expect(&Tok::RBracket)?;
+
+        if self.eat(&Tok::Bang) {
+            // Pre-index
+            return Ok(if is_load {
+                Inst::LdpPost64 { rt1, rt2, rn, offset } // would need LdpPre
+            } else {
+                Inst::StpPre64 { rt1, rt2, rn, offset }
+            });
+        }
+
+        // Signed offset
+        Ok(if is_load {
+            Inst::LdpOff64 { rt1, rt2, rn, offset }
+        } else {
+            Inst::StpOff64 { rt1, rt2, rn, offset }
+        })
+    }
+
+    // ---- FP instruction parsers ----
+
+    fn parse_fp_arith(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, is_double) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_fp_reg_with_size()?;
+        Ok(match (mnemonic, is_double) {
+            ("fadd", true)  => Inst::FaddD { rd, rn, rm },
+            ("fadd", false) => Inst::FaddS { rd, rn, rm },
+            ("fsub", true)  => Inst::FsubD { rd, rn, rm },
+            ("fsub", false) => Inst::FsubS { rd, rn, rm },
+            ("fmul", true)  => Inst::FmulD { rd, rn, rm },
+            ("fmul", false) => Inst::FmulS { rd, rn, rm },
+            ("fdiv", true)  => Inst::FdivD { rd, rn, rm },
+            ("fdiv", false) => Inst::FdivS { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_fp_unary(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, _) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_fp_reg_with_size()?;
+        Ok(match mnemonic {
+            "fneg" => Inst::FnegD { rd, rn },
+            "fabs" => Inst::FabsD { rd, rn },
+            "fsqrt" => Inst::FsqrtD { rd, rn },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_fcmp(&mut self) -> Result<Inst, ParseError> {
+        let (rn, _) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_fp_reg_with_size()?;
+        Ok(Inst::FcmpD { rn, rm })
+    }
+
+    fn parse_fmadd(&mut self) -> Result<Inst, ParseError> {
+        let (rd, _) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (ra, _) = self.parse_fp_reg_with_size()?;
+        Ok(Inst::FmaddD { rd, rn, rm, ra })
+    }
+
+    fn parse_fcvtzs(&mut self) -> Result<Inst, ParseError> {
+        let rd = self.parse_gp_reg()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_fp_reg_with_size()?;
+        Ok(Inst::FcvtzsD { rd, rn })
+    }
+
+    fn parse_scvtf(&mut self) -> Result<Inst, ParseError> {
+        let (rd, _) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_gp_reg()?;
+        Ok(Inst::ScvtfD { rd, rn })
+    }
+
+    fn parse_fmov(&mut self) -> Result<Inst, ParseError> {
+        let name = self.expect_ident()?;
+        let lower = name.to_lowercase();
+        self.expect(&Tok::Comma)?;
+
+        if lower.starts_with('d') || lower.starts_with('s') {
+            // FMOV Dd, Xn (GP → FP)
+            let rd = parse_fp_reg_name(&lower).ok_or_else(|| self.err(format!("bad FP reg '{}'", name)))?;
+            let rn = self.parse_gp_reg()?;
+            Ok(Inst::FmovToD { rd, rn })
+        } else {
+            // FMOV Xd, Dn (FP → GP)
+            let rd = parse_gp_reg_name(&lower).ok_or_else(|| self.err(format!("bad GP reg '{}'", name)))?;
+            let (rn, _) = self.parse_fp_reg_with_size()?;
+            Ok(Inst::FmovFromD { rd, rn })
+        }
+    }
+
+    // ---- Helpers ----
+
+    fn parse_optional_lsl12(&mut self) -> Result<bool, ParseError> {
+        // Check for ", lsl #12" suffix
+        if self.peek() == &Tok::Comma {
+            // Peek ahead to see if it's "lsl"
+            if self.pos + 1 < self.tokens.len() {
+                if let Tok::Ident(ref s) = self.tokens[self.pos + 1].kind {
+                    if s.to_lowercase() == "lsl" {
+                        self.advance(); // comma
+                        self.advance(); // lsl
+                        let amount = self.expect_int()?;
+                        if amount == 12 { return Ok(true); }
+                        return Err(self.err(format!("expected lsl #12, got lsl #{}", amount)));
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn parse_optional_lsl_amount(&mut self) -> Result<u8, ParseError> {
+        if self.eat(&Tok::Comma) {
+            let s = self.expect_ident()?;
+            if s.to_lowercase() != "lsl" {
+                return Err(self.err(format!("expected 'lsl', got '{}'", s)));
+            }
+            let amount = self.expect_int()? as u8;
+            Ok(amount)
+        } else {
+            Ok(0)
+        }
+    }
+}
+
+// ---- Name resolution helpers ----
+
+fn parse_gp_reg_name(name: &str) -> Option<GpReg> {
+    let lower = name.to_lowercase();
+    match lower.as_str() {
+        "sp" => Some(SP),
+        "xzr" | "wzr" => Some(XZR),
+        _ => {
+            let (prefix, num_str) = if lower.starts_with('x') || lower.starts_with('w') {
+                (&lower[..1], &lower[1..])
+            } else {
+                return None;
+            };
+            let num: u8 = num_str.parse().ok()?;
+            if num > 30 { return None; }
+            let _ = prefix; // both x and w map to the same encoding
+            Some(GpReg::new(num))
+        }
+    }
+}
+
+fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
+    let lower = name.to_lowercase();
+    let (prefix, num_str) = if lower.starts_with('d') || lower.starts_with('s') || lower.starts_with('q') {
+        (&lower[..1], &lower[1..])
+    } else {
+        return None;
+    };
+    let num: u8 = num_str.parse().ok()?;
+    if num > 31 { return None; }
+    let _ = prefix;
+    Some(FpReg::new(num))
+}
+
+fn parse_condition(s: &str) -> Option<Cond> {
+    match s.to_lowercase().as_str() {
+        "eq" => Some(Cond::EQ),
+        "ne" => Some(Cond::NE),
+        "cs" | "hs" => Some(Cond::CS),
+        "cc" | "lo" => Some(Cond::CC),
+        "mi" => Some(Cond::MI),
+        "pl" => Some(Cond::PL),
+        "vs" => Some(Cond::VS),
+        "vc" => Some(Cond::VC),
+        "hi" => Some(Cond::HI),
+        "ls" => Some(Cond::LS),
+        "ge" => Some(Cond::GE),
+        "lt" => Some(Cond::LT),
+        "gt" => Some(Cond::GT),
+        "le" => Some(Cond::LE),
+        "al" => Some(Cond::AL),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_inst(src: &str) -> Inst {
+        let stmts = parse(src).unwrap();
+        stmts.into_iter().find_map(|s| {
+            if let Stmt::Instruction(i) = s { Some(i) } else { None }
+        }).unwrap()
+    }
+
+    fn parse_stmts(src: &str) -> Vec<Stmt> {
+        parse(src).unwrap()
+    }
+
+    // ---- Data processing ----
+
+    #[test]
+    fn parse_add_reg() {
+        assert_eq!(parse_inst("add x0, x1, x2"), Inst::AddReg { rd: X0, rn: X1, rm: X2, sf: true });
+    }
+
+    #[test]
+    fn parse_add_w_reg() {
+        assert_eq!(parse_inst("add w3, w4, w5"), Inst::AddReg { rd: W3, rn: W4, rm: W5, sf: false });
+    }
+
+    #[test]
+    fn parse_sub_imm() {
+        assert_eq!(parse_inst("sub x0, x1, #42"), Inst::SubImm { rd: X0, rn: X1, imm12: 42, shift: false, sf: true });
+    }
+
+    #[test]
+    fn parse_add_imm_lsl12() {
+        assert_eq!(parse_inst("add x0, x1, #42, lsl #12"), Inst::AddImm { rd: X0, rn: X1, imm12: 42, shift: true, sf: true });
+    }
+
+    #[test]
+    fn parse_cmp_reg() {
+        assert_eq!(parse_inst("cmp x0, x1"), Inst::SubsReg { rd: XZR, rn: X0, rm: X1, sf: true });
+    }
+
+    #[test]
+    fn parse_cmp_imm() {
+        assert_eq!(parse_inst("cmp x5, #255"), Inst::SubsImm { rd: XZR, rn: X5, imm12: 255, shift: false, sf: true });
+    }
+
+    #[test]
+    fn parse_tst_() {
+        assert_eq!(parse_inst("tst x0, x1"), Inst::AndsReg { rd: XZR, rn: X0, rm: X1, sf: true });
+    }
+
+    #[test]
+    fn parse_mul_() {
+        assert_eq!(parse_inst("mul x6, x7, x8"), Inst::Mul { rd: X6, rn: X7, rm: X8, sf: true });
+    }
+
+    #[test]
+    fn parse_and_() {
+        assert_eq!(parse_inst("and x3, x4, x5"), Inst::AndReg { rd: X3, rn: X4, rm: X5, sf: true });
+    }
+
+    // ---- Move ----
+
+    #[test]
+    fn parse_mov_imm() {
+        assert_eq!(parse_inst("mov x0, #42"), Inst::Movz { rd: X0, imm16: 42, shift: 0, sf: true });
+    }
+
+    #[test]
+    fn parse_mov_reg() {
+        assert_eq!(parse_inst("mov x0, x1"), Inst::OrrReg { rd: X0, rn: XZR, rm: X1, sf: true });
+    }
+
+    #[test]
+    fn parse_movz_shift() {
+        assert_eq!(parse_inst("movz x0, #0x1234, lsl #16"), Inst::Movz { rd: X0, imm16: 0x1234, shift: 16, sf: true });
+    }
+
+    // ---- Shifts ----
+
+    #[test]
+    fn parse_lsl_() {
+        assert_eq!(parse_inst("lsl x0, x1, #3"), Inst::LslImm { rd: X0, rn: X1, amount: 3, sf: true });
+    }
+
+    // ---- Branches ----
+
+    #[test]
+    fn parse_b_() {
+        assert_eq!(parse_inst("b #20"), Inst::B { offset: 20 });
+    }
+
+    #[test]
+    fn parse_bl_() {
+        assert_eq!(parse_inst("bl #40"), Inst::Bl { offset: 40 });
+    }
+
+    #[test]
+    fn parse_b_eq() {
+        assert_eq!(parse_inst("b.eq #8"), Inst::BCond { cond: Cond::EQ, offset: 8 });
+    }
+
+    #[test]
+    fn parse_b_ne() {
+        assert_eq!(parse_inst("b.ne #12"), Inst::BCond { cond: Cond::NE, offset: 12 });
+    }
+
+    #[test]
+    fn parse_b_ge() {
+        assert_eq!(parse_inst("b.ge #16"), Inst::BCond { cond: Cond::GE, offset: 16 });
+    }
+
+    #[test]
+    fn parse_cbz_() {
+        assert_eq!(parse_inst("cbz x0, #8"), Inst::Cbz { rt: X0, offset: 8, sf: true });
+    }
+
+    #[test]
+    fn parse_ret_default() {
+        assert_eq!(parse_inst("ret"), Inst::Ret { rn: X30 });
+    }
+
+    #[test]
+    fn parse_ret_reg() {
+        assert_eq!(parse_inst("ret x16"), Inst::Ret { rn: X16 });
+    }
+
+    // ---- Load/store ----
+
+    #[test]
+    fn parse_ldr_base() {
+        assert_eq!(parse_inst("ldr x0, [x1]"), Inst::LdrImm64 { rt: X0, rn: X1, offset: 0 });
+    }
+
+    #[test]
+    fn parse_ldr_offset() {
+        assert_eq!(parse_inst("ldr x0, [x1, #8]"), Inst::LdrImm64 { rt: X0, rn: X1, offset: 8 });
+    }
+
+    #[test]
+    fn parse_str_offset() {
+        assert_eq!(parse_inst("str x2, [x3, #16]"), Inst::StrImm64 { rt: X2, rn: X3, offset: 16 });
+    }
+
+    #[test]
+    fn parse_ldr_w() {
+        assert_eq!(parse_inst("ldr w4, [x5, #4]"), Inst::LdrImm32 { rt: W4, rn: X5, offset: 4 });
+    }
+
+    #[test]
+    fn parse_ldrb_() {
+        assert_eq!(parse_inst("ldrb w0, [x1, #3]"), Inst::Ldrb { rt: W0, rn: X1, offset: 3 });
+    }
+
+    #[test]
+    fn parse_stp_pre() {
+        assert_eq!(parse_inst("stp x29, x30, [sp, #-16]!"),
+            Inst::StpPre64 { rt1: X29, rt2: X30, rn: SP, offset: -16 });
+    }
+
+    #[test]
+    fn parse_ldp_post() {
+        assert_eq!(parse_inst("ldp x29, x30, [sp], #16"),
+            Inst::LdpPost64 { rt1: X29, rt2: X30, rn: SP, offset: 16 });
+    }
+
+    #[test]
+    fn parse_ldp_off() {
+        assert_eq!(parse_inst("ldp x19, x20, [sp, #16]"),
+            Inst::LdpOff64 { rt1: X19, rt2: X20, rn: SP, offset: 16 });
+    }
+
+    // ---- FP ----
+
+    #[test]
+    fn parse_fadd_d() {
+        assert_eq!(parse_inst("fadd d0, d1, d2"), Inst::FaddD { rd: D0, rn: D1, rm: D2 });
+    }
+
+    #[test]
+    fn parse_fadd_s() {
+        assert_eq!(parse_inst("fadd s0, s1, s2"), Inst::FaddS { rd: S0, rn: S1, rm: S2 });
+    }
+
+    #[test]
+    fn parse_fcmp_() {
+        assert_eq!(parse_inst("fcmp d0, d1"), Inst::FcmpD { rn: D0, rm: D1 });
+    }
+
+    #[test]
+    fn parse_fmadd_() {
+        assert_eq!(parse_inst("fmadd d0, d1, d2, d3"), Inst::FmaddD { rd: D0, rn: D1, rm: D2, ra: D3 });
+    }
+
+    #[test]
+    fn parse_fcvtzs_() {
+        assert_eq!(parse_inst("fcvtzs x0, d1"), Inst::FcvtzsD { rd: X0, rn: D1 });
+    }
+
+    #[test]
+    fn parse_scvtf_() {
+        assert_eq!(parse_inst("scvtf d0, x1"), Inst::ScvtfD { rd: D0, rn: X1 });
+    }
+
+    #[test]
+    fn parse_fmov_to_fp() {
+        assert_eq!(parse_inst("fmov d0, x1"), Inst::FmovToD { rd: D0, rn: X1 });
+    }
+
+    #[test]
+    fn parse_fmov_from_fp() {
+        assert_eq!(parse_inst("fmov x0, d1"), Inst::FmovFromD { rd: X0, rn: D1 });
+    }
+
+    // ---- System ----
+
+    #[test]
+    fn parse_svc_() {
+        assert_eq!(parse_inst("svc #0x80"), Inst::Svc { imm16: 0x80 });
+    }
+
+    #[test]
+    fn parse_nop_() {
+        assert_eq!(parse_inst("nop"), Inst::Nop);
+    }
+
+    #[test]
+    fn parse_brk_() {
+        assert_eq!(parse_inst("brk #1"), Inst::Brk { imm16: 1 });
+    }
+
+    // ---- Labels and directives ----
+
+    #[test]
+    fn parse_label() {
+        let stmts = parse_stmts("_main:");
+        assert_eq!(stmts, vec![Stmt::Label("_main".into())]);
+    }
+
+    #[test]
+    fn parse_local_label() {
+        let stmts = parse_stmts(".Lloop:");
+        assert_eq!(stmts, vec![Stmt::Label(".Lloop".into())]);
+    }
+
+    #[test]
+    fn parse_global_directive() {
+        let stmts = parse_stmts(".global _main");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Global("_main".into()))]);
+    }
+
+    #[test]
+    fn parse_asciz_directive() {
+        let stmts = parse_stmts(".asciz \"Hello\\n\"");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Asciz(b"Hello\n\0".to_vec()))]);
+    }
+
+    #[test]
+    fn parse_align_directive() {
+        let stmts = parse_stmts(".p2align 4");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::P2Align(4))]);
+    }
+
+    #[test]
+    fn parse_byte_directive() {
+        let stmts = parse_stmts(".byte 0x41, 0x42, 0x43");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Byte(vec![0x41, 0x42, 0x43]))]);
+    }
+
+    // ---- Multi-line programs ----
+
+    #[test]
+    fn parse_hello_world() {
+        let src = "\
+.global _main
+.align 4
+
+_main:
+    mov x0, #1
+    mov x16, #4
+    svc #0x80
+    mov x0, #0
+    mov x16, #1
+    svc #0x80
+";
+        let stmts = parse_stmts(src);
+        // Should have: global, align, label, 6 instructions
+        let labels = stmts.iter().filter(|s| matches!(s, Stmt::Label(_))).count();
+        let insts = stmts.iter().filter(|s| matches!(s, Stmt::Instruction(_))).count();
+        assert_eq!(labels, 1);
+        assert_eq!(insts, 6);
+    }
+
+    // ---- Error cases ----
+
+    #[test]
+    fn error_unknown_mnemonic() {
+        let result = parse("blorp x0, x1, x2");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.msg.contains("unknown mnemonic"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn error_bad_register() {
+        let result = parse("add x0, x1, x99");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn error_missing_comma() {
+        let result = parse("add x0 x1 x2");
+        assert!(result.is_err());
+    }
+}
