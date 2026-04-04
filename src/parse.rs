@@ -4,7 +4,7 @@
 //! labels, and directives. Resolves instruction aliases (cmp, mov, tst, etc.)
 //! to their canonical forms.
 
-use crate::encode::{AddrExtend, Inst, RegShift};
+use crate::encode::{AddrExtend, Inst, RegExtend, RegShift};
 use crate::expr::{self, Expr};
 use crate::lex::{Tok, Token, Lexer, LexError};
 use crate::reg::*;
@@ -123,6 +123,19 @@ struct Parser<'a> {
 enum NumericLabelDirection {
     Forward,
     Backward,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AddSubModifier {
+    Shift(RegShift, u8),
+    Extend(RegExtend, u8),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GpRegKind {
+    Reg,
+    Sp,
+    Zr,
 }
 
 impl<'a> Parser<'a> {
@@ -726,20 +739,26 @@ impl<'a> Parser<'a> {
 
     /// Returns (register, is_64bit).
     fn parse_gp_reg_with_size(&mut self) -> Result<(GpReg, bool), ParseError> {
+        let (reg, is_64bit, _kind) = self.parse_gp_reg_with_size_kind()?;
+        Ok((reg, is_64bit))
+    }
+
+    fn parse_gp_reg_with_size_kind(&mut self) -> Result<(GpReg, bool, GpRegKind), ParseError> {
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         if lower == "sp" || lower == "xzr" {
-            return Ok((parse_gp_reg_name(&lower).unwrap(), true));
+            let kind = if lower == "sp" { GpRegKind::Sp } else { GpRegKind::Zr };
+            return Ok((parse_gp_reg_name(&lower).unwrap(), true, kind));
         }
         if lower == "wzr" {
-            return Ok((WZR, false));
+            return Ok((WZR, false, GpRegKind::Zr));
         }
         if lower.starts_with('x') {
             let reg = parse_gp_reg_name(&lower).ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
-            Ok((reg, true))
+            Ok((reg, true, GpRegKind::Reg))
         } else if lower.starts_with('w') {
             let reg = parse_gp_reg_name(&lower).ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
-            Ok((reg, false))
+            Ok((reg, false, GpRegKind::Reg))
         } else {
             Err(self.err(format!("expected GP register, got '{}'", name)))
         }
@@ -764,7 +783,7 @@ impl<'a> Parser<'a> {
     fn parse_add_sub(&mut self, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let (rn, _, rn_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
 
         if self.starts_immediate_expr() {
@@ -777,17 +796,30 @@ impl<'a> Parser<'a> {
                 (true, true)   => Inst::SubsImm { rd, rn, imm12: imm, shift, sf },
             })
         } else {
-            let (rm, _) = self.parse_gp_reg_with_size()?;
-            let shift = self.parse_optional_data_proc_shift(sf)?;
-            Ok(match (is_sub, sets_flags, shift) {
+            let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+            let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+            Ok(match (is_sub, sets_flags, modifier) {
                 (false, false, None) => Inst::AddReg { rd, rn, rm, sf },
                 (true, false, None)  => Inst::SubReg { rd, rn, rm, sf },
                 (false, true, None)  => Inst::AddsReg { rd, rn, rm, sf },
                 (true, true, None)   => Inst::SubsReg { rd, rn, rm, sf },
-                (false, false, Some((shift, amount))) => Inst::AddShiftReg { rd, rn, rm, shift, amount, sf },
-                (true, false, Some((shift, amount)))  => Inst::SubShiftReg { rd, rn, rm, shift, amount, sf },
-                (false, true, Some((shift, amount)))  => Inst::AddsShiftReg { rd, rn, rm, shift, amount, sf },
-                (true, true, Some((shift, amount)))   => Inst::SubsShiftReg { rd, rn, rm, shift, amount, sf },
+                (false, false, Some(AddSubModifier::Shift(shift, amount))) =>
+                    Inst::AddShiftReg { rd, rn, rm, shift, amount, sf },
+                (true, false, Some(AddSubModifier::Shift(shift, amount)))  =>
+                    Inst::SubShiftReg { rd, rn, rm, shift, amount, sf },
+                (false, true, Some(AddSubModifier::Shift(shift, amount)))  =>
+                    Inst::AddsShiftReg { rd, rn, rm, shift, amount, sf },
+                (true, true, Some(AddSubModifier::Shift(shift, amount)))   =>
+                    Inst::SubsShiftReg { rd, rn, rm, shift, amount, sf },
+                (false, false, Some(AddSubModifier::Extend(extend, amount))) =>
+                    Inst::AddExtReg { rd, rn, rm, extend, amount, sf },
+                (true, false, Some(AddSubModifier::Extend(extend, amount)))  =>
+                    Inst::SubExtReg { rd, rn, rm, extend, amount, sf },
+                (false, true, Some(AddSubModifier::Extend(extend, amount)))  =>
+                    Inst::AddsExtReg { rd, rn, rm, extend, amount, sf },
+                (true, true, Some(AddSubModifier::Extend(extend, amount)))   =>
+                    Inst::SubsExtReg { rd, rn, rm, extend, amount, sf },
             })
         }
     }
@@ -796,7 +828,7 @@ impl<'a> Parser<'a> {
     fn parse_add_sub_stmt(&mut self, is_sub: bool, sets_flags: bool) -> Result<Stmt, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let (rn, _, rn_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
 
         // Check for label@PAGEOFF (identifier or numeric local reference followed by @).
@@ -817,12 +849,20 @@ impl<'a> Parser<'a> {
         }
 
         // Normal add/sub (immediate or register).
-        let inst = self.parse_add_sub_operand(rd, rn, sf, is_sub, sets_flags)?;
+        let inst = self.parse_add_sub_operand(rd, rn, rn_kind, sf, is_sub, sets_flags)?;
         Ok(Stmt::Instruction(inst))
     }
 
     /// Parse the third operand of add/sub (immediate or register).
-    fn parse_add_sub_operand(&mut self, rd: GpReg, rn: GpReg, sf: bool, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
+    fn parse_add_sub_operand(
+        &mut self,
+        rd: GpReg,
+        rn: GpReg,
+        rn_kind: GpRegKind,
+        sf: bool,
+        is_sub: bool,
+        sets_flags: bool,
+    ) -> Result<Inst, ParseError> {
         if self.starts_immediate_expr() {
             let imm = self.parse_immediate_const_expr("add/sub immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
@@ -833,32 +873,52 @@ impl<'a> Parser<'a> {
                 (true, true)   => Inst::SubsImm { rd, rn, imm12: imm, shift, sf },
             })
         } else {
-            let (rm, _) = self.parse_gp_reg_with_size()?;
-            let shift = self.parse_optional_data_proc_shift(sf)?;
-            Ok(match (is_sub, sets_flags, shift) {
+            let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+            let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+            Ok(match (is_sub, sets_flags, modifier) {
                 (false, false, None) => Inst::AddReg { rd, rn, rm, sf },
                 (true, false, None)  => Inst::SubReg { rd, rn, rm, sf },
                 (false, true, None)  => Inst::AddsReg { rd, rn, rm, sf },
                 (true, true, None)   => Inst::SubsReg { rd, rn, rm, sf },
-                (false, false, Some((shift, amount))) => Inst::AddShiftReg { rd, rn, rm, shift, amount, sf },
-                (true, false, Some((shift, amount)))  => Inst::SubShiftReg { rd, rn, rm, shift, amount, sf },
-                (false, true, Some((shift, amount)))  => Inst::AddsShiftReg { rd, rn, rm, shift, amount, sf },
-                (true, true, Some((shift, amount)))   => Inst::SubsShiftReg { rd, rn, rm, shift, amount, sf },
+                (false, false, Some(AddSubModifier::Shift(shift, amount))) =>
+                    Inst::AddShiftReg { rd, rn, rm, shift, amount, sf },
+                (true, false, Some(AddSubModifier::Shift(shift, amount)))  =>
+                    Inst::SubShiftReg { rd, rn, rm, shift, amount, sf },
+                (false, true, Some(AddSubModifier::Shift(shift, amount)))  =>
+                    Inst::AddsShiftReg { rd, rn, rm, shift, amount, sf },
+                (true, true, Some(AddSubModifier::Shift(shift, amount)))   =>
+                    Inst::SubsShiftReg { rd, rn, rm, shift, amount, sf },
+                (false, false, Some(AddSubModifier::Extend(extend, amount))) =>
+                    Inst::AddExtReg { rd, rn, rm, extend, amount, sf },
+                (true, false, Some(AddSubModifier::Extend(extend, amount)))  =>
+                    Inst::SubExtReg { rd, rn, rm, extend, amount, sf },
+                (false, true, Some(AddSubModifier::Extend(extend, amount)))  =>
+                    Inst::AddsExtReg { rd, rn, rm, extend, amount, sf },
+                (true, true, Some(AddSubModifier::Extend(extend, amount)))   =>
+                    Inst::SubsExtReg { rd, rn, rm, extend, amount, sf },
             })
         }
     }
 
     fn parse_cmp(&mut self) -> Result<Inst, ParseError> {
-        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        let (rn, sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let imm = self.parse_immediate_const_expr("cmp immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
             Ok(Inst::SubsImm { rd: XZR, rn, imm12: imm, shift, sf })
         } else {
-            let (rm, _) = self.parse_gp_reg_with_size()?;
-            if let Some((shift, amount)) = self.parse_optional_data_proc_shift(sf)? {
-                Ok(Inst::SubsShiftReg { rd: XZR, rn, rm, shift, amount, sf })
+            let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+            let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+            if let Some(modifier) = modifier {
+                Ok(match modifier {
+                    AddSubModifier::Shift(shift, amount) =>
+                        Inst::SubsShiftReg { rd: XZR, rn, rm, shift, amount, sf },
+                    AddSubModifier::Extend(extend, amount) =>
+                        Inst::SubsExtReg { rd: XZR, rn, rm, extend, amount, sf },
+                })
             } else {
                 Ok(Inst::SubsReg { rd: XZR, rn, rm, sf })
             }
@@ -866,11 +926,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cmn(&mut self) -> Result<Inst, ParseError> {
-        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        let (rn, sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
-        if let Some((shift, amount)) = self.parse_optional_data_proc_shift(sf)? {
-            Ok(Inst::AddsShiftReg { rd: XZR, rn, rm, shift, amount, sf })
+        let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+        let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+        self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+        if let Some(modifier) = modifier {
+            Ok(match modifier {
+                AddSubModifier::Shift(shift, amount) =>
+                    Inst::AddsShiftReg { rd: XZR, rn, rm, shift, amount, sf },
+                AddSubModifier::Extend(extend, amount) =>
+                    Inst::AddsExtReg { rd: XZR, rn, rm, extend, amount, sf },
+            })
         } else {
             Ok(Inst::AddsReg { rd: XZR, rn, rm, sf })
         }
@@ -886,9 +953,16 @@ impl<'a> Parser<'a> {
     fn parse_neg(&mut self) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
-        if let Some((shift, amount)) = self.parse_optional_data_proc_shift(sf)? {
-            Ok(Inst::SubShiftReg { rd, rn: XZR, rm, shift, amount, sf })
+        let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+        let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+        self.validate_add_sub_extended_base_reg(GpRegKind::Zr, modifier)?;
+        if let Some(modifier) = modifier {
+            Ok(match modifier {
+                AddSubModifier::Shift(shift, amount) =>
+                    Inst::SubShiftReg { rd, rn: XZR, rm, shift, amount, sf },
+                AddSubModifier::Extend(extend, amount) =>
+                    Inst::SubExtReg { rd, rn: XZR, rm, extend, amount, sf },
+            })
         } else {
             Ok(Inst::SubReg { rd, rn: XZR, rm, sf })
         }
@@ -1505,36 +1579,91 @@ impl<'a> Parser<'a> {
         Ok(bit as u8)
     }
 
-    fn parse_optional_data_proc_shift(
+    fn parse_optional_add_sub_modifier(
         &mut self,
         sf: bool,
-    ) -> Result<Option<(RegShift, u8)>, ParseError> {
+        rm_is_64bit: bool,
+    ) -> Result<Option<AddSubModifier>, ParseError> {
         if !self.eat(&Tok::Comma) {
             return Ok(None);
         }
 
         let name = self.expect_ident()?.to_lowercase();
-        let shift = match name.as_str() {
-            "lsl" => RegShift::Lsl,
-            "lsr" => RegShift::Lsr,
-            "asr" => RegShift::Asr,
-            _ => {
-                return Err(self.err(format!(
-                    "expected data-processing shift (lsl/lsr/asr), got '{}'",
-                    name
-                )));
+        match name.as_str() {
+            "lsl" | "lsr" | "asr" => {
+                let shift = match name.as_str() {
+                    "lsl" => RegShift::Lsl,
+                    "lsr" => RegShift::Lsr,
+                    "asr" => RegShift::Asr,
+                    _ => unreachable!(),
+                };
+                let amount = self.parse_immediate_const_expr("shift amount")?;
+                let max = if sf { 63 } else { 31 };
+                if !(0..=max).contains(&amount) {
+                    return Err(self.err(format!(
+                        "shift amount must be in the range 0..={} for this register width",
+                        max
+                    )));
+                }
+                Ok(Some(AddSubModifier::Shift(shift, amount as u8)))
             }
-        };
-        let amount = self.parse_immediate_const_expr("shift amount")?;
-        let max = if sf { 63 } else { 31 };
-        if !(0..=max).contains(&amount) {
-            return Err(self.err(format!(
-                "shift amount must be in the range 0..={} for this register width",
-                max
-            )));
+            "uxtw" | "uxtx" | "sxtw" | "sxtx" => {
+                let extend = match name.as_str() {
+                    "uxtw" => {
+                        if rm_is_64bit {
+                            return Err(self.err("uxtw add/sub extensions require a w-register operand".into()));
+                        }
+                        RegExtend::Uxtw
+                    }
+                    "uxtx" => {
+                        if !rm_is_64bit {
+                            return Err(self.err("uxtx add/sub extensions require an x-register operand".into()));
+                        }
+                        RegExtend::Uxtx
+                    }
+                    "sxtw" => {
+                        if rm_is_64bit {
+                            return Err(self.err("sxtw add/sub extensions require a w-register operand".into()));
+                        }
+                        RegExtend::Sxtw
+                    }
+                    "sxtx" => {
+                        if !rm_is_64bit {
+                            return Err(self.err("sxtx add/sub extensions require an x-register operand".into()));
+                        }
+                        RegExtend::Sxtx
+                    }
+                    _ => unreachable!(),
+                };
+                let amount = if self.starts_immediate_expr() {
+                    self.parse_immediate_const_expr("extend shift amount")?
+                } else {
+                    0
+                };
+                if !(0..=4).contains(&amount) {
+                    return Err(self.err("extend shift amount must be in the range 0..=4".into()));
+                }
+                Ok(Some(AddSubModifier::Extend(extend, amount as u8)))
+            }
+            _ => Err(self.err(format!(
+                "expected add/sub modifier (lsl/lsr/asr/uxtw/uxtx/sxtw/sxtx), got '{}'",
+                name
+            ))),
         }
+    }
 
-        Ok(Some((shift, amount as u8)))
+    fn validate_add_sub_extended_base_reg(
+        &self,
+        rn_kind: GpRegKind,
+        modifier: Option<AddSubModifier>,
+    ) -> Result<(), ParseError> {
+        if matches!(modifier, Some(AddSubModifier::Extend(..))) && rn_kind == GpRegKind::Zr {
+            return Err(self.err(
+                "extended add/sub forms require an x-register or sp base operand, not xzr/wzr"
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 
     fn starts_register_like_operand(&self) -> bool {
@@ -1780,6 +1909,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_add_extended_reg() {
+        assert_eq!(
+            parse_inst("add x0, x0, w1, sxtw #3"),
+            Inst::AddExtReg { rd: X0, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 3, sf: true }
+        );
+    }
+
+    #[test]
+    fn parse_add_extended_reg_with_sp_base() {
+        assert_eq!(
+            parse_inst("add x11, sp, w12, sxtw #2"),
+            Inst::AddExtReg { rd: X11, rn: SP, rm: W12, extend: RegExtend::Sxtw, amount: 2, sf: true }
+        );
+    }
+
+    #[test]
+    fn parse_sub_extended_reg() {
+        assert_eq!(
+            parse_inst("sub x2, x3, w4, uxtw #2"),
+            Inst::SubExtReg { rd: X2, rn: X3, rm: W4, extend: RegExtend::Uxtw, amount: 2, sf: true }
+        );
+    }
+
+    #[test]
     fn parse_cmp_reg() {
         assert_eq!(parse_inst("cmp x0, x1"), Inst::SubsReg { rd: XZR, rn: X0, rm: X1, sf: true });
     }
@@ -1793,6 +1946,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_cmp_extended_reg() {
+        assert_eq!(
+            parse_inst("cmp x0, w1, sxtw"),
+            Inst::SubsExtReg { rd: XZR, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 0, sf: true }
+        );
+    }
+
+    #[test]
     fn parse_cmp_imm() {
         assert_eq!(parse_inst("cmp x5, #255"), Inst::SubsImm { rd: XZR, rn: X5, imm12: 255, shift: false, sf: true });
     }
@@ -1802,6 +1963,14 @@ mod tests {
         assert_eq!(
             parse_inst("cmn x8, x9, lsl #1"),
             Inst::AddsShiftReg { rd: XZR, rn: X8, rm: X9, shift: RegShift::Lsl, amount: 1, sf: true }
+        );
+    }
+
+    #[test]
+    fn parse_cmn_extended_reg() {
+        assert_eq!(
+            parse_inst("cmn x6, w7, sxtw #3"),
+            Inst::AddsExtReg { rd: XZR, rn: X6, rm: W7, extend: RegExtend::Sxtw, amount: 3, sf: true }
         );
     }
 
@@ -1843,6 +2012,12 @@ mod tests {
             parse_inst("neg x0, x1, lsl #2"),
             Inst::SubShiftReg { rd: X0, rn: XZR, rm: X1, shift: RegShift::Lsl, amount: 2, sf: true }
         );
+    }
+
+    #[test]
+    fn error_neg_extend_alias_rejects_zero_base_register() {
+        let err = parse_err("neg x8, w9, sxtw #2");
+        assert!(err.contains("x-register or sp base operand"), "got: {}", err);
     }
 
     #[test]
@@ -1985,6 +2160,24 @@ mod tests {
     fn error_shift_amount_out_of_range_for_w_reg() {
         let err = parse_err("add w0, w1, w2, lsl #32");
         assert!(err.contains("range 0..=31"), "got: {}", err);
+    }
+
+    #[test]
+    fn error_extend_shift_amount_out_of_range() {
+        let err = parse_err("add x0, x1, w2, sxtw #5");
+        assert!(err.contains("range 0..=4"), "got: {}", err);
+    }
+
+    #[test]
+    fn error_uxtw_requires_w_register_operand() {
+        let err = parse_err("add x0, x1, x2, uxtw");
+        assert!(err.contains("w-register operand"), "got: {}", err);
+    }
+
+    #[test]
+    fn error_extended_add_sub_rejects_zero_base_register() {
+        let err = parse_err("sub x11, xzr, w12, sxtw #2");
+        assert!(err.contains("x-register or sp base operand"), "got: {}", err);
     }
 
     #[test]

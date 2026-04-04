@@ -41,6 +41,25 @@ impl RegShift {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegExtend {
+    Uxtw,
+    Uxtx,
+    Sxtw,
+    Sxtx,
+}
+
+impl RegExtend {
+    fn enc(self) -> u32 {
+        match self {
+            RegExtend::Uxtw => 0b010,
+            RegExtend::Uxtx => 0b011,
+            RegExtend::Sxtw => 0b110,
+            RegExtend::Sxtx => 0b111,
+        }
+    }
+}
+
 /// An ARM64 instruction that can be encoded to its 4-byte binary form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inst {
@@ -50,18 +69,26 @@ pub enum Inst {
     AddReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// ADD Xd, Xn, Xm, <shift> #amount
     AddShiftReg { rd: GpReg, rn: GpReg, rm: GpReg, shift: RegShift, amount: u8, sf: bool },
+    /// ADD Xd, Xn, Rm, <extend> {#amount}
+    AddExtReg { rd: GpReg, rn: GpReg, rm: GpReg, extend: RegExtend, amount: u8, sf: bool },
     /// SUB Xd, Xn, Xm
     SubReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// SUB Xd, Xn, Xm, <shift> #amount
     SubShiftReg { rd: GpReg, rn: GpReg, rm: GpReg, shift: RegShift, amount: u8, sf: bool },
+    /// SUB Xd, Xn, Rm, <extend> {#amount}
+    SubExtReg { rd: GpReg, rn: GpReg, rm: GpReg, extend: RegExtend, amount: u8, sf: bool },
     /// ADDS Xd, Xn, Xm  (sets flags)
     AddsReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// ADDS Xd, Xn, Xm, <shift> #amount  (sets flags)
     AddsShiftReg { rd: GpReg, rn: GpReg, rm: GpReg, shift: RegShift, amount: u8, sf: bool },
+    /// ADDS Xd, Xn, Rm, <extend> {#amount}  (sets flags)
+    AddsExtReg { rd: GpReg, rn: GpReg, rm: GpReg, extend: RegExtend, amount: u8, sf: bool },
     /// SUBS Xd, Xn, Xm  (sets flags)
     SubsReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// SUBS Xd, Xn, Xm, <shift> #amount  (sets flags)
     SubsShiftReg { rd: GpReg, rn: GpReg, rm: GpReg, shift: RegShift, amount: u8, sf: bool },
+    /// SUBS Xd, Xn, Rm, <extend> {#amount}  (sets flags)
+    SubsExtReg { rd: GpReg, rn: GpReg, rm: GpReg, extend: RegExtend, amount: u8, sf: bool },
     /// MUL Xd, Xn, Xm  (alias for MADD Xd, Xn, Xm, XZR)
     Mul { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// SDIV Xd, Xn, Xm
@@ -279,18 +306,26 @@ impl Inst {
                 dp_reg(*sf, 0b00, 0b01011, 0b00, *rm, 0, *rn, *rd),
             Inst::AddShiftReg { rd, rn, rm, shift, amount, sf } =>
                 dp_reg(*sf, 0b00, 0b01011, shift.enc(), *rm, *amount as u32, *rn, *rd),
+            Inst::AddExtReg { rd, rn, rm, extend, amount, sf } =>
+                dp_ext(*sf, 0b00, *rm, *extend, *amount, *rn, *rd),
             Inst::SubReg { rd, rn, rm, sf } =>
                 dp_reg(*sf, 0b10, 0b01011, 0b00, *rm, 0, *rn, *rd),
             Inst::SubShiftReg { rd, rn, rm, shift, amount, sf } =>
                 dp_reg(*sf, 0b10, 0b01011, shift.enc(), *rm, *amount as u32, *rn, *rd),
+            Inst::SubExtReg { rd, rn, rm, extend, amount, sf } =>
+                dp_ext(*sf, 0b10, *rm, *extend, *amount, *rn, *rd),
             Inst::AddsReg { rd, rn, rm, sf } =>
                 dp_reg(*sf, 0b01, 0b01011, 0b00, *rm, 0, *rn, *rd),
             Inst::AddsShiftReg { rd, rn, rm, shift, amount, sf } =>
                 dp_reg(*sf, 0b01, 0b01011, shift.enc(), *rm, *amount as u32, *rn, *rd),
+            Inst::AddsExtReg { rd, rn, rm, extend, amount, sf } =>
+                dp_ext(*sf, 0b01, *rm, *extend, *amount, *rn, *rd),
             Inst::SubsReg { rd, rn, rm, sf } =>
                 dp_reg(*sf, 0b11, 0b01011, 0b00, *rm, 0, *rn, *rd),
             Inst::SubsShiftReg { rd, rn, rm, shift, amount, sf } =>
                 dp_reg(*sf, 0b11, 0b01011, shift.enc(), *rm, *amount as u32, *rn, *rd),
+            Inst::SubsExtReg { rd, rn, rm, extend, amount, sf } =>
+                dp_ext(*sf, 0b11, *rm, *extend, *amount, *rn, *rd),
 
             // MUL: alias for MADD Xd, Xn, Xm, XZR
             // sf|00|11011|000|Rm|0|Ra(11111)|Rn|Rd
@@ -540,6 +575,12 @@ fn dp_imm(sf: bool, op: u32, imm12: u16, shift: bool, rn: GpReg, rd: GpReg) -> u
         | ((imm12 as u32) << 10) | (rn.enc() << 5) | rd.enc()
 }
 
+fn dp_ext(sf: bool, op: u32, rm: GpReg, extend: RegExtend, amount: u8, rn: GpReg, rd: GpReg) -> u32 {
+    ((sf as u32) << 31) | (op << 29) | (0b01011 << 24) | (1 << 21)
+        | (rm.enc() << 16) | (extend.enc() << 13) | ((amount as u32) << 10)
+        | (rn.enc() << 5) | rd.enc()
+}
+
 fn mov_wide(sf: bool, opc: u32, imm16: u16, shift: u8, rd: GpReg) -> u32 {
     let hw = (shift / 16) as u32;
     ((sf as u32) << 31) | (opc << 29) | (0b100101 << 23) | (hw << 21)
@@ -630,7 +671,10 @@ mod tests {
     #[test] fn add_w0_w1_w2()   { assert_eq!(Inst::AddReg  { rd: W0, rn: W1, rm: W2, sf: false }.encode(), 0x0B020020); }
     #[test] fn sub_w3_w4_w5()   { assert_eq!(Inst::SubReg  { rd: W3, rn: W4, rm: W5, sf: false }.encode(), 0x4B050083); }
     #[test] fn add_x0_x1_x2_lsl3() { assert_eq!(Inst::AddShiftReg { rd: X0, rn: X1, rm: X2, shift: RegShift::Lsl, amount: 3, sf: true }.encode(), 0x8B020C20); }
+    #[test] fn add_x0_x0_w1_sxtw() { assert_eq!(Inst::AddExtReg { rd: X0, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 0, sf: true }.encode(), 0x8B21C000); }
+    #[test] fn add_x0_x0_w1_sxtw3() { assert_eq!(Inst::AddExtReg { rd: X0, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 3, sf: true }.encode(), 0x8B21CC00); }
     #[test] fn sub_w3_w4_w5_asr7() { assert_eq!(Inst::SubShiftReg { rd: W3, rn: W4, rm: W5, shift: RegShift::Asr, amount: 7, sf: false }.encode(), 0x4B851C83); }
+    #[test] fn sub_x2_x3_w4_uxtw2() { assert_eq!(Inst::SubExtReg { rd: X2, rn: X3, rm: W4, extend: RegExtend::Uxtw, amount: 2, sf: true }.encode(), 0xCB244862); }
     #[test] fn cmp_x6_x7_lsr4() { assert_eq!(Inst::SubsShiftReg { rd: XZR, rn: X6, rm: X7, shift: RegShift::Lsr, amount: 4, sf: true }.encode(), 0xEB4710DF); }
     #[test] fn mul_x6_x7_x8()   { assert_eq!(Inst::Mul     { rd: X6, rn: X7, rm: X8, sf: true  }.encode(), 0x9B087CE6); }
     #[test] fn sdiv_x9_x10_x11(){ assert_eq!(Inst::Sdiv    { rd: X9, rn: X10, rm: X11, sf: true }.encode(), 0x9ACB0D49); }
