@@ -246,6 +246,12 @@ impl<'a> Parser<'a> {
                 let seg = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
                 let sect = self.expect_ident()?;
+                // Skip any additional section attributes (e.g., regular,pure_instructions)
+                while self.eat(&Tok::Comma) {
+                    while !self.at_end_of_stmt() && self.peek() != &Tok::Comma {
+                        self.advance();
+                    }
+                }
                 Directive::Section(seg, sect)
             }
             ".subsections_via_symbols" => Directive::SubsectionsViaSymbols,
@@ -499,9 +505,14 @@ impl<'a> Parser<'a> {
                 Err(self.err(format!("immediate {} too large for MOV, use MOVZ/MOVK sequence", imm)))
             }
         } else {
-            // MOV Xd, Xm → ORR Xd, XZR, Xm
             let (rm, _) = self.parse_gp_reg_with_size()?;
-            Ok(Inst::OrrReg { rd, rn: XZR, rm, sf })
+            if rm == SP || rd == SP {
+                // MOV involving SP → ADD Xd, Xn, #0 (SP can't be used in ORR shifted reg)
+                Ok(Inst::AddImm { rd, rn: rm, imm12: 0, shift: false, sf })
+            } else {
+                // MOV Xd, Xm → ORR Xd, XZR, Xm
+                Ok(Inst::OrrReg { rd, rn: XZR, rm, sf })
+            }
         }
     }
 
