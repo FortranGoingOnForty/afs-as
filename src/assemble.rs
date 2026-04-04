@@ -6,7 +6,7 @@
 //!
 //! Also provides the library API for the compiler to call directly.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::BufWriter;
 use std::path::Path;
@@ -1551,7 +1551,10 @@ impl Assembler {
         }
 
         for (name, (section, offset)) in &self.labels {
-            if !self.symbol_attrs.contains_key(name) && !name.starts_with("ltmp") {
+            if !self.symbol_attrs.contains_key(name)
+                && !name.starts_with("ltmp")
+                && !is_generated_temp_symbol(name)
+            {
                 let value = section_bases[*section] + offset;
                 symbols.push(Symbol {
                     name: name.clone(),
@@ -1723,6 +1726,15 @@ impl Assembler {
             });
         }
 
+        let page_reloc_targets: BTreeSet<_> = self.pending_relocs
+            .iter()
+            .flat_map(|relocs| relocs.iter())
+            .filter(|reloc| {
+                reloc.reloc_type == macho::ARM64_RELOC_PAGE21
+                    || reloc.reloc_type == macho::ARM64_RELOC_PAGEOFF12
+            })
+            .map(|reloc| reloc.symbol.clone())
+            .collect();
         let symbol_order = self.symbol_order.clone();
         symbols.sort_by(|a, b| {
             let rank_a = symbol_class_rank(a);
@@ -1730,12 +1742,27 @@ impl Assembler {
             rank_a
                 .cmp(&rank_b)
                 .then_with(|| match rank_a {
-                    0 => symbol_order
-                        .get(&a.name)
-                        .copied()
-                        .unwrap_or(usize::MAX)
-                        .cmp(&symbol_order.get(&b.name).copied().unwrap_or(usize::MAX))
-                        .then_with(|| a.name.cmp(&b.name)),
+                    0 => {
+                        if a.section == b.section && a.value == b.value {
+                            let a_is_section_temp = a.name.starts_with("ltmp");
+                            let b_is_section_temp = b.name.starts_with("ltmp");
+                            if a_is_section_temp != b_is_section_temp {
+                                let a_prefers_front =
+                                    !a_is_section_temp && page_reloc_targets.contains(&a.name);
+                                let b_prefers_front =
+                                    !b_is_section_temp && page_reloc_targets.contains(&b.name);
+                                if a_prefers_front != b_prefers_front {
+                                    return b_prefers_front.cmp(&a_prefers_front);
+                                }
+                            }
+                        }
+                        symbol_order
+                            .get(&a.name)
+                            .copied()
+                            .unwrap_or(usize::MAX)
+                            .cmp(&symbol_order.get(&b.name).copied().unwrap_or(usize::MAX))
+                            .then_with(|| a.name.cmp(&b.name))
+                    }
                     _ => a.name.cmp(&b.name),
                 })
         });
@@ -1969,6 +1996,10 @@ fn symbol_class_rank(symbol: &Symbol) -> u8 {
 
 fn is_assembler_local_symbol(name: &str) -> bool {
     name.starts_with(".L")
+}
+
+fn is_generated_temp_symbol(name: &str) -> bool {
+    name.starts_with(".Ltmp$")
 }
 
 #[cfg(test)]
@@ -2698,6 +2729,39 @@ mod tests {
     fn assemble_missing_numeric_local_label_is_rejected() {
         let err = assemble_source(".text\nb 1f\n").unwrap_err();
         assert!(err.0.contains("local symbol '.Ltmp$1$1'"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_numeric_local_labels_do_not_emit_temp_symbols() {
+        let obj = assemble_source(".text\n.globl _f\n_f:\n1:\n  b 1b\n").unwrap();
+        assert!(
+            !obj.symbols.iter().any(|sym| sym.name.starts_with(".Ltmp$")),
+            "generated numeric local labels leaked into symbol table: {:?}",
+            obj.symbols
+                .iter()
+                .map(|sym| sym.name.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn assemble_page_reloc_target_at_section_base_sorts_before_section_temp() {
+        let obj = assemble_source(
+            ".globl _main\n\
+             .text\n\
+             _main:\n\
+               adrp x0, msg@PAGE\n\
+               add x0, x0, msg@PAGEOFF\n\
+               ret\n\
+             .data\n\
+             msg:\n\
+               .quad 0\n",
+        )
+        .unwrap();
+        let names: Vec<_> = obj.symbols.iter().map(|sym| sym.name.as_str()).collect();
+        let msg_index = names.iter().position(|name| *name == "msg").expect("msg symbol");
+        let ltmp1_index = names.iter().position(|name| *name == "ltmp1").expect("ltmp1 symbol");
+        assert!(msg_index < ltmp1_index, "symbols: {:?}", names);
     }
 
     #[test]
