@@ -1383,4 +1383,73 @@ _main:
     fn parse_uppercase_mov_sp() {
         assert_eq!(parse_inst("MOV X29, SP"), Inst::AddImm { rd: X29, rn: SP, imm12: 0, shift: false, sf: true });
     }
+
+    // ---- Test gap coverage (from audit) ----
+
+    #[test]
+    fn parse_negative_branch() {
+        assert_eq!(parse_inst("b #-8"), Inst::B { offset: -8 });
+    }
+
+    #[test]
+    fn parse_negative_bl() {
+        assert_eq!(parse_inst("bl #-16"), Inst::Bl { offset: -16 });
+    }
+
+    #[test]
+    fn parse_w_register_shift() {
+        assert_eq!(parse_inst("lsl w0, w1, #3"), Inst::LslImm { rd: W0, rn: W1, amount: 3, sf: false });
+    }
+
+    #[test]
+    fn parse_w_register_lsr() {
+        assert_eq!(parse_inst("lsr w5, w6, #8"), Inst::LsrImm { rd: W5, rn: W6, amount: 8, sf: false });
+    }
+
+    #[test]
+    fn parse_w_register_asr() {
+        assert_eq!(parse_inst("asr w5, w6, #15"), Inst::AsrImm { rd: W5, rn: W6, amount: 15, sf: false });
+    }
+
+    #[test]
+    fn parse_mov_negative_imm() {
+        // mov x0, #-1 → movn x0, #0
+        assert_eq!(parse_inst("mov x0, #-1"), Inst::Movn { rd: X0, imm16: 0, shift: 0, sf: true });
+    }
+
+    #[test]
+    fn parse_mov_negative_42() {
+        // mov x0, #-42 → movn x0, #41
+        assert_eq!(parse_inst("mov x0, #-42"), Inst::Movn { rd: X0, imm16: 41, shift: 0, sf: true });
+    }
+
+    #[test]
+    fn parse_cbnz_w() {
+        assert_eq!(parse_inst("cbnz w5, #8"), Inst::Cbnz { rt: W5, offset: 8, sf: false });
+    }
+
+    #[test]
+    fn parse_cbz_w() {
+        assert_eq!(parse_inst("cbz w0, #12"), Inst::Cbz { rt: W0, offset: 12, sf: false });
+    }
+
+    #[test]
+    fn parse_all_condition_codes() {
+        // Exercise all 14 named condition codes
+        for (name, cond) in [
+            ("eq", Cond::EQ), ("ne", Cond::NE), ("cs", Cond::CS), ("cc", Cond::CC),
+            ("mi", Cond::MI), ("pl", Cond::PL), ("vs", Cond::VS), ("vc", Cond::VC),
+            ("hi", Cond::HI), ("ls", Cond::LS), ("ge", Cond::GE), ("lt", Cond::LT),
+            ("gt", Cond::GT), ("le", Cond::LE),
+        ] {
+            let src = format!("b.{} #4", name);
+            assert_eq!(parse_inst(&src), Inst::BCond { cond, offset: 4 }, "failed for b.{}", name);
+        }
+    }
+
+    #[test]
+    fn parse_hs_lo_aliases() {
+        assert_eq!(parse_inst("b.hs #4"), Inst::BCond { cond: Cond::CS, offset: 4 });
+        assert_eq!(parse_inst("b.lo #4"), Inst::BCond { cond: Cond::CC, offset: 4 });
+    }
 }

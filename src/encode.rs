@@ -528,6 +528,11 @@ mod tests {
     #[test] fn lsr_x0_x1_3() { assert_eq!(Inst::LsrImm { rd: X0, rn: X1, amount: 3, sf: true }.encode(), 0xD343FC20); }
     #[test] fn asr_x0_x1_3() { assert_eq!(Inst::AsrImm { rd: X0, rn: X1, amount: 3, sf: true }.encode(), 0x9343FC20); }
 
+    // W-register shifts (32-bit, different immr/imms field widths)
+    #[test] fn lsl_w0_w1_3()  { assert_eq!(Inst::LslImm { rd: W0, rn: W1, amount: 3, sf: false }.encode(), 0x531D7020); }
+    #[test] fn lsr_w5_w6_8()  { assert_eq!(Inst::LsrImm { rd: W5, rn: W6, amount: 8, sf: false }.encode(), 0x53087CC5); }
+    #[test] fn asr_w5_w6_15() { assert_eq!(Inst::AsrImm { rd: W5, rn: W6, amount: 15, sf: false }.encode(), 0x130F7CC5); }
+
     // ---- Branches ----
 
     #[test] fn b_plus4()        { assert_eq!(Inst::B  { offset: 4 }.encode(),   0x14000001); }

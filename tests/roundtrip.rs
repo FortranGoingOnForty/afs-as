@@ -149,6 +149,39 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_nop()        { roundtrip(".text\nnop\n"); }
 #[test] fn rt_brk()        { roundtrip(".text\nbrk #42\n"); }
 
+// ---- Test gap coverage ----
+
+// W-register shifts
+#[test] fn rt_lsl_w()      { roundtrip(".text\nlsl w0, w1, #3\n"); }
+#[test] fn rt_lsr_w()      { roundtrip(".text\nlsr w5, w6, #8\n"); }
+#[test] fn rt_asr_w()      { roundtrip(".text\nasr w5, w6, #15\n"); }
+
+// Negative branches
+#[test] fn rt_b_neg()      { roundtrip(".text\nb #-8\n"); }
+#[test] fn rt_bl_neg()     { roundtrip(".text\nbl #-16\n"); }
+
+// W-register CBZ/CBNZ
+#[test] fn rt_cbz_w()      { roundtrip(".text\ncbz w0, #8\n"); }
+#[test] fn rt_cbnz_w()     { roundtrip(".text\ncbnz w5, #12\n"); }
+
+// Single-precision FP
+#[test] fn rt_fneg_s()     { roundtrip(".text\nfneg s0, s1\n"); }
+#[test] fn rt_fabs_s()     { roundtrip(".text\nfabs s0, s1\n"); }
+#[test] fn rt_fsqrt_s()    { roundtrip(".text\nfsqrt s0, s1\n"); }
+#[test] fn rt_fcmp_s()     { roundtrip(".text\nfcmp s0, s1\n"); }
+#[test] fn rt_fmadd_s()    { roundtrip(".text\nfmadd s0, s1, s2, s3\n"); }
+
+// LDP/STP missing variants
+#[test] fn rt_stp_post_32(){ roundtrip(".text\nstp x19, x20, [sp], #32\n"); }
+#[test] fn rt_ldp_pre_m32(){ roundtrip(".text\nldp x19, x20, [sp, #-32]!\n"); }
+
+// All condition codes through round-trip
+#[test] fn rt_b_ne_neg()   { roundtrip(".text\nb.ne #-4\n"); }
+#[test] fn rt_b_cs()       { roundtrip(".text\nb.cs #8\n"); }
+#[test] fn rt_b_mi()       { roundtrip(".text\nb.mi #12\n"); }
+#[test] fn rt_b_hi()       { roundtrip(".text\nb.hi #16\n"); }
+#[test] fn rt_b_gt_20()    { roundtrip(".text\nb.gt #20\n"); }
+
 // ---- Multi-instruction round-trips ----
 
 #[test]
