@@ -15,7 +15,27 @@ use std::fmt;
 pub enum Stmt {
     Label(String),
     Instruction(Inst),
+    /// Instruction with a label reference that needs relocation.
+    InstructionWithReloc(Inst, LabelRef),
     Directive(Directive),
+}
+
+/// A label reference in an instruction that needs relocation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelRef {
+    pub symbol: String,
+    pub kind: RelocKind,
+}
+
+/// What kind of relocation is needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelocKind {
+    /// ADRP — page-relative (ARM64_RELOC_PAGE21)
+    Page21,
+    /// ADD/LDR — page offset (ARM64_RELOC_PAGEOFF12)
+    PageOff12,
+    /// B/BL — branch (ARM64_RELOC_BRANCH26)
+    Branch26,
 }
 
 /// Assembly directives.
@@ -168,7 +188,7 @@ impl<'a> Parser<'a> {
                 } else {
                     // Instruction mnemonic — might have a condition suffix.
                     let mnemonic = self.resolve_mnemonic(&name)?;
-                    stmts.push(Stmt::Instruction(self.parse_instruction(&mnemonic)?));
+                    stmts.push(self.parse_instruction(&mnemonic)?);
                 }
             }
             Tok::Newline | Tok::Eof => {}
@@ -283,10 +303,18 @@ impl<'a> Parser<'a> {
         Ok(vals)
     }
 
-    fn parse_instruction(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        match mnemonic {
+    fn parse_instruction(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
+        // ADRP and ADD-with-label return Stmt directly (may carry relocation info).
+        if mnemonic == "adrp" {
+            return self.parse_adrp();
+        }
+        if mnemonic == "add" {
+            return self.parse_add_sub_stmt(false, false);
+        }
+
+        // All other instructions return Inst, wrapped as Stmt::Instruction.
+        let inst = match mnemonic {
             // ---- Data processing (register + immediate) ----
-            "add" => self.parse_add_sub(false, false),
             "sub" => self.parse_add_sub(true, false),
             "adds" => self.parse_add_sub(false, true),
             "subs" => self.parse_add_sub(true, true),
@@ -326,9 +354,6 @@ impl<'a> Parser<'a> {
             // Conditional branches: b.eq, b.ne, b.lt, etc.
             m if m.starts_with("b.") => self.parse_bcond(&m[2..]),
 
-            // Address
-            "adrp" => self.parse_adrp(),
-
             // Load/store
             "ldr" => self.parse_ldr_str(true),
             "str" => self.parse_ldr_str(false),
@@ -360,7 +385,8 @@ impl<'a> Parser<'a> {
             "brk" => { let imm = self.expect_int()? as u16; Ok(Inst::Brk { imm16: imm }) }
 
             _ => Err(self.err(format!("unknown mnemonic: {}", mnemonic))),
-        }
+        }?;
+        Ok(Stmt::Instruction(inst))
     }
 
     // ---- Register parsing helpers ----
@@ -413,6 +439,60 @@ impl<'a> Parser<'a> {
         let (rn, _) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
 
+        if let Tok::Integer(_) = self.peek() {
+            let imm = self.expect_int()? as u16;
+            let shift = self.parse_optional_lsl12()?;
+            Ok(match (is_sub, sets_flags) {
+                (false, false) => Inst::AddImm { rd, rn, imm12: imm, shift, sf },
+                (true, false)  => Inst::SubImm { rd, rn, imm12: imm, shift, sf },
+                (false, true)  => Inst::AddsImm { rd, rn, imm12: imm, shift, sf },
+                (true, true)   => Inst::SubsImm { rd, rn, imm12: imm, shift, sf },
+            })
+        } else {
+            let (rm, _) = self.parse_gp_reg_with_size()?;
+            Ok(match (is_sub, sets_flags) {
+                (false, false) => Inst::AddReg { rd, rn, rm, sf },
+                (true, false)  => Inst::SubReg { rd, rn, rm, sf },
+                (false, true)  => Inst::AddsReg { rd, rn, rm, sf },
+                (true, true)   => Inst::SubsReg { rd, rn, rm, sf },
+            })
+        }
+    }
+
+    /// ADD that can also handle label@PAGEOFF references (for ADRP+ADD pairs).
+    fn parse_add_sub_stmt(&mut self, is_sub: bool, sets_flags: bool) -> Result<Stmt, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+
+        // Check for label@PAGEOFF (identifier followed by @)
+        if let Tok::Ident(ref name) = self.peek().clone() {
+            if !name.starts_with('x') && !name.starts_with('w') && name != "sp" && name != "xzr" && name != "wzr" {
+                let label = name.clone();
+                self.advance();
+                let kind = if self.eat(&Tok::At) {
+                    let modifier = self.expect_ident()?;
+                    match modifier.to_uppercase().as_str() {
+                        "PAGEOFF" => RelocKind::PageOff12,
+                        "PAGE" => RelocKind::Page21,
+                        _ => RelocKind::PageOff12,
+                    }
+                } else {
+                    RelocKind::PageOff12
+                };
+                let inst = Inst::AddImm { rd, rn, imm12: 0, shift: false, sf };
+                return Ok(Stmt::InstructionWithReloc(inst, LabelRef { symbol: label, kind }));
+            }
+        }
+
+        // Normal add/sub (immediate or register).
+        let inst = self.parse_add_sub_operand(rd, rn, sf, is_sub, sets_flags)?;
+        Ok(Stmt::Instruction(inst))
+    }
+
+    /// Parse the third operand of add/sub (immediate or register).
+    fn parse_add_sub_operand(&mut self, rd: GpReg, rn: GpReg, sf: bool, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
         if let Tok::Integer(_) = self.peek() {
             let imm = self.expect_int()? as u16;
             let shift = self.parse_optional_lsl12()?;
@@ -580,21 +660,28 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_adrp(&mut self) -> Result<Inst, ParseError> {
+    fn parse_adrp(&mut self) -> Result<Stmt, ParseError> {
         let rd = self.parse_gp_reg()?;
         self.expect(&Tok::Comma)?;
-        // Can be #imm or label@PAGE — for now handle immediate and label.
         if let Tok::Integer(_) = self.peek() {
             let imm = self.expect_int()? as i32;
-            Ok(Inst::Adrp { rd, imm })
+            Ok(Stmt::Instruction(Inst::Adrp { rd, imm }))
         } else {
-            // Label reference — store as 0, will be resolved by linker.
-            // Skip label name and @PAGE modifier.
-            let _label = self.expect_ident()?;
-            if self.eat(&Tok::At) {
-                let _modifier = self.expect_ident()?; // PAGE, PAGEOFF, etc.
-            }
-            Ok(Inst::Adrp { rd, imm: 0 })
+            let label = self.expect_ident()?;
+            let kind = if self.eat(&Tok::At) {
+                let modifier = self.expect_ident()?;
+                match modifier.to_uppercase().as_str() {
+                    "PAGE" => RelocKind::Page21,
+                    "PAGEOFF" => RelocKind::PageOff12,
+                    _ => RelocKind::Page21,
+                }
+            } else {
+                RelocKind::Page21
+            };
+            Ok(Stmt::InstructionWithReloc(
+                Inst::Adrp { rd, imm: 0 },
+                LabelRef { symbol: label, kind },
+            ))
         }
     }
 

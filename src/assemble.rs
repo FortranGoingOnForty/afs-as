@@ -13,7 +13,7 @@ use std::path::Path;
 
 use crate::encode::Inst;
 use crate::macho::{self, ObjectFile, Symbol, Relocation};
-use crate::parse::{self, Stmt, Directive};
+use crate::parse::{self, Stmt, Directive, RelocKind};
 
 /// Assemble a source file to a Mach-O object file.
 pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
@@ -157,11 +157,26 @@ impl Assembler {
                 }
                 Stmt::Directive(dir) => self.process_directive(dir)?,
                 Stmt::Instruction(inst) => {
-                    // Check for instructions that reference labels (ADRP, B, BL).
-                    // For now, encode directly — label-referencing instructions
-                    // will have their immediate set to 0 by the parser and need relocs.
                     let word = inst.encode();
                     self.emit_bytes(&word.to_le_bytes());
+                }
+                Stmt::InstructionWithReloc(inst, label_ref) => {
+                    let offset = self.current_offset() as u32;
+                    let word = inst.encode();
+                    self.emit_bytes(&word.to_le_bytes());
+
+                    let reloc_type = match label_ref.kind {
+                        RelocKind::Page21 => crate::macho::ARM64_RELOC_PAGE21,
+                        RelocKind::PageOff12 => crate::macho::ARM64_RELOC_PAGEOFF12,
+                        RelocKind::Branch26 => crate::macho::ARM64_RELOC_BRANCH26,
+                    };
+                    let pcrel = matches!(label_ref.kind, RelocKind::Page21 | RelocKind::Branch26);
+                    self.text_relocs.push(PendingReloc {
+                        offset,
+                        symbol: label_ref.symbol.clone(),
+                        reloc_type,
+                        pcrel,
+                    });
                 }
             }
         }
@@ -227,10 +242,11 @@ impl Assembler {
     }
 
     fn finish(self) -> ObjectFile {
+        let text_size = self.text.len() as u64;
         let mut symbols: Vec<Symbol> = Vec::new();
 
         // Local symbols first (required by LC_DYSYMTAB ordering).
-        // Section-start temp labels.
+        // ltmp0: text section start
         symbols.push(Symbol {
             name: "ltmp0".into(),
             section: 1,
@@ -239,11 +255,12 @@ impl Assembler {
             undefined: false,
         });
 
+        // ltmp1: data section start (value = text_size, i.e., segment-relative addr)
         if !self.data.is_empty() {
             symbols.push(Symbol {
                 name: "ltmp1".into(),
                 section: 2,
-                value: 0,
+                value: text_size,
                 global: false,
                 undefined: false,
             });
@@ -252,10 +269,12 @@ impl Assembler {
         // Local labels that aren't global.
         for (name, (section, offset)) in &self.labels {
             if !self.globals.contains(name) && !name.starts_with("ltmp") {
+                // Data section labels need segment-relative addresses.
+                let value = if *section == 2 { text_size + offset } else { *offset };
                 symbols.push(Symbol {
                     name: name.clone(),
                     section: *section,
-                    value: *offset,
+                    value,
                     global: false,
                     undefined: false,
                 });
@@ -265,10 +284,11 @@ impl Assembler {
         // External (global) symbols.
         for name in &self.globals {
             if let Some((section, offset)) = self.labels.get(name) {
+                let value = if *section == 2 { text_size + offset } else { *offset };
                 symbols.push(Symbol {
                     name: name.clone(),
                     section: *section,
-                    value: *offset,
+                    value,
                     global: true,
                     undefined: false,
                 });
@@ -276,14 +296,24 @@ impl Assembler {
         }
 
         // Convert pending relocations.
+        // For relocations referencing data labels, point to the data section start
+        // symbol (ltmp1) since ld uses section-relative relocations.
         let text_relocs = self.text_relocs.into_iter().map(|pr| {
-            let sym_idx = symbols.iter().position(|s| s.name == pr.symbol).unwrap_or(0) as u32;
+            // Find which section the referenced symbol is in.
+            let target_section = self.labels.get(&pr.symbol).map(|(s, _)| *s).unwrap_or(1);
+            let (sym_idx, is_extern) = if target_section == 2 {
+                let idx = symbols.iter().position(|s| s.name == "ltmp1").unwrap_or(0);
+                (idx as u32, true)
+            } else {
+                let idx = symbols.iter().position(|s| s.name == pr.symbol).unwrap_or(0);
+                (idx as u32, true)
+            };
             Relocation {
                 offset: pr.offset,
                 symbol_idx: sym_idx,
                 pcrel: pr.pcrel,
-                length: 2, // 4 bytes
-                extern_: true,
+                length: 2,
+                extern_: is_extern,
                 reloc_type: pr.reloc_type,
             }
         }).collect();

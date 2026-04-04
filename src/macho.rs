@@ -12,6 +12,7 @@ const MH_MAGIC_64: u32 = 0xFEEDFACF;
 const CPU_TYPE_ARM64: u32 = 0x0100000C;
 const CPU_SUBTYPE_ARM64_ALL: u32 = 0x00000000;
 const MH_OBJECT: u32 = 1;
+#[allow(dead_code)]
 const MH_SUBSECTIONS_VIA_SYMBOLS: u32 = 0x2000;
 
 const LC_SEGMENT_64: u32 = 0x19;
@@ -102,8 +103,8 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     let data_offset = text_offset + text_size;
     let data_size = obj.data.len() as u32;
 
-    // Relocations follow section data.
-    let reloc_offset = data_offset + data_size;
+    // Relocations follow section data (aligned to 8 bytes for relocation_info).
+    let reloc_offset = align_to(data_offset + data_size, 8);
     let nrelocs = obj.text_relocs.len() as u32;
     let reloc_size = nrelocs * RELOC_SIZE;
 
@@ -136,7 +137,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     write_u32(w, MH_OBJECT)?;
     write_u32(w, ncmds)?;
     write_u32(w, sizeofcmds)?;
-    write_u32(w, MH_SUBSECTIONS_VIA_SYMBOLS)?;
+    write_u32(w, 0)?; // flags
     write_u32(w, 0)?; // reserved
 
     // ---- LC_SEGMENT_64 ----
@@ -222,8 +223,17 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     w.write_all(&obj.text)?;
     w.write_all(&obj.data)?;
 
-    // ---- Relocation entries ----
-    for rel in &obj.text_relocs {
+    // ---- Padding to relocation alignment ----
+    let written = text_offset + text_size + data_size;
+    let reloc_pad = (reloc_offset - written) as usize;
+    if reloc_pad > 0 {
+        w.write_all(&vec![0u8; reloc_pad])?;
+    }
+
+    // ---- Relocation entries (descending address order, as Apple ld expects) ----
+    let mut sorted_relocs: Vec<_> = obj.text_relocs.iter().collect();
+    sorted_relocs.sort_by(|a, b| b.offset.cmp(&a.offset));
+    for rel in &sorted_relocs {
         write_reloc(w, rel)?;
     }
 
