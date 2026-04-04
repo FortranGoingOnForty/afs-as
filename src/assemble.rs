@@ -40,6 +40,8 @@ pub fn assemble_source(src: &str) -> Result<ObjectFile, AsmError> {
 /// Assemble pre-parsed statements into an ObjectFile.
 pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
     let mut asm = Assembler::new();
+    asm.collect_layout(stmts)?;
+    asm.section = 0;
     asm.process(stmts)?;
     asm.finish()
 }
@@ -147,14 +149,44 @@ impl Assembler {
         }
     }
 
-    fn process(&mut self, stmts: &[Stmt]) -> Result<(), AsmError> {
+    fn collect_layout(&mut self, stmts: &[Stmt]) -> Result<(), AsmError> {
+        self.section = 0;
+        let mut text_size = 0u64;
+        let mut data_size = 0u64;
+
         for stmt in stmts {
             match stmt {
                 Stmt::Label(name) => {
-                    let section = self.current_section_num();
-                    let offset = self.current_offset();
-                    self.labels.insert(name.clone(), (section, offset));
+                    let section = (self.section + 1) as u8;
+                    let offset = match self.section {
+                        0 => text_size,
+                        1 => data_size,
+                        _ => 0,
+                    };
+                    if self.labels.insert(name.clone(), (section, offset)).is_some() {
+                        return Err(AsmError(format!("duplicate label '{}'", name)));
+                    }
                 }
+                Stmt::Directive(dir) => {
+                    self.collect_directive_layout(dir, &mut text_size, &mut data_size)?;
+                }
+                Stmt::Instruction(_) | Stmt::InstructionWithReloc(_, _) => {
+                    match self.section {
+                        0 => text_size += 4,
+                        1 => data_size += 4,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process(&mut self, stmts: &[Stmt]) -> Result<(), AsmError> {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Label(_) => {}
                 Stmt::Directive(dir) => self.process_directive(dir)?,
                 Stmt::Instruction(inst) => {
                     let word = inst.encode();
@@ -162,23 +194,96 @@ impl Assembler {
                 }
                 Stmt::InstructionWithReloc(inst, label_ref) => {
                     let offset = self.current_offset() as u32;
-                    let word = inst.encode();
-                    self.emit_bytes(&word.to_le_bytes());
+                    match label_ref.kind {
+                        RelocKind::Page21 | RelocKind::PageOff12 => {
+                            let word = inst.encode();
+                            self.emit_bytes(&word.to_le_bytes());
 
-                    let reloc_type = match label_ref.kind {
-                        RelocKind::Page21 => crate::macho::ARM64_RELOC_PAGE21,
-                        RelocKind::PageOff12 => crate::macho::ARM64_RELOC_PAGEOFF12,
-                        RelocKind::Branch26 => crate::macho::ARM64_RELOC_BRANCH26,
-                    };
-                    let pcrel = matches!(label_ref.kind, RelocKind::Page21 | RelocKind::Branch26);
-                    self.text_relocs.push(PendingReloc {
-                        offset,
-                        symbol: label_ref.symbol.clone(),
-                        reloc_type,
-                        pcrel,
-                    });
+                            let reloc_type = match label_ref.kind {
+                                RelocKind::Page21 => crate::macho::ARM64_RELOC_PAGE21,
+                                RelocKind::PageOff12 => crate::macho::ARM64_RELOC_PAGEOFF12,
+                                _ => unreachable!(),
+                            };
+                            let pcrel = matches!(label_ref.kind, RelocKind::Page21);
+                            self.text_relocs.push(PendingReloc {
+                                offset,
+                                symbol: label_ref.symbol.clone(),
+                                reloc_type,
+                                pcrel,
+                            });
+                        }
+                        RelocKind::Branch26 => {
+                            if let Some((section, target)) = self.labels.get(&label_ref.symbol) {
+                                self.ensure_same_section(*section, &label_ref.symbol)?;
+                                let resolved = self.resolve_branch_fixup(inst, (*target as i64) - (offset as i64), 26)?;
+                                self.emit_bytes(&resolved.encode().to_le_bytes());
+                            } else {
+                                let word = inst.encode();
+                                self.emit_bytes(&word.to_le_bytes());
+                                self.text_relocs.push(PendingReloc {
+                                    offset,
+                                    symbol: label_ref.symbol.clone(),
+                                    reloc_type: crate::macho::ARM64_RELOC_BRANCH26,
+                                    pcrel: true,
+                                });
+                            }
+                        }
+                        RelocKind::Branch19 => {
+                            let (section, target) = self.labels.get(&label_ref.symbol)
+                                .ok_or_else(|| AsmError(format!(
+                                    "branch target '{}' requires an assembler-local label",
+                                    label_ref.symbol
+                                )))?;
+                            self.ensure_same_section(*section, &label_ref.symbol)?;
+                            let resolved = self.resolve_branch_fixup(inst, (*target as i64) - (offset as i64), 19)?;
+                            self.emit_bytes(&resolved.encode().to_le_bytes());
+                        }
+                    }
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn collect_directive_layout(&mut self, dir: &Directive, text_size: &mut u64, data_size: &mut u64) -> Result<(), AsmError> {
+        match dir {
+            Directive::Text => self.section = 0,
+            Directive::Data => self.section = 1,
+            Directive::Global(name) => {
+                if !self.globals.contains(name) {
+                    self.globals.push(name.clone());
+                }
+            }
+            Directive::Align(n) | Directive::P2Align(n) => {
+                if *n > 30 {
+                    return Err(AsmError(format!("alignment power {} too large (max 30)", n)));
+                }
+                if self.section == 0 {
+                    self.text_align = self.text_align.max(*n);
+                }
+                let current = match self.section {
+                    0 => text_size,
+                    1 => data_size,
+                    _ => unreachable!(),
+                };
+                *current = align_value(*current, *n);
+            }
+            Directive::Byte(vals) => self.bump_size(text_size, data_size, vals.len() as u64),
+            Directive::Word(vals) => self.bump_size(text_size, data_size, (vals.len() as u64) * 4),
+            Directive::Quad(vals) => self.bump_size(text_size, data_size, (vals.len() as u64) * 8),
+            Directive::Ascii(bytes) | Directive::Asciz(bytes) => {
+                self.bump_size(text_size, data_size, bytes.len() as u64);
+            }
+            Directive::Space(n) => {
+                if *n > 1024 * 1024 * 64 {
+                    return Err(AsmError(format!(".space size {} too large (max 64MB)", n)));
+                }
+                self.bump_size(text_size, data_size, *n);
+            }
+            Directive::Section(seg, sect) => {
+                self.section = Self::section_from_names(seg, sect)?;
+            }
+            Directive::Ignored(_) | Directive::SubsectionsViaSymbols | Directive::BuildVersion { .. } => {}
         }
         Ok(())
     }
@@ -187,7 +292,7 @@ impl Assembler {
         match dir {
             Directive::Text => self.section = 0,
             Directive::Data => self.section = 1,
-            Directive::Global(name) => self.globals.push(name.clone()),
+            Directive::Global(_) => {}
             Directive::Align(n) | Directive::P2Align(n) => {
                 if *n > 30 {
                     return Err(AsmError(format!("alignment power {} too large (max 30)", n)));
@@ -195,9 +300,8 @@ impl Assembler {
                 if self.section == 0 {
                     self.text_align = self.text_align.max(*n);
                 }
-                let alignment = 1u64 << *n;
                 let current = self.current_offset();
-                let aligned = (current + alignment - 1) & !(alignment - 1);
+                let aligned = align_value(current, *n);
                 let pad = (aligned - current) as usize;
                 let zeros = vec![0u8; pad];
                 self.emit_bytes(&zeros);
@@ -223,22 +327,57 @@ impl Assembler {
                 self.emit_bytes(&zeros);
             }
             Directive::Section(seg, sect) => {
-                let seg_lower = seg.to_lowercase();
-                let sect_lower = sect.to_lowercase();
-                if seg_lower == "__text" && sect_lower == "__text" {
-                    self.section = 0;
-                } else if seg_lower == "__data" && sect_lower == "__data" {
-                    self.section = 1;
-                } else {
-                    return Err(AsmError(format!(
-                        "unsupported section {},{} (only __TEXT,__text and __DATA,__data are currently supported)",
-                        seg, sect
-                    )));
-                }
+                self.section = Self::section_from_names(seg, sect)?;
             }
             Directive::Ignored(_) | Directive::SubsectionsViaSymbols | Directive::BuildVersion { .. } => {}
         }
         Ok(())
+    }
+
+    fn bump_size(&self, text_size: &mut u64, data_size: &mut u64, amount: u64) {
+        match self.section {
+            0 => *text_size += amount,
+            1 => *data_size += amount,
+            _ => {}
+        }
+    }
+
+    fn section_from_names(seg: &str, sect: &str) -> Result<usize, AsmError> {
+        let seg_lower = seg.to_lowercase();
+        let sect_lower = sect.to_lowercase();
+        if seg_lower == "__text" && sect_lower == "__text" {
+            Ok(0)
+        } else if seg_lower == "__data" && sect_lower == "__data" {
+            Ok(1)
+        } else {
+            Err(AsmError(format!(
+                "unsupported section {},{} (only __TEXT,__text and __DATA,__data are currently supported)",
+                seg, sect
+            )))
+        }
+    }
+
+    fn ensure_same_section(&self, target_section: u8, symbol: &str) -> Result<(), AsmError> {
+        if target_section == self.current_section_num() {
+            Ok(())
+        } else {
+            Err(AsmError(format!(
+                "branch target '{}' must be in the current section",
+                symbol
+            )))
+        }
+    }
+
+    fn resolve_branch_fixup(&self, inst: &Inst, offset: i64, bits: u8) -> Result<Inst, AsmError> {
+        let checked = check_branch_offset(offset, bits)?;
+        match inst {
+            Inst::B { .. } => Ok(Inst::B { offset: checked }),
+            Inst::Bl { .. } => Ok(Inst::Bl { offset: checked }),
+            Inst::BCond { cond, .. } => Ok(Inst::BCond { cond: *cond, offset: checked }),
+            Inst::Cbz { rt, sf, .. } => Ok(Inst::Cbz { rt: *rt, offset: checked, sf: *sf }),
+            Inst::Cbnz { rt, sf, .. } => Ok(Inst::Cbnz { rt: *rt, offset: checked, sf: *sf }),
+            _ => Err(AsmError("internal error: invalid branch fixup instruction".into())),
+        }
     }
 
     fn finish(self) -> Result<ObjectFile, AsmError> {
@@ -478,4 +617,50 @@ mod tests {
             .collect();
         assert_eq!(reloc_syms, vec!["_foo", "_foo"]);
     }
+
+    #[test]
+    fn assemble_forward_branch_label() {
+        let obj = assemble_source(".text\nstart:\nb done\nnop\ndone:\nret\n").unwrap();
+        assert_eq!(&obj.text[0..4], &Inst::B { offset: 8 }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_local_cbz_label() {
+        let obj = assemble_source(".text\nstart:\ncbz x0, done\nret\ndone:\nret\n").unwrap();
+        assert_eq!(&obj.text[0..4], &Inst::Cbz { rt: X0, offset: 8, sf: true }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_external_bl_creates_branch_relocation() {
+        let obj = assemble_source(".text\nbl _puts\nret\n").unwrap();
+        let reloc_name = &obj.symbols[obj.text_relocs[0].symbol_idx as usize].name;
+        assert_eq!(reloc_name, "_puts");
+        assert!(obj.symbols.iter().any(|sym| sym.name == "_puts" && sym.undefined));
+    }
+
+    #[test]
+    fn assemble_branch19_requires_local_label() {
+        let err = assemble_source(".text\nb.eq _foo\n").unwrap_err();
+        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
+    }
+}
+
+fn align_value(value: u64, power: u32) -> u64 {
+    let alignment = 1u64 << power;
+    (value + alignment - 1) & !(alignment - 1)
+}
+
+fn check_branch_offset(offset: i64, bits: u8) -> Result<i32, AsmError> {
+    if offset % 4 != 0 {
+        return Err(AsmError(format!("branch offset {} is not 4-byte aligned", offset)));
+    }
+
+    let scaled = offset / 4;
+    let min = -(1i64 << (bits - 1));
+    let max = (1i64 << (bits - 1)) - 1;
+    if scaled < min || scaled > max {
+        return Err(AsmError(format!("branch offset {} is out of range for {}-bit immediate", offset, bits)));
+    }
+
+    Ok(offset as i32)
 }

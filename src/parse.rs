@@ -36,6 +36,8 @@ pub enum RelocKind {
     PageOff12,
     /// B/BL — branch (ARM64_RELOC_BRANCH26)
     Branch26,
+    /// B.cond / CBZ / CBNZ — assembler-resolved 19-bit branch immediate
+    Branch19,
 }
 
 /// Assembly directives.
@@ -313,6 +315,21 @@ impl<'a> Parser<'a> {
         if mnemonic == "add" {
             return self.parse_add_sub_stmt(false, false);
         }
+        if mnemonic == "b" {
+            return self.parse_b();
+        }
+        if mnemonic == "bl" {
+            return self.parse_bl();
+        }
+        if mnemonic == "cbz" {
+            return self.parse_cbz(false);
+        }
+        if mnemonic == "cbnz" {
+            return self.parse_cbz(true);
+        }
+        if mnemonic.starts_with("b.") {
+            return self.parse_bcond(&mnemonic[2..]);
+        }
 
         // All other instructions return Inst, wrapped as Stmt::Instruction.
         let inst = match mnemonic {
@@ -345,16 +362,9 @@ impl<'a> Parser<'a> {
             "asr" => self.parse_shift("asr"),
 
             // Branches
-            "b" => self.parse_b(),
-            "bl" => self.parse_bl(),
             "ret" => self.parse_ret(),
             "br" => { let rn = self.parse_gp_reg()?; Ok(Inst::Br { rn }) }
             "blr" => { let rn = self.parse_gp_reg()?; Ok(Inst::Blr { rn }) }
-            "cbz" => self.parse_cbz(false),
-            "cbnz" => self.parse_cbz(true),
-
-            // Conditional branches: b.eq, b.ne, b.lt, etc.
-            m if m.starts_with("b.") => self.parse_bcond(&m[2..]),
 
             // Load/store
             "ldr" => self.parse_ldr_str(true),
@@ -624,31 +634,69 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_b(&mut self) -> Result<Inst, ParseError> {
-        let offset = self.expect_int()? as i32;
-        Ok(Inst::B { offset })
+    fn parse_b(&mut self) -> Result<Stmt, ParseError> {
+        if let Tok::Integer(_) = self.peek() {
+            let offset = self.expect_int()? as i32;
+            Ok(Stmt::Instruction(Inst::B { offset }))
+        } else {
+            let label = self.expect_ident()?;
+            Ok(Stmt::InstructionWithReloc(
+                Inst::B { offset: 0 },
+                LabelRef { symbol: label, kind: RelocKind::Branch26 },
+            ))
+        }
     }
 
-    fn parse_bl(&mut self) -> Result<Inst, ParseError> {
-        let offset = self.expect_int()? as i32;
-        Ok(Inst::Bl { offset })
+    fn parse_bl(&mut self) -> Result<Stmt, ParseError> {
+        if let Tok::Integer(_) = self.peek() {
+            let offset = self.expect_int()? as i32;
+            Ok(Stmt::Instruction(Inst::Bl { offset }))
+        } else {
+            let label = self.expect_ident()?;
+            Ok(Stmt::InstructionWithReloc(
+                Inst::Bl { offset: 0 },
+                LabelRef { symbol: label, kind: RelocKind::Branch26 },
+            ))
+        }
     }
 
-    fn parse_bcond(&mut self, cond_str: &str) -> Result<Inst, ParseError> {
+    fn parse_bcond(&mut self, cond_str: &str) -> Result<Stmt, ParseError> {
         let cond = parse_condition(cond_str)
             .ok_or_else(|| self.err(format!("unknown condition: {}", cond_str)))?;
-        let offset = self.expect_int()? as i32;
-        Ok(Inst::BCond { cond, offset })
+        if let Tok::Integer(_) = self.peek() {
+            let offset = self.expect_int()? as i32;
+            Ok(Stmt::Instruction(Inst::BCond { cond, offset }))
+        } else {
+            let label = self.expect_ident()?;
+            Ok(Stmt::InstructionWithReloc(
+                Inst::BCond { cond, offset: 0 },
+                LabelRef { symbol: label, kind: RelocKind::Branch19 },
+            ))
+        }
     }
 
-    fn parse_cbz(&mut self, is_nz: bool) -> Result<Inst, ParseError> {
+    fn parse_cbz(&mut self, is_nz: bool) -> Result<Stmt, ParseError> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let offset = self.expect_int()? as i32;
-        if is_nz {
-            Ok(Inst::Cbnz { rt, offset, sf })
+        if let Tok::Integer(_) = self.peek() {
+            let offset = self.expect_int()? as i32;
+            let inst = if is_nz {
+                Inst::Cbnz { rt, offset, sf }
+            } else {
+                Inst::Cbz { rt, offset, sf }
+            };
+            Ok(Stmt::Instruction(inst))
         } else {
-            Ok(Inst::Cbz { rt, offset, sf })
+            let label = self.expect_ident()?;
+            let inst = if is_nz {
+                Inst::Cbnz { rt, offset: 0, sf }
+            } else {
+                Inst::Cbz { rt, offset: 0, sf }
+            };
+            Ok(Stmt::InstructionWithReloc(
+                inst,
+                LabelRef { symbol: label, kind: RelocKind::Branch19 },
+            ))
         }
     }
 
@@ -1488,5 +1536,38 @@ _main:
     fn parse_hs_lo_aliases() {
         assert_eq!(parse_inst("b.hs #4"), Inst::BCond { cond: Cond::CS, offset: 4 });
         assert_eq!(parse_inst("b.lo #4"), Inst::BCond { cond: Cond::CC, offset: 4 });
+    }
+
+    #[test]
+    fn parse_b_label() {
+        assert_eq!(
+            parse_stmts("b done"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::B { offset: 0 },
+                LabelRef { symbol: "done".into(), kind: RelocKind::Branch26 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_b_eq_label() {
+        assert_eq!(
+            parse_stmts("b.eq done"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::BCond { cond: Cond::EQ, offset: 0 },
+                LabelRef { symbol: "done".into(), kind: RelocKind::Branch19 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_cbz_label() {
+        assert_eq!(
+            parse_stmts("cbz x0, done"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::Cbz { rt: X0, offset: 0, sf: true },
+                LabelRef { symbol: "done".into(), kind: RelocKind::Branch19 },
+            )]
+        );
     }
 }
