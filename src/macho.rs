@@ -1,7 +1,7 @@
 //! Mach-O 64-bit object file writer for ARM64 macOS.
 //!
 //! Writes relocatable object files (.o) that can be linked with Apple's `ld`.
-//! Implements the minimum viable subset: header, segment with __text and __data
+//! Implements the minimum viable subset: header, segment with supported Mach-O
 //! sections, symbol table, dynamic symbol table, build version, and relocations.
 
 use std::io::{self, Write};
@@ -21,6 +21,8 @@ const LC_DYSYMTAB: u32 = 0x0B;
 const LC_BUILD_VERSION: u32 = 0x32;
 
 const S_REGULAR: u32 = 0x0;
+const S_ZEROFILL: u32 = 0x1;
+const S_CSTRING_LITERALS: u32 = 0x2;
 const S_ATTR_PURE_INSTRUCTIONS: u32 = 0x80000000;
 const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x00000400;
 
@@ -58,7 +60,7 @@ pub struct Symbol {
 }
 
 /// A relocation entry.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relocation {
     pub offset: u32,       // byte offset in section
     pub symbol_idx: u32,   // index into symbol table
@@ -68,26 +70,114 @@ pub struct Relocation {
     pub reloc_type: u32,   // ARM64_RELOC_*
 }
 
-/// Assembled object file ready for Mach-O emission.
-#[derive(Debug, Clone, Default)]
-pub struct ObjectFile {
-    pub text: Vec<u8>,
+/// Supported Mach-O section kinds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SectionKind {
+    Text,
+    Data,
+    CStringLiterals,
+    ConstData,
+    ZeroFill,
+}
+
+impl SectionKind {
+    fn flags(&self, size: u64) -> u32 {
+        match self {
+            Self::Text if size == 0 => S_ATTR_PURE_INSTRUCTIONS,
+            Self::Text => S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS,
+            Self::CStringLiterals => S_CSTRING_LITERALS,
+            Self::ZeroFill => S_ZEROFILL,
+            Self::Data | Self::ConstData => S_REGULAR,
+        }
+    }
+
+    fn is_zerofill(&self) -> bool {
+        matches!(self, Self::ZeroFill)
+    }
+}
+
+/// A Mach-O section in a relocatable object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    pub segment: String,
+    pub name: String,
+    pub kind: SectionKind,
+    pub align_pow2: u32,
     pub data: Vec<u8>,
+    pub size: u64,
+    pub relocations: Vec<Relocation>,
+}
+
+impl Section {
+    pub fn new(segment: &str, name: &str, kind: SectionKind) -> Self {
+        Self {
+            segment: segment.into(),
+            name: name.into(),
+            kind,
+            align_pow2: 0,
+            data: Vec::new(),
+            size: 0,
+            relocations: Vec::new(),
+        }
+    }
+
+    pub fn text() -> Self {
+        Self::new("__TEXT", "__text", SectionKind::Text)
+    }
+
+    pub fn file_size(&self) -> u64 {
+        if self.kind.is_zerofill() { 0 } else { self.size }
+    }
+}
+
+/// Assembled object file ready for Mach-O emission.
+#[derive(Debug, Clone)]
+pub struct ObjectFile {
+    pub sections: Vec<Section>,
     pub symbols: Vec<Symbol>,
-    pub text_relocs: Vec<Relocation>,
-    pub text_align: u32,   // power of 2
+}
+
+struct SectionLayout {
+    addr: u64,
+    offset: u32,
+    reloff: u32,
+    nreloc: u32,
 }
 
 impl ObjectFile {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            sections: vec![Section::text()],
+            symbols: Vec::new(),
+        }
+    }
+
+    pub fn section(&self, segment: &str, name: &str) -> Option<&Section> {
+        self.sections.iter().find(|section| section.segment == segment && section.name == name)
+    }
+
+    pub fn section_mut(&mut self, segment: &str, name: &str) -> Option<&mut Section> {
+        self.sections.iter_mut().find(|section| section.segment == segment && section.name == name)
+    }
+
+    pub fn text_section(&self) -> &Section {
+        self.section("__TEXT", "__text").expect("missing __TEXT,__text section")
+    }
+
+    pub fn text_section_mut(&mut self) -> &mut Section {
+        self.section_mut("__TEXT", "__text").expect("missing __TEXT,__text section")
+    }
+}
+
+impl Default for ObjectFile {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 /// Write a Mach-O object file to the given writer.
 pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
-    let has_data = !obj.data.is_empty();
-    let nsects: u32 = if has_data { 2 } else { 1 };
+    let nsects = obj.sections.len() as u32;
 
     // Compute layout.
     let segment_cmdsize = SEGMENT_CMD_SIZE + nsects * SECTION_SIZE;
@@ -95,21 +185,58 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     let sizeofcmds = segment_cmdsize + BUILD_VERSION_CMD_SIZE + SYMTAB_CMD_SIZE + DYSYMTAB_CMD_SIZE;
 
     let content_offset = HEADER_SIZE + sizeofcmds;
+    let mut layouts = Vec::with_capacity(obj.sections.len());
+    let mut file_cursor = content_offset;
+    let mut vm_cursor = 0u64;
 
-    // Align text section start.
-    let text_offset = align_to(content_offset, 1 << obj.text_align);
-    let text_size = obj.text.len() as u32;
+    for section in &obj.sections {
+        if !section.kind.is_zerofill() && section.data.len() as u64 != section.size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "section {},{} has size {} but {} data bytes",
+                    section.segment,
+                    section.name,
+                    section.size,
+                    section.data.len()
+                ),
+            ));
+        }
 
-    let data_offset = text_offset + text_size;
-    let data_size = obj.data.len() as u32;
+        vm_cursor = align_value(vm_cursor, section.align_pow2);
+        let addr = vm_cursor;
+        vm_cursor += section.size;
+
+        let offset = if section.kind.is_zerofill() {
+            0
+        } else {
+            file_cursor = align_to(file_cursor, 1 << section.align_pow2);
+            let offset = file_cursor;
+            file_cursor = file_cursor.saturating_add(section.file_size() as u32);
+            offset
+        };
+
+        layouts.push(SectionLayout {
+            addr,
+            offset,
+            reloff: 0,
+            nreloc: 0,
+        });
+    }
 
     // Relocations follow section data (aligned to 8 bytes for relocation_info).
-    let reloc_offset = align_to(data_offset + data_size, 8);
-    let nrelocs = obj.text_relocs.len() as u32;
-    let reloc_size = nrelocs * RELOC_SIZE;
+    let reloc_offset = align_to(file_cursor, 8);
+    let mut reloc_cursor = reloc_offset;
+    for (layout, section) in layouts.iter_mut().zip(&obj.sections) {
+        layout.nreloc = section.relocations.len() as u32;
+        if layout.nreloc > 0 {
+            layout.reloff = reloc_cursor;
+            reloc_cursor += layout.nreloc * RELOC_SIZE;
+        }
+    }
 
     // Symbol table follows relocations.
-    let symoff = reloc_offset + reloc_size;
+    let symoff = reloc_cursor;
     let nsyms = obj.symbols.len() as u32;
     let sym_size = nsyms * NLIST_SIZE;
 
@@ -123,12 +250,26 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     let nextdefsym = obj.symbols.iter().filter(|s| s.global && !s.undefined).count() as u32;
     let nundefsym = obj.symbols.iter().filter(|s| s.undefined).count() as u32;
 
-    let vmsize = if has_data {
-        (obj.data.len() as u64) + (data_offset - text_offset) as u64
-    } else {
-        text_size as u64
-    };
-    let filesize = text_size + data_size;
+    let segment_fileoff = layouts
+        .iter()
+        .zip(&obj.sections)
+        .find(|(_, section)| !section.kind.is_zerofill())
+        .map(|(layout, _)| layout.offset)
+        .unwrap_or(content_offset);
+    let filesize = layouts
+        .iter()
+        .zip(&obj.sections)
+        .filter(|(_, section)| !section.kind.is_zerofill())
+        .map(|(layout, section)| layout.offset + section.file_size() as u32)
+        .max()
+        .unwrap_or(segment_fileoff)
+        .saturating_sub(segment_fileoff);
+    let vmsize = layouts
+        .iter()
+        .zip(&obj.sections)
+        .map(|(layout, section)| layout.addr + section.size)
+        .max()
+        .unwrap_or(0);
 
     // ---- Write header ----
     write_u32(w, MH_MAGIC_64)?;
@@ -146,39 +287,23 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     write_pad16(w, b"")?;           // segname (empty for object files)
     write_u64(w, 0)?;               // vmaddr
     write_u64(w, vmsize)?;          // vmsize
-    write_u64(w, text_offset as u64)?; // fileoff
+    write_u64(w, segment_fileoff as u64)?; // fileoff
     write_u64(w, filesize as u64)?; // filesize
     write_u32(w, 7)?;               // maxprot (rwx)
     write_u32(w, 7)?;               // initprot (rwx)
     write_u32(w, nsects)?;
     write_u32(w, 0)?;               // flags
 
-    // Section: __TEXT,__text
-    write_pad16(w, b"__text")?;     // sectname
-    write_pad16(w, b"__TEXT")?;     // segname
-    write_u64(w, 0)?;               // addr
-    write_u64(w, text_size as u64)?;
-    write_u32(w, text_offset)?;     // offset
-    write_u32(w, obj.text_align)?;  // align (power of 2)
-    write_u32(w, if nrelocs > 0 { reloc_offset } else { 0 })?; // reloff
-    write_u32(w, nrelocs)?;         // nreloc
-    write_u32(w, S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS)?;
-    write_u32(w, 0)?;               // reserved1
-    write_u32(w, 0)?;               // reserved2
-    write_u32(w, 0)?;               // reserved3 (padding to 80 bytes)
-
-    // Section: __DATA,__data (if non-empty)
-    if has_data {
-        let data_addr = data_offset - text_offset; // relative to segment start
-        write_pad16(w, b"__data")?;
-        write_pad16(w, b"__DATA")?;
-        write_u64(w, data_addr as u64)?;
-        write_u64(w, data_size as u64)?;
-        write_u32(w, data_offset)?;
-        write_u32(w, 0)?;           // align
-        write_u32(w, 0)?;           // reloff
-        write_u32(w, 0)?;           // nreloc
-        write_u32(w, S_REGULAR)?;
+    for (section, layout) in obj.sections.iter().zip(&layouts) {
+        write_pad16(w, section.name.as_bytes())?;
+        write_pad16(w, section.segment.as_bytes())?;
+        write_u64(w, layout.addr)?;
+        write_u64(w, section.size)?;
+        write_u32(w, layout.offset)?;
+        write_u32(w, section.align_pow2)?;
+        write_u32(w, layout.reloff)?;
+        write_u32(w, layout.nreloc)?;
+        write_u32(w, section.kind.flags(section.size))?;
         write_u32(w, 0)?;
         write_u32(w, 0)?;
         write_u32(w, 0)?;
@@ -214,25 +339,29 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         write_u32(w, 0)?;
     }
 
-    // ---- Padding to text_offset ----
-    let current = HEADER_SIZE + sizeofcmds;
-    let pad = (text_offset - current) as usize;
-    write_zeros(w, pad)?;
-
     // ---- Section data ----
-    w.write_all(&obj.text)?;
-    w.write_all(&obj.data)?;
+    let mut written = HEADER_SIZE + sizeofcmds;
+    for (section, layout) in obj.sections.iter().zip(&layouts) {
+        if section.kind.is_zerofill() {
+            continue;
+        }
+        let pad = layout.offset.saturating_sub(written) as usize;
+        write_zeros(w, pad)?;
+        w.write_all(&section.data)?;
+        written = layout.offset + section.file_size() as u32;
+    }
 
     // ---- Padding to relocation alignment ----
-    let written = text_offset + text_size + data_size;
-    let reloc_pad = (reloc_offset - written) as usize;
+    let reloc_pad = reloc_offset.saturating_sub(written) as usize;
     write_zeros(w, reloc_pad)?;
 
-    // ---- Relocation entries (descending address order, as Apple ld expects) ----
-    let mut sorted_relocs: Vec<_> = obj.text_relocs.iter().collect();
-    sorted_relocs.sort_by(|a, b| b.offset.cmp(&a.offset));
-    for rel in &sorted_relocs {
-        write_reloc(w, rel)?;
+    // ---- Relocation entries (descending address order within each section) ----
+    for section in &obj.sections {
+        let mut sorted_relocs: Vec<_> = section.relocations.iter().collect();
+        sorted_relocs.sort_by(|a, b| b.offset.cmp(&a.offset));
+        for rel in &sorted_relocs {
+            write_reloc(w, rel)?;
+        }
     }
 
     // ---- Symbol table ----
@@ -267,8 +396,8 @@ fn build_string_table(symbols: &[Symbol]) -> Vec<u8> {
         tab.extend_from_slice(sym.name.as_bytes());
         tab.push(0);
     }
-    // Pad to 4-byte alignment.
-    while !tab.len().is_multiple_of(4) {
+    // Apple pads the object string table to 8-byte alignment.
+    while !tab.len().is_multiple_of(8) {
         tab.push(0);
     }
     tab
@@ -305,6 +434,11 @@ fn write_reloc<W: Write>(w: &mut W, rel: &Relocation) -> io::Result<()> {
 fn align_to(value: u32, align: u32) -> u32 {
     if align <= 1 { return value; }
     (value + align - 1) & !(align - 1)
+}
+
+fn align_value(value: u64, power: u32) -> u64 {
+    let alignment = 1u64 << power;
+    (value + alignment - 1) & !(alignment - 1)
 }
 
 fn pack_version(major: u32, minor: u32, patch: u32) -> u32 {
@@ -364,7 +498,9 @@ mod tests {
     #[test]
     fn object_with_code_has_text_section() {
         let mut obj = ObjectFile::new();
-        obj.text = vec![0xD5, 0x03, 0x20, 0x1F]; // NOP
+        let text = obj.text_section_mut();
+        text.data = vec![0xD5, 0x03, 0x20, 0x1F];
+        text.size = 4;
         obj.symbols.push(Symbol {
             name: "_test".into(),
             section: 1,
@@ -431,5 +567,22 @@ mod tests {
     fn version_packing() {
         assert_eq!(pack_version(15, 0, 0), 0x000F0000);
         assert_eq!(pack_version(14, 5, 1), 0x000E0501);
+    }
+
+    #[test]
+    fn zerofill_section_does_not_contribute_file_bytes() {
+        let mut obj = ObjectFile::new();
+        obj.sections.push(Section {
+            segment: "__DATA".into(),
+            name: "__bss".into(),
+            kind: SectionKind::ZeroFill,
+            align_pow2: 4,
+            data: Vec::new(),
+            size: 16,
+            relocations: Vec::new(),
+        });
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+        assert_eq!(&buf[0..4], &MH_MAGIC_64.to_le_bytes());
     }
 }

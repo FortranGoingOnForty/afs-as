@@ -54,16 +54,25 @@ fn corpus_external_call_matches_relocations_and_symbols() {
 }
 
 #[test]
-fn corpus_cstring_section_is_detected_as_gap() {
-    let asm = common::read_fixture("cstring_data.s");
-    let err = afs_as::assemble::assemble_source(&asm).expect_err("cstring corpus should fail until section sprint lands");
-    assert!(err.0.contains("unsupported section"), "got: {}", err.0);
-}
-
-#[test]
 fn fixture_paths_are_resolved_from_corpus_directory() {
     let path = common::fixture_path("hello_world.s");
     assert!(path.ends_with("tests/corpus/hello_world.s"));
+}
+
+#[test]
+fn corpus_cstring_section_matches_load_commands_and_symbols() {
+    let paths = assemble_fixture("cstring_data.s");
+
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_symbols = common::object_symbols(&paths.obj);
+    let ref_symbols = common::object_symbols(&paths.ref_obj);
+
+    assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
+    assert!(ours_symbols.contains(" s greeting"), "missing cstring symbol:\n{}", ours_symbols);
+
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
 }
 
 fn normalize_tool_output(text: &str) -> String {

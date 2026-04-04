@@ -12,7 +12,7 @@ use std::io::BufWriter;
 use std::path::Path;
 
 use crate::encode::Inst;
-use crate::macho::{self, ObjectFile, Symbol, Relocation};
+use crate::macho::{self, ObjectFile, Relocation, Section, SectionKind, Symbol};
 use crate::parse::{self, Stmt, Directive, RelocKind};
 
 /// Assemble a source file to a Mach-O object file.
@@ -41,7 +41,7 @@ pub fn assemble_source(src: &str) -> Result<ObjectFile, AsmError> {
 pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
     let mut asm = Assembler::new();
     asm.collect_layout(stmts)?;
-    asm.section = 0;
+    asm.reset_for_emission();
     asm.process(stmts)?;
     asm.finish()
 }
@@ -50,9 +50,11 @@ pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
 /// No parsing needed — the compiler builds Inst values directly.
 pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
     let mut obj = ObjectFile::new();
+    let text = obj.text_section_mut();
     for inst in insts {
         let word = inst.encode();
-        obj.text.extend_from_slice(&word.to_le_bytes());
+        text.data.extend_from_slice(&word.to_le_bytes());
+        text.size += 4;
     }
     // Add a section-start local symbol.
     obj.symbols.push(Symbol {
@@ -87,28 +89,20 @@ impl std::error::Error for AsmError {}
 
 /// Internal assembler state.
 struct Assembler {
-    /// Current section: 0 = text, 1 = data.
+    /// Current section index in `sections`.
     section: usize,
+    sections: Vec<Section>,
 
-    /// Code bytes for __text.
-    text: Vec<u8>,
-    /// Data bytes for __data.
-    data: Vec<u8>,
-
-    /// Labels → (section, offset).
-    labels: BTreeMap<String, (u8, u64)>,
+    /// Labels → (section index, offset within section).
+    labels: BTreeMap<String, (usize, u64)>,
     /// Global symbols.
     globals: Vec<String>,
-
-    /// Pending relocations for the text section.
-    text_relocs: Vec<PendingReloc>,
-    /// All symbols we'll emit (built during finish()).
-
-    /// Text alignment (power of 2).
-    text_align: u32,
+    /// Pending relocations for each section.
+    pending_relocs: Vec<Vec<PendingReloc>>,
 }
 
 struct PendingReloc {
+    section: usize,
     offset: u32,
     symbol: String,
     reloc_type: u32,
@@ -119,63 +113,44 @@ impl Assembler {
     fn new() -> Self {
         Self {
             section: 0,
-            text: Vec::new(),
-            data: Vec::new(),
+            sections: vec![Section::text()],
             labels: BTreeMap::new(),
             globals: Vec::new(),
-            text_relocs: Vec::new(),
-            text_align: 0,
+            pending_relocs: vec![Vec::new()],
         }
     }
 
     fn current_offset(&self) -> u64 {
-        match self.section {
-            0 => self.text.len() as u64,
-            1 => self.data.len() as u64,
-            _ => 0,
-        }
+        self.sections[self.section].size
     }
 
-    fn current_section_num(&self) -> u8 {
-        // Mach-O sections are 1-based.
-        (self.section + 1) as u8
-    }
-
-    fn emit_bytes(&mut self, bytes: &[u8]) {
-        match self.section {
-            0 => self.text.extend_from_slice(bytes),
-            1 => self.data.extend_from_slice(bytes),
-            _ => {}
+    fn reset_for_emission(&mut self) {
+        self.section = 0;
+        for section in &mut self.sections {
+            section.data.clear();
+            section.relocations.clear();
+            section.size = 0;
         }
+        self.pending_relocs.clear();
+        self.pending_relocs.resize_with(self.sections.len(), Vec::new);
     }
 
     fn collect_layout(&mut self, stmts: &[Stmt]) -> Result<(), AsmError> {
         self.section = 0;
-        let mut text_size = 0u64;
-        let mut data_size = 0u64;
 
         for stmt in stmts {
             match stmt {
                 Stmt::Label(name) => {
-                    let section = (self.section + 1) as u8;
-                    let offset = match self.section {
-                        0 => text_size,
-                        1 => data_size,
-                        _ => 0,
-                    };
-                    if self.labels.insert(name.clone(), (section, offset)).is_some() {
+                    let offset = self.current_offset();
+                    if self.labels.insert(name.clone(), (self.section, offset)).is_some() {
                         return Err(AsmError(format!("duplicate label '{}'", name)));
                     }
                 }
                 Stmt::Directive(dir) => {
-                    self.collect_directive_layout(dir, &mut text_size, &mut data_size)?;
+                    self.collect_directive_layout(dir)?;
                 }
                 Stmt::Instruction(_) | Stmt::InstructionWithReloc(_, _) => {
-                    match self.section {
-                        0 => text_size += 4,
-                        1 => data_size += 4,
-                        _ => {}
-                    }
+                    self.reserve_initialized_bytes(4, "instruction")?;
                 }
             }
         }
@@ -190,14 +165,14 @@ impl Assembler {
                 Stmt::Directive(dir) => self.process_directive(dir)?,
                 Stmt::Instruction(inst) => {
                     let word = inst.encode();
-                    self.emit_bytes(&word.to_le_bytes());
+                    self.emit_initialized_bytes(&word.to_le_bytes(), "instruction")?;
                 }
                 Stmt::InstructionWithReloc(inst, label_ref) => {
                     let offset = self.current_offset() as u32;
                     match label_ref.kind {
                         RelocKind::Page21 | RelocKind::PageOff12 => {
                             let word = inst.encode();
-                            self.emit_bytes(&word.to_le_bytes());
+                            self.emit_initialized_bytes(&word.to_le_bytes(), "relocated instruction")?;
 
                             let reloc_type = match label_ref.kind {
                                 RelocKind::Page21 => crate::macho::ARM64_RELOC_PAGE21,
@@ -205,7 +180,8 @@ impl Assembler {
                                 _ => unreachable!(),
                             };
                             let pcrel = matches!(label_ref.kind, RelocKind::Page21);
-                            self.text_relocs.push(PendingReloc {
+                            self.pending_relocs[self.section].push(PendingReloc {
+                                section: self.section,
                                 offset,
                                 symbol: label_ref.symbol.clone(),
                                 reloc_type,
@@ -216,11 +192,12 @@ impl Assembler {
                             if let Some((section, target)) = self.labels.get(&label_ref.symbol) {
                                 self.ensure_same_section(*section, &label_ref.symbol)?;
                                 let resolved = self.resolve_branch_fixup(inst, (*target as i64) - (offset as i64), 26)?;
-                                self.emit_bytes(&resolved.encode().to_le_bytes());
+                                self.emit_initialized_bytes(&resolved.encode().to_le_bytes(), "branch instruction")?;
                             } else {
                                 let word = inst.encode();
-                                self.emit_bytes(&word.to_le_bytes());
-                                self.text_relocs.push(PendingReloc {
+                                self.emit_initialized_bytes(&word.to_le_bytes(), "branch instruction")?;
+                                self.pending_relocs[self.section].push(PendingReloc {
+                                    section: self.section,
                                     offset,
                                     symbol: label_ref.symbol.clone(),
                                     reloc_type: crate::macho::ARM64_RELOC_BRANCH26,
@@ -236,7 +213,7 @@ impl Assembler {
                                 )))?;
                             self.ensure_same_section(*section, &label_ref.symbol)?;
                             let resolved = self.resolve_branch_fixup(inst, (*target as i64) - (offset as i64), 19)?;
-                            self.emit_bytes(&resolved.encode().to_le_bytes());
+                            self.emit_initialized_bytes(&resolved.encode().to_le_bytes(), "branch instruction")?;
                         }
                     }
                 }
@@ -245,10 +222,10 @@ impl Assembler {
         Ok(())
     }
 
-    fn collect_directive_layout(&mut self, dir: &Directive, text_size: &mut u64, data_size: &mut u64) -> Result<(), AsmError> {
+    fn collect_directive_layout(&mut self, dir: &Directive) -> Result<(), AsmError> {
         match dir {
-            Directive::Text => self.section = 0,
-            Directive::Data => self.section = 1,
+            Directive::Text => self.switch_to("__TEXT", "__text")?,
+            Directive::Data => self.switch_to("__DATA", "__data")?,
             Directive::Global(name) => {
                 if !self.globals.contains(name) {
                     self.globals.push(name.clone());
@@ -258,30 +235,24 @@ impl Assembler {
                 if *n > 30 {
                     return Err(AsmError(format!("alignment power {} too large (max 30)", n)));
                 }
-                if self.section == 0 {
-                    self.text_align = self.text_align.max(*n);
-                }
-                let current = match self.section {
-                    0 => text_size,
-                    1 => data_size,
-                    _ => unreachable!(),
-                };
-                *current = align_value(*current, *n);
+                let section = &mut self.sections[self.section];
+                section.align_pow2 = section.align_pow2.max(*n);
+                section.size = align_value(section.size, *n);
             }
-            Directive::Byte(vals) => self.bump_size(text_size, data_size, vals.len() as u64),
-            Directive::Word(vals) => self.bump_size(text_size, data_size, (vals.len() as u64) * 4),
-            Directive::Quad(vals) => self.bump_size(text_size, data_size, (vals.len() as u64) * 8),
+            Directive::Byte(vals) => self.reserve_initialized_bytes(vals.len() as u64, ".byte")?,
+            Directive::Word(vals) => self.reserve_initialized_bytes((vals.len() as u64) * 4, ".word")?,
+            Directive::Quad(vals) => self.reserve_initialized_bytes((vals.len() as u64) * 8, ".quad")?,
             Directive::Ascii(bytes) | Directive::Asciz(bytes) => {
-                self.bump_size(text_size, data_size, bytes.len() as u64);
+                self.reserve_initialized_bytes(bytes.len() as u64, "string directive")?;
             }
             Directive::Space(n) => {
                 if *n > 1024 * 1024 * 64 {
                     return Err(AsmError(format!(".space size {} too large (max 64MB)", n)));
                 }
-                self.bump_size(text_size, data_size, *n);
+                self.sections[self.section].size += *n;
             }
             Directive::Section(seg, sect) => {
-                self.section = Self::section_from_names(seg, sect)?;
+                self.switch_to(seg, sect)?;
             }
             Directive::Ignored(_) | Directive::SubsectionsViaSymbols | Directive::BuildVersion { .. } => {}
         }
@@ -290,75 +261,117 @@ impl Assembler {
 
     fn process_directive(&mut self, dir: &Directive) -> Result<(), AsmError> {
         match dir {
-            Directive::Text => self.section = 0,
-            Directive::Data => self.section = 1,
+            Directive::Text => self.switch_to("__TEXT", "__text")?,
+            Directive::Data => self.switch_to("__DATA", "__data")?,
             Directive::Global(_) => {}
             Directive::Align(n) | Directive::P2Align(n) => {
                 if *n > 30 {
                     return Err(AsmError(format!("alignment power {} too large (max 30)", n)));
                 }
-                if self.section == 0 {
-                    self.text_align = self.text_align.max(*n);
-                }
+                let section = &mut self.sections[self.section];
+                section.align_pow2 = section.align_pow2.max(*n);
                 let current = self.current_offset();
                 let aligned = align_value(current, *n);
-                let pad = (aligned - current) as usize;
-                let zeros = vec![0u8; pad];
-                self.emit_bytes(&zeros);
+                self.emit_space(aligned - current)?;
             }
-            Directive::Byte(vals) => self.emit_bytes(vals),
+            Directive::Byte(vals) => self.emit_initialized_bytes(vals, ".byte")?,
             Directive::Word(vals) => {
                 for v in vals {
-                    self.emit_bytes(&v.to_le_bytes());
+                    self.emit_initialized_bytes(&v.to_le_bytes(), ".word")?;
                 }
             }
             Directive::Quad(vals) => {
                 for v in vals {
-                    self.emit_bytes(&v.to_le_bytes());
+                    self.emit_initialized_bytes(&v.to_le_bytes(), ".quad")?;
                 }
             }
-            Directive::Ascii(bytes) => self.emit_bytes(bytes),
-            Directive::Asciz(bytes) => self.emit_bytes(bytes),
+            Directive::Ascii(bytes) => self.emit_initialized_bytes(bytes, ".ascii")?,
+            Directive::Asciz(bytes) => self.emit_initialized_bytes(bytes, ".asciz")?,
             Directive::Space(n) => {
                 if *n > 1024 * 1024 * 64 {
                     return Err(AsmError(format!(".space size {} too large (max 64MB)", n)));
                 }
-                let zeros = vec![0u8; *n as usize];
-                self.emit_bytes(&zeros);
+                self.emit_space(*n)?;
             }
             Directive::Section(seg, sect) => {
-                self.section = Self::section_from_names(seg, sect)?;
+                self.switch_to(seg, sect)?;
             }
             Directive::Ignored(_) | Directive::SubsectionsViaSymbols | Directive::BuildVersion { .. } => {}
         }
         Ok(())
     }
 
-    fn bump_size(&self, text_size: &mut u64, data_size: &mut u64, amount: u64) {
-        match self.section {
-            0 => *text_size += amount,
-            1 => *data_size += amount,
-            _ => {}
+    fn reserve_initialized_bytes(&mut self, amount: u64, context: &str) -> Result<(), AsmError> {
+        if self.sections[self.section].kind == SectionKind::ZeroFill {
+            return Err(AsmError(format!(
+                "{} is not supported in zero-fill section {},{}",
+                context,
+                self.sections[self.section].segment,
+                self.sections[self.section].name
+            )));
         }
+        self.sections[self.section].size += amount;
+        Ok(())
     }
 
-    fn section_from_names(seg: &str, sect: &str) -> Result<usize, AsmError> {
+    fn emit_initialized_bytes(&mut self, bytes: &[u8], context: &str) -> Result<(), AsmError> {
+        self.reserve_initialized_bytes(bytes.len() as u64, context)?;
+        self.sections[self.section].data.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn emit_space(&mut self, amount: u64) -> Result<(), AsmError> {
+        if self.sections[self.section].kind == SectionKind::ZeroFill {
+            self.sections[self.section].size += amount;
+            return Ok(());
+        }
+        let section = &mut self.sections[self.section];
+        let new_len = section.data.len() + amount as usize;
+        section.data.resize(new_len, 0);
+        section.size += amount;
+        Ok(())
+    }
+
+    fn switch_to(&mut self, seg: &str, sect: &str) -> Result<(), AsmError> {
+        self.section = self.ensure_section(seg, sect)?;
+        Ok(())
+    }
+
+    fn ensure_section(&mut self, seg: &str, sect: &str) -> Result<usize, AsmError> {
+        let (segment, name, kind) = Self::supported_section(seg, sect)?;
+        if let Some((index, _)) = self.sections.iter().enumerate().find(|(_, section)| {
+            section.segment.eq_ignore_ascii_case(segment) && section.name.eq_ignore_ascii_case(name)
+        }) {
+            return Ok(index);
+        }
+        self.sections.push(Section::new(segment, name, kind));
+        self.pending_relocs.push(Vec::new());
+        Ok(self.sections.len() - 1)
+    }
+
+    fn supported_section(seg: &str, sect: &str) -> Result<(&'static str, &'static str, SectionKind), AsmError> {
         let seg_lower = seg.to_lowercase();
         let sect_lower = sect.to_lowercase();
         if seg_lower == "__text" && sect_lower == "__text" {
-            Ok(0)
+            Ok(("__TEXT", "__text", SectionKind::Text))
+        } else if seg_lower == "__text" && sect_lower == "__cstring" {
+            Ok(("__TEXT", "__cstring", SectionKind::CStringLiterals))
+        } else if seg_lower == "__text" && sect_lower == "__const" {
+            Ok(("__TEXT", "__const", SectionKind::ConstData))
         } else if seg_lower == "__data" && sect_lower == "__data" {
-            Ok(1)
+            Ok(("__DATA", "__data", SectionKind::Data))
+        } else if seg_lower == "__data" && sect_lower == "__bss" {
+            Ok(("__DATA", "__bss", SectionKind::ZeroFill))
         } else {
             Err(AsmError(format!(
-                "unsupported section {},{} (only __TEXT,__text and __DATA,__data are currently supported)",
+                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__const, __DATA,__data, __DATA,__bss)",
                 seg, sect
             )))
         }
     }
 
-    fn ensure_same_section(&self, target_section: u8, symbol: &str) -> Result<(), AsmError> {
-        if target_section == self.current_section_num() {
+    fn ensure_same_section(&self, target_section: usize, symbol: &str) -> Result<(), AsmError> {
+        if target_section == self.section {
             Ok(())
         } else {
             Err(AsmError(format!(
@@ -380,39 +393,37 @@ impl Assembler {
         }
     }
 
-    fn finish(self) -> Result<ObjectFile, AsmError> {
-        let text_size = self.text.len() as u64;
+    fn section_base_addresses(&self) -> Vec<u64> {
+        let mut bases = Vec::with_capacity(self.sections.len());
+        let mut addr = 0u64;
+        for section in &self.sections {
+            addr = align_value(addr, section.align_pow2);
+            bases.push(addr);
+            addr += section.size;
+        }
+        bases
+    }
+
+    fn finish(mut self) -> Result<ObjectFile, AsmError> {
+        let section_bases = self.section_base_addresses();
         let mut symbols: Vec<Symbol> = Vec::new();
 
-        // Local symbols first (required by LC_DYSYMTAB ordering).
-        // ltmp0: text section start
-        symbols.push(Symbol {
-            name: "ltmp0".into(),
-            section: 1,
-            value: 0,
-            global: false,
-            undefined: false,
-        });
-
-        // ltmp1: data section start (value = text_size, i.e., segment-relative addr)
-        if !self.data.is_empty() {
+        for (index, base) in section_bases.iter().enumerate() {
             symbols.push(Symbol {
-                name: "ltmp1".into(),
-                section: 2,
-                value: text_size,
+                name: format!("ltmp{}", index),
+                section: (index + 1) as u8,
+                value: *base,
                 global: false,
                 undefined: false,
             });
         }
 
-        // Local labels that aren't global.
         for (name, (section, offset)) in &self.labels {
             if !self.globals.contains(name) && !name.starts_with("ltmp") {
-                // Data section labels need segment-relative addresses.
-                let value = if *section == 2 { text_size + offset } else { *offset };
+                let value = section_bases[*section] + offset;
                 symbols.push(Symbol {
                     name: name.clone(),
-                    section: *section,
+                    section: (*section + 1) as u8,
                     value,
                     global: false,
                     undefined: false,
@@ -423,10 +434,10 @@ impl Assembler {
         // External (global) symbols.
         for name in &self.globals {
             if let Some((section, offset)) = self.labels.get(name) {
-                let value = if *section == 2 { text_size + offset } else { *offset };
+                let value = section_bases[*section] + offset;
                 symbols.push(Symbol {
                     name: name.clone(),
-                    section: *section,
+                    section: (*section + 1) as u8,
                     value,
                     global: true,
                     undefined: false,
@@ -442,41 +453,38 @@ impl Assembler {
             }
         }
 
-        for reloc in &self.text_relocs {
-            if !self.labels.contains_key(&reloc.symbol) && !symbols.iter().any(|s| s.name == reloc.symbol) {
-                symbols.push(Symbol {
-                    name: reloc.symbol.clone(),
-                    section: 0,
-                    value: 0,
-                    global: true,
-                    undefined: true,
+        for relocs in &self.pending_relocs {
+            for reloc in relocs {
+                if !self.labels.contains_key(&reloc.symbol) && !symbols.iter().any(|s| s.name == reloc.symbol) {
+                    symbols.push(Symbol {
+                        name: reloc.symbol.clone(),
+                        section: 0,
+                        value: 0,
+                        global: true,
+                        undefined: true,
+                    });
+                }
+            }
+        }
+
+        for relocs in self.pending_relocs {
+            for pending in relocs {
+                let sym_idx = symbols
+                    .iter()
+                    .position(|s| s.name == pending.symbol)
+                    .ok_or_else(|| AsmError(format!("missing relocation symbol '{}'", pending.symbol)))?;
+                self.sections[pending.section].relocations.push(Relocation {
+                    offset: pending.offset,
+                    symbol_idx: sym_idx as u32,
+                    pcrel: pending.pcrel,
+                    length: 2,
+                    extern_: true,
+                    reloc_type: pending.reloc_type,
                 });
             }
         }
 
-        // Convert pending relocations.
-        let text_relocs = self.text_relocs.into_iter().map(|pr| {
-            let sym_idx = symbols
-                .iter()
-                .position(|s| s.name == pr.symbol)
-                .ok_or_else(|| AsmError(format!("missing relocation symbol '{}'", pr.symbol)))?;
-            Ok(Relocation {
-                offset: pr.offset,
-                symbol_idx: sym_idx as u32,
-                pcrel: pr.pcrel,
-                length: 2,
-                extern_: true,
-                reloc_type: pr.reloc_type,
-            })
-        }).collect::<Result<Vec<_>, AsmError>>()?;
-
-        Ok(ObjectFile {
-            text: self.text,
-            data: self.data,
-            symbols,
-            text_relocs,
-            text_align: self.text_align,
-        })
+        Ok(ObjectFile { sections: self.sections, symbols })
     }
 }
 
@@ -505,29 +513,41 @@ mod tests {
     use super::*;
     use crate::reg::*;
 
+    fn text_bytes(obj: &ObjectFile) -> &[u8] {
+        &obj.text_section().data
+    }
+
+    fn data_bytes(obj: &ObjectFile) -> &[u8] {
+        &obj.section("__DATA", "__data").expect("missing __DATA,__data").data
+    }
+
+    fn text_relocs(obj: &ObjectFile) -> &[Relocation] {
+        &obj.text_section().relocations
+    }
+
     #[test]
     fn assemble_nop() {
         let obj = assemble_source(".text\nnop\n").unwrap();
-        assert_eq!(obj.text, vec![0x1F, 0x20, 0x03, 0xD5]);
+        assert_eq!(text_bytes(&obj), vec![0x1F, 0x20, 0x03, 0xD5]);
     }
 
     #[test]
     fn assemble_ret() {
         let obj = assemble_source(".text\nret\n").unwrap();
-        assert_eq!(obj.text, vec![0xC0, 0x03, 0x5F, 0xD6]);
+        assert_eq!(text_bytes(&obj), vec![0xC0, 0x03, 0x5F, 0xD6]);
     }
 
     #[test]
     fn assemble_multiple_instructions() {
         let obj = assemble_source(".text\nadd x0, x1, x2\nsub x3, x4, x5\nret\n").unwrap();
-        assert_eq!(obj.text.len(), 12); // 3 instructions × 4 bytes
+        assert_eq!(text_bytes(&obj).len(), 12); // 3 instructions × 4 bytes
     }
 
     #[test]
     fn assemble_with_data() {
         let obj = assemble_source(".text\nnop\n.data\n.asciz \"hi\"\n").unwrap();
-        assert_eq!(obj.text.len(), 4);
-        assert_eq!(obj.data, b"hi\0");
+        assert_eq!(text_bytes(&obj).len(), 4);
+        assert_eq!(data_bytes(&obj), b"hi\0");
     }
 
     #[test]
@@ -554,60 +574,108 @@ mod tests {
             Inst::Ret { rn: X30 },
         ];
         let obj = assemble_instructions(&insts, &["_main"]);
-        assert_eq!(obj.text.len(), 8);
+        assert_eq!(text_bytes(&obj).len(), 8);
         assert!(obj.symbols.iter().any(|s| s.name == "_main" && s.global));
     }
 
     #[test]
     fn assemble_with_alignment() {
         let obj = assemble_source(".text\n.p2align 2\nnop\n").unwrap();
-        assert_eq!(obj.text_align, 2);
+        assert_eq!(obj.text_section().align_pow2, 2);
     }
 
     #[test]
     fn assemble_data_directive_byte() {
         let obj = assemble_source(".data\n.byte 0x41, 0x42, 0x43\n").unwrap();
-        assert_eq!(obj.data, vec![0x41, 0x42, 0x43]);
+        assert_eq!(data_bytes(&obj), vec![0x41, 0x42, 0x43]);
     }
 
     #[test]
     fn assemble_data_directive_word() {
         let obj = assemble_source(".data\n.word 42\n").unwrap();
-        assert_eq!(obj.data, 42u32.to_le_bytes().to_vec());
+        assert_eq!(data_bytes(&obj), 42u32.to_le_bytes().to_vec());
     }
 
     #[test]
     fn assemble_data_directive_quad() {
         let obj = assemble_source(".data\n.quad 0xDEADBEEF\n").unwrap();
-        assert_eq!(obj.data, 0xDEADBEEFu64.to_le_bytes().to_vec());
+        assert_eq!(data_bytes(&obj), 0xDEADBEEFu64.to_le_bytes().to_vec());
     }
 
     #[test]
     fn assemble_space() {
         let obj = assemble_source(".data\n.space 16\n").unwrap();
-        assert_eq!(obj.data.len(), 16);
-        assert!(obj.data.iter().all(|&b| b == 0));
+        assert_eq!(data_bytes(&obj).len(), 16);
+        assert!(data_bytes(&obj).iter().all(|&b| b == 0));
     }
 
     #[test]
     fn assemble_section_switching() {
         let src = ".text\nnop\n.data\n.byte 1\n.text\nret\n.data\n.byte 2\n";
         let obj = assemble_source(src).unwrap();
-        assert_eq!(obj.text.len(), 8); // nop + ret
-        assert_eq!(obj.data, vec![1, 2]);
+        assert_eq!(text_bytes(&obj).len(), 8); // nop + ret
+        assert_eq!(data_bytes(&obj), vec![1, 2]);
     }
 
     #[test]
     fn assemble_ignored_directive_does_not_switch_sections() {
         let obj = assemble_source(".data\n.byte 1\n.cfi_startproc\n.byte 2\n").unwrap();
-        assert_eq!(obj.text, Vec::<u8>::new());
-        assert_eq!(obj.data, vec![1, 2]);
+        assert_eq!(text_bytes(&obj), Vec::<u8>::new());
+        assert_eq!(data_bytes(&obj), vec![1, 2]);
     }
 
     #[test]
     fn assemble_rejects_unsupported_section() {
-        let err = assemble_source(".section __DATA,__bss\n.space 16\n").unwrap_err();
+        let err = assemble_source(".section __TEXT,__foo\n.space 16\n").unwrap_err();
         assert!(err.0.contains("unsupported section"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_supported_text_sections() {
+        let obj = assemble_source(
+            ".section __TEXT,__cstring\nmsg: .asciz \"hello\"\n.section __TEXT,__const\nvalue: .quad 42\n"
+        ).unwrap();
+
+        let cstring = obj.section("__TEXT", "__cstring").unwrap();
+        let const_data = obj.section("__TEXT", "__const").unwrap();
+        assert_eq!(cstring.data, b"hello\0");
+        assert_eq!(const_data.data, 42u64.to_le_bytes());
+        assert_eq!(obj.symbols.iter().find(|sym| sym.name == "msg").unwrap().value, 0);
+        assert_eq!(obj.symbols.iter().find(|sym| sym.name == "value").unwrap().value, 6);
+    }
+
+    #[test]
+    fn assemble_bss_is_zero_fill() {
+        let obj = assemble_source(".section __DATA,__bss\n.p2align 4\nscratch:\n.space 16\n").unwrap();
+        let bss = obj.section("__DATA", "__bss").unwrap();
+        assert!(bss.data.is_empty());
+        assert_eq!(bss.size, 16);
+        assert_eq!(bss.align_pow2, 4);
+        let scratch = obj.symbols.iter().find(|sym| sym.name == "scratch").unwrap();
+        assert_eq!(scratch.value, 0);
+    }
+
+    #[test]
+    fn assemble_bss_rejects_initialized_data() {
+        let err = assemble_source(".section __DATA,__bss\n.byte 1\n").unwrap_err();
+        assert!(err.0.contains("zero-fill"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_interleaved_sections_keep_independent_offsets() {
+        let obj = assemble_source(
+            ".text\ncode0:\nnop\n.section __TEXT,__const\nconst0: .quad 1\n.data\ndata0: .byte 7\n.section __DATA,__bss\n.p2align 4\nbss0:\n.space 16\n.text\nret\n"
+        ).unwrap();
+
+        let code0 = obj.symbols.iter().find(|sym| sym.name == "code0").unwrap();
+        let const0 = obj.symbols.iter().find(|sym| sym.name == "const0").unwrap();
+        let data0 = obj.symbols.iter().find(|sym| sym.name == "data0").unwrap();
+        let bss0 = obj.symbols.iter().find(|sym| sym.name == "bss0").unwrap();
+
+        assert_eq!(code0.value, 0);
+        assert_eq!(const0.value, 8);
+        assert_eq!(data0.value, 16);
+        assert_eq!(bss0.value, 32);
     }
 
     #[test]
@@ -616,7 +684,7 @@ mod tests {
             ".global _main\n.text\n_main:\nadrp x0, second@PAGE\nadd x0, x0, second@PAGEOFF\nret\n.data\nfirst: .byte 1\nsecond: .byte 2\n"
         ).unwrap();
 
-        let reloc_syms: Vec<_> = obj.text_relocs.iter()
+        let reloc_syms: Vec<_> = text_relocs(&obj).iter()
             .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
             .collect();
         assert_eq!(reloc_syms, vec!["second", "second"]);
@@ -632,7 +700,7 @@ mod tests {
         assert!(foo.undefined);
         assert!(foo.global);
 
-        let reloc_syms: Vec<_> = obj.text_relocs.iter()
+        let reloc_syms: Vec<_> = text_relocs(&obj).iter()
             .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
             .collect();
         assert_eq!(reloc_syms, vec!["_foo", "_foo"]);
@@ -641,19 +709,19 @@ mod tests {
     #[test]
     fn assemble_forward_branch_label() {
         let obj = assemble_source(".text\nstart:\nb done\nnop\ndone:\nret\n").unwrap();
-        assert_eq!(&obj.text[0..4], &Inst::B { offset: 8 }.encode().to_le_bytes());
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::B { offset: 8 }.encode().to_le_bytes());
     }
 
     #[test]
     fn assemble_local_cbz_label() {
         let obj = assemble_source(".text\nstart:\ncbz x0, done\nret\ndone:\nret\n").unwrap();
-        assert_eq!(&obj.text[0..4], &Inst::Cbz { rt: X0, offset: 8, sf: true }.encode().to_le_bytes());
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::Cbz { rt: X0, offset: 8, sf: true }.encode().to_le_bytes());
     }
 
     #[test]
     fn assemble_external_bl_creates_branch_relocation() {
         let obj = assemble_source(".text\nbl _puts\nret\n").unwrap();
-        let reloc_name = &obj.symbols[obj.text_relocs[0].symbol_idx as usize].name;
+        let reloc_name = &obj.symbols[text_relocs(&obj)[0].symbol_idx as usize].name;
         assert_eq!(reloc_name, "_puts");
         assert!(obj.symbols.iter().any(|sym| sym.name == "_puts" && sym.undefined));
     }
