@@ -481,6 +481,14 @@ fn rt_ldaddal() {
     roundtrip(".text\nldaddal w0, w8, [x8]\n");
 }
 #[test]
+fn rt_ldsmaxal() {
+    roundtrip(".text\nldsmaxal w0, w1, [x2]\n");
+}
+#[test]
+fn rt_ldsminal() {
+    roundtrip(".text\nldsminal x9, x10, [x11]\n");
+}
+#[test]
 fn rt_ldclral() {
     roundtrip(".text\nldclral w12, w13, [x14]\n");
 }

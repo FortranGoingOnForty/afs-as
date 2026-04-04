@@ -1073,6 +1073,28 @@ fn sys_ldaddal() {
     );
 }
 #[test]
+fn sys_ldsmaxal() {
+    verify(
+        "ldsmaxal w0, w1, [x2]",
+        Inst::Ldsmaxal32 {
+            rs: W0,
+            rt: W1,
+            rn: X2,
+        },
+    );
+}
+#[test]
+fn sys_ldsminal() {
+    verify(
+        "ldsminal x9, x10, [x11]",
+        Inst::Ldsminal64 {
+            rs: X9,
+            rt: X10,
+            rn: X11,
+        },
+    );
+}
+#[test]
 fn sys_ldclral() {
     verify(
         "ldclral w12, w13, [x14]",

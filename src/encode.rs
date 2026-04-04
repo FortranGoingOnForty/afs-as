@@ -767,6 +767,14 @@ pub enum Inst {
     Ldaddal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDADDAL Xs, Xt, [Xn]
     Ldaddal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSMAXAL Ws, Wt, [Xn]
+    Ldsmaxal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSMAXAL Xs, Xt, [Xn]
+    Ldsmaxal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSMINAL Ws, Wt, [Xn]
+    Ldsminal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSMINAL Xs, Xt, [Xn]
+    Ldsminal64 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDCLRAL Ws, Wt, [Xn]
     Ldclral32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDCLRAL Xs, Xt, [Xn]
@@ -1695,6 +1703,18 @@ impl Inst {
             }
             Inst::Ldaddal64 { rs, rt, rn } => {
                 0xF8E00000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsmaxal32 { rs, rt, rn } => {
+                0xB8E04000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsmaxal64 { rs, rt, rn } => {
+                0xF8E04000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsminal32 { rs, rt, rn } => {
+                0xB8E05000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsminal64 { rs, rt, rn } => {
+                0xF8E05000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldclral32 { rs, rt, rn } => {
                 0xB8E01000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
@@ -3584,6 +3604,30 @@ mod tests {
             }
             .encode(),
             0xF8E00108
+        );
+    }
+    #[test]
+    fn ldsmaxal_w0_w1_x2() {
+        assert_eq!(
+            Inst::Ldsmaxal32 {
+                rs: W0,
+                rt: W1,
+                rn: X2
+            }
+            .encode(),
+            0xB8E04041
+        );
+    }
+    #[test]
+    fn ldsminal_x9_x10_x11() {
+        assert_eq!(
+            Inst::Ldsminal64 {
+                rs: X9,
+                rt: X10,
+                rn: X11
+            }
+            .encode(),
+            0xF8E9516A
         );
     }
     #[test]

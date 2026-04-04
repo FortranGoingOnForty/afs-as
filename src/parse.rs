@@ -1035,6 +1035,12 @@ impl<'a> Parser<'a> {
         if mnemonic == "ldaddal" {
             return self.parse_ldaddal();
         }
+        if mnemonic == "ldsmaxal" {
+            return self.parse_ldsmaxal();
+        }
+        if mnemonic == "ldsminal" {
+            return self.parse_ldsminal();
+        }
         if mnemonic == "ldclral" {
             return self.parse_ldclral();
         }
@@ -1315,6 +1321,10 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Instruction(match (mnemonic, sf) {
             ("ldaddal", true) => Inst::Ldaddal64 { rs, rt, rn },
             ("ldaddal", false) => Inst::Ldaddal32 { rs, rt, rn },
+            ("ldsmaxal", true) => Inst::Ldsmaxal64 { rs, rt, rn },
+            ("ldsmaxal", false) => Inst::Ldsmaxal32 { rs, rt, rn },
+            ("ldsminal", true) => Inst::Ldsminal64 { rs, rt, rn },
+            ("ldsminal", false) => Inst::Ldsminal32 { rs, rt, rn },
             ("ldclral", true) => Inst::Ldclral64 { rs, rt, rn },
             ("ldclral", false) => Inst::Ldclral32 { rs, rt, rn },
             ("ldeoral", true) => Inst::Ldeoral64 { rs, rt, rn },
@@ -1331,6 +1341,14 @@ impl<'a> Parser<'a> {
 
     fn parse_ldaddal(&mut self) -> Result<Stmt, ParseError> {
         self.parse_atomic_rmw("ldaddal")
+    }
+
+    fn parse_ldsmaxal(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_atomic_rmw("ldsmaxal")
+    }
+
+    fn parse_ldsminal(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_atomic_rmw("ldsminal")
     }
 
     fn parse_ldclral(&mut self) -> Result<Stmt, ParseError> {
@@ -5295,6 +5313,30 @@ mod tests {
                 rs: W0,
                 rt: W8,
                 rn: X8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldsmaxal_w() {
+        assert_eq!(
+            parse_inst("ldsmaxal w0, w1, [x2]"),
+            Inst::Ldsmaxal32 {
+                rs: W0,
+                rt: W1,
+                rn: X2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldsminal_x() {
+        assert_eq!(
+            parse_inst("ldsminal x9, x10, [x11]"),
+            Inst::Ldsminal64 {
+                rs: X9,
+                rt: X10,
+                rn: X11
             }
         );
     }
