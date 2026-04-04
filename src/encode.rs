@@ -214,6 +214,8 @@ pub enum Inst {
         ra: GpReg,
         sf: bool,
     },
+    /// UMULL Xd, Wn, Wm
+    Umull { rd: GpReg, rn: GpReg, rm: GpReg },
     /// SDIV Xd, Xn, Xm
     Sdiv {
         rd: GpReg,
@@ -787,6 +789,24 @@ pub enum Inst {
     FcmpD { rn: FpReg, rm: FpReg },
     /// FCMP Sn, Sm
     FcmpS { rn: FpReg, rm: FpReg },
+    /// FMOV Dd, #imm
+    FmovImmD { rd: FpReg, imm8: u8 },
+    /// FMOV Sd, #imm
+    FmovImmS { rd: FpReg, imm8: u8 },
+    /// FCSEL Dd, Dn, Dm, cond
+    FcselD {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+        cond: Cond,
+    },
+    /// FCSEL Sd, Sn, Sm, cond
+    FcselS {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+        cond: Cond,
+    },
     /// FMADD Dd, Dn, Dm, Da  (Dd = Da + Dn*Dm)
     FmaddD {
         rd: FpReg,
@@ -965,6 +985,9 @@ impl Inst {
                     | (ra.enc() << 10)
                     | (rn.enc() << 5)
                     | rd.enc()
+            }
+            Inst::Umull { rd, rn, rm } => {
+                0x9BA0_0000 | (rm.enc() << 16) | (0b1_1111 << 10) | (rn.enc() << 5) | rd.enc()
             }
             // SDIV: sf|0|0|11010110|Rm|00001|1|Rn|Rd
             Inst::Sdiv { rd, rn, rm, sf } => {
@@ -1460,6 +1483,10 @@ impl Inst {
             Inst::FsqrtS { rd, rn } => fp_unary(0b00, 0b0000_11, *rn, *rd),
             Inst::FcmpD { rn, rm } => fp_cmp(0b01, *rn, *rm),
             Inst::FcmpS { rn, rm } => fp_cmp(0b00, *rn, *rm),
+            Inst::FmovImmD { rd, imm8 } => fp_imm(0b01, *imm8, *rd),
+            Inst::FmovImmS { rd, imm8 } => fp_imm(0b00, *imm8, *rd),
+            Inst::FcselD { rd, rn, rm, cond } => fp_csel(0b01, *rm, *cond, *rn, *rd),
+            Inst::FcselS { rd, rn, rm, cond } => fp_csel(0b00, *rm, *cond, *rn, *rd),
             Inst::FmaddD { rd, rn, rm, ra } => fp_madd(0b01, *rd, *rn, *rm, *ra),
             Inst::FmaddS { rd, rn, rm, ra } => fp_madd(0b00, *rd, *rn, *rm, *ra),
 
@@ -1712,6 +1739,21 @@ fn fp_cmp(ftype: u32, rn: FpReg, rm: FpReg) -> u32 {
         | (rn.enc() << 5)
 }
 
+fn fp_imm(ftype: u32, imm8: u8, rd: FpReg) -> u32 {
+    (0b000_11110 << 24) | (ftype << 22) | (1 << 21) | ((imm8 as u32) << 13) | (1 << 12) | rd.enc()
+}
+
+fn fp_csel(ftype: u32, rm: FpReg, cond: Cond, rn: FpReg, rd: FpReg) -> u32 {
+    (0b000_11110 << 24)
+        | (ftype << 22)
+        | (1 << 21)
+        | (rm.enc() << 16)
+        | (cond.enc() << 12)
+        | (0b11 << 10)
+        | (rn.enc() << 5)
+        | rd.enc()
+}
+
 /// FMADD Rd, Rn, Rm, Ra.
 /// Format: 0|00|11111|ftype(2)|0|Rm(5)|0|Ra(5)|Rn(5)|Rd(5)
 fn fp_madd(ftype: u32, rd: FpReg, rn: FpReg, rm: FpReg, ra: FpReg) -> u32 {
@@ -1915,6 +1957,18 @@ mod tests {
             }
             .encode(),
             0x1B002000
+        );
+    }
+    #[test]
+    fn umull_x9_w8_w9() {
+        assert_eq!(
+            Inst::Umull {
+                rd: X9,
+                rn: W8,
+                rm: W9
+            }
+            .encode(),
+            0x9BA97D09
         );
     }
     #[test]
@@ -3131,6 +3185,31 @@ mod tests {
         assert_eq!(Inst::FcmpD { rn: D0, rm: D1 }.encode(), 0x1E612000);
     }
     #[test]
+    fn fmov_d2_imm_3_5() {
+        assert_eq!(Inst::FmovImmD { rd: D2, imm8: 12 }.encode(), 0x1E619002);
+    }
+    #[test]
+    fn fmov_d1_imm_10() {
+        assert_eq!(Inst::FmovImmD { rd: D1, imm8: 36 }.encode(), 0x1E649001);
+    }
+    #[test]
+    fn fmov_d1_imm_neg_1() {
+        assert_eq!(Inst::FmovImmD { rd: D1, imm8: 240 }.encode(), 0x1E7E1001);
+    }
+    #[test]
+    fn fcsel_d0_d0_d1_mi() {
+        assert_eq!(
+            Inst::FcselD {
+                rd: D0,
+                rn: D0,
+                rm: D1,
+                cond: Cond::MI
+            }
+            .encode(),
+            0x1E614C00
+        );
+    }
+    #[test]
     fn fmadd_d0_d1_d2_d3() {
         assert_eq!(
             Inst::FmaddD {
@@ -3160,6 +3239,23 @@ mod tests {
     #[test]
     fn fcmp_s0_s1() {
         assert_eq!(Inst::FcmpS { rn: S0, rm: S1 }.encode(), 0x1E212000);
+    }
+    #[test]
+    fn fmov_s2_imm_3_5() {
+        assert_eq!(Inst::FmovImmS { rd: S2, imm8: 12 }.encode(), 0x1E219002);
+    }
+    #[test]
+    fn fcsel_s0_s0_s1_mi() {
+        assert_eq!(
+            Inst::FcselS {
+                rd: S0,
+                rn: S0,
+                rm: S1,
+                cond: Cond::MI
+            }
+            .encode(),
+            0x1E214C00
+        );
     }
     #[test]
     fn fmadd_s0_s1_s2_s3() {

@@ -24,6 +24,9 @@ pub enum Tok {
     /// Stored as i64 to handle negative immediates.
     Integer(i64),
 
+    /// Floating-point literal used by instructions like `fmov d0, #3.5`.
+    Float(String),
+
     /// String literal (in .ascii/.asciz directives): `"hello\n"`
     StringLit(String),
 
@@ -65,6 +68,7 @@ impl fmt::Display for Tok {
         match self {
             Tok::Ident(s) => write!(f, "{}", s),
             Tok::Integer(n) => write!(f, "{}", n),
+            Tok::Float(s) => write!(f, "{}", s),
             Tok::StringLit(s) => write!(f, "\"{}\"", s),
             Tok::Hash => write!(f, "#"),
             Tok::Comma => write!(f, ","),
@@ -95,7 +99,12 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0, line: 1, col: 1 }
+        Self {
+            src: src.as_bytes(),
+            pos: 0,
+            line: 1,
+            col: 1,
+        }
     }
 
     /// Tokenize the entire input into a Vec of tokens.
@@ -106,17 +115,27 @@ impl<'a> Lexer<'a> {
             let tok = lexer.next_token()?;
             let is_eof = tok.kind == Tok::Eof;
             tokens.push(tok);
-            if is_eof { break; }
+            if is_eof {
+                break;
+            }
         }
         Ok(tokens)
     }
 
     fn peek(&self) -> u8 {
-        if self.pos < self.src.len() { self.src[self.pos] } else { 0 }
+        if self.pos < self.src.len() {
+            self.src[self.pos]
+        } else {
+            0
+        }
     }
 
     fn peek2(&self) -> u8 {
-        if self.pos + 1 < self.src.len() { self.src[self.pos + 1] } else { 0 }
+        if self.pos + 1 < self.src.len() {
+            self.src[self.pos + 1]
+        } else {
+            0
+        }
     }
 
     fn advance(&mut self) -> u8 {
@@ -134,7 +153,9 @@ impl<'a> Lexer<'a> {
     fn skip_whitespace(&mut self) {
         while self.pos < self.src.len() {
             match self.peek() {
-                b' ' | b'\t' | b'\r' => { self.advance(); }
+                b' ' | b'\t' | b'\r' => {
+                    self.advance();
+                }
                 _ => break,
             }
         }
@@ -205,18 +226,54 @@ impl<'a> Lexer<'a> {
 
         // Single-character tokens.
         match ch {
-            b'\n' => { self.advance(); return Ok(self.make_tok(Tok::Newline, line, col)); }
-            b',' => { self.advance(); return Ok(self.make_tok(Tok::Comma, line, col)); }
-            b'+' => { self.advance(); return Ok(self.make_tok(Tok::Plus, line, col)); }
-            b'-' => { self.advance(); return Ok(self.make_tok(Tok::Minus, line, col)); }
-            b':' => { self.advance(); return Ok(self.make_tok(Tok::Colon, line, col)); }
-            b'(' => { self.advance(); return Ok(self.make_tok(Tok::LParen, line, col)); }
-            b')' => { self.advance(); return Ok(self.make_tok(Tok::RParen, line, col)); }
-            b'[' => { self.advance(); return Ok(self.make_tok(Tok::LBracket, line, col)); }
-            b']' => { self.advance(); return Ok(self.make_tok(Tok::RBracket, line, col)); }
-            b'!' => { self.advance(); return Ok(self.make_tok(Tok::Bang, line, col)); }
-            b'@' => { self.advance(); return Ok(self.make_tok(Tok::At, line, col)); }
-            b'=' => { self.advance(); return Ok(self.make_tok(Tok::Equals, line, col)); }
+            b'\n' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::Newline, line, col));
+            }
+            b',' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::Comma, line, col));
+            }
+            b'+' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::Plus, line, col));
+            }
+            b'-' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::Minus, line, col));
+            }
+            b':' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::Colon, line, col));
+            }
+            b'(' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::LParen, line, col));
+            }
+            b')' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::RParen, line, col));
+            }
+            b'[' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::LBracket, line, col));
+            }
+            b']' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::RBracket, line, col));
+            }
+            b'!' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::Bang, line, col));
+            }
+            b'@' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::At, line, col));
+            }
+            b'=' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::Equals, line, col));
+            }
             _ => {}
         }
 
@@ -226,8 +283,8 @@ impl<'a> Lexer<'a> {
             self.skip_whitespace();
             // Parse the immediate value inline.
             if self.pos < self.src.len() && (self.peek().is_ascii_digit() || self.peek() == b'-') {
-                let val = self.read_integer()?;
-                return Ok(self.make_tok(Tok::Integer(val), line, col));
+                let kind = self.read_number_literal()?;
+                return Ok(self.make_tok(kind, line, col));
             }
             // Bare # (shouldn't happen in valid assembly, but return it)
             return Ok(self.make_tok(Tok::Hash, line, col));
@@ -252,8 +309,8 @@ impl<'a> Lexer<'a> {
 
         // Number (standalone — can appear in directives like `.word 42`).
         if ch.is_ascii_digit() {
-            let val = self.read_integer()?;
-            return Ok(self.make_tok(Tok::Integer(val), line, col));
+            let kind = self.read_number_literal()?;
+            return Ok(self.make_tok(kind, line, col));
         }
 
         // Identifier (mnemonic, register, label, etc.).
@@ -269,10 +326,16 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn read_integer(&mut self) -> Result<i64, LexError> {
+    fn read_number_literal(&mut self) -> Result<Tok, LexError> {
         let line = self.line;
         let col = self.col;
-        let negative = if self.peek() == b'-' { self.advance(); true } else { false };
+        let start = self.pos;
+        let negative = if self.peek() == b'-' {
+            self.advance();
+            true
+        } else {
+            false
+        };
 
         if self.peek() == b'0' && (self.peek2() == b'x' || self.peek2() == b'X') {
             // Hex.
@@ -283,22 +346,44 @@ impl<'a> Lexer<'a> {
                 self.advance();
             }
             if self.pos == start {
-                return Err(LexError { line, col, msg: "expected hex digits after 0x".into() });
+                return Err(LexError {
+                    line,
+                    col,
+                    msg: "expected hex digits after 0x".into(),
+                });
             }
             let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap();
-            let val = u64::from_str_radix(s, 16)
-                .map_err(|e| LexError { line, col, msg: format!("invalid hex: {}", e) })?;
-            to_i64(val, negative, line, col)
+            let val = u64::from_str_radix(s, 16).map_err(|e| LexError {
+                line,
+                col,
+                msg: format!("invalid hex: {}", e),
+            })?;
+            Ok(Tok::Integer(to_i64(val, negative, line, col)?))
         } else {
             // Decimal.
-            let start = self.pos;
+            let digits_start = self.pos;
             while self.pos < self.src.len() && self.peek().is_ascii_digit() {
                 self.advance();
             }
-            let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap();
-            let val: u64 = s.parse()
-                .map_err(|e| LexError { line, col, msg: format!("invalid integer: {}", e) })?;
-            to_i64(val, negative, line, col)
+            if self.pos < self.src.len()
+                && self.peek() == b'.'
+                && self.peek2().is_ascii_digit()
+            {
+                self.advance();
+                while self.pos < self.src.len() && self.peek().is_ascii_digit() {
+                    self.advance();
+                }
+                let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap();
+                return Ok(Tok::Float(s.into()));
+            }
+
+            let s = std::str::from_utf8(&self.src[digits_start..self.pos]).unwrap();
+            let val: u64 = s.parse().map_err(|e| LexError {
+                line,
+                col,
+                msg: format!("invalid integer: {}", e),
+            })?;
+            Ok(Tok::Integer(to_i64(val, negative, line, col)?))
         }
     }
 
@@ -317,7 +402,11 @@ impl<'a> Lexer<'a> {
         let mut buf = Vec::new();
         loop {
             if self.pos >= self.src.len() || self.peek() == b'\n' {
-                return Err(LexError { line, col, msg: "unterminated string literal".into() });
+                return Err(LexError {
+                    line,
+                    col,
+                    msg: "unterminated string literal".into(),
+                });
             }
             let ch = self.advance();
             if ch == b'"' {
@@ -358,7 +447,11 @@ fn to_i64(val: u64, negative: bool, line: u32, col: u32) -> Result<i64, LexError
     if negative {
         let min_mag = (i64::MAX as u64) + 1; // 2^63
         if val > min_mag {
-            return Err(LexError { line, col, msg: format!("integer -{} overflows i64", val) });
+            return Err(LexError {
+                line,
+                col,
+                msg: format!("integer -{} overflows i64", val),
+            });
         }
         if val == min_mag {
             return Ok(i64::MIN); // special case: -(2^63) can't be computed via negation
@@ -366,7 +459,11 @@ fn to_i64(val: u64, negative: bool, line: u32, col: u32) -> Result<i64, LexError
         Ok(-(val as i64))
     } else {
         if val > i64::MAX as u64 {
-            return Err(LexError { line, col, msg: format!("integer {} overflows i64", val) });
+            return Err(LexError {
+                line,
+                col,
+                msg: format!("integer {} overflows i64", val),
+            });
         }
         Ok(val as i64)
     }
@@ -393,7 +490,11 @@ mod tests {
     use super::*;
 
     fn toks(src: &str) -> Vec<Tok> {
-        Lexer::tokenize(src).unwrap().into_iter().map(|t| t.kind).collect()
+        Lexer::tokenize(src)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect()
     }
 
     fn tok_kinds(src: &str) -> Vec<Tok> {
@@ -419,15 +520,18 @@ mod tests {
 
     #[test]
     fn registers() {
-        assert_eq!(tok_kinds("x0 x30 sp xzr w15 d0 s31"), vec![
-            Tok::Ident("x0".into()),
-            Tok::Ident("x30".into()),
-            Tok::Ident("sp".into()),
-            Tok::Ident("xzr".into()),
-            Tok::Ident("w15".into()),
-            Tok::Ident("d0".into()),
-            Tok::Ident("s31".into()),
-        ]);
+        assert_eq!(
+            tok_kinds("x0 x30 sp xzr w15 d0 s31"),
+            vec![
+                Tok::Ident("x0".into()),
+                Tok::Ident("x30".into()),
+                Tok::Ident("sp".into()),
+                Tok::Ident("xzr".into()),
+                Tok::Ident("w15".into()),
+                Tok::Ident("d0".into()),
+                Tok::Ident("s31".into()),
+            ]
+        );
     }
 
     #[test]
@@ -450,88 +554,120 @@ mod tests {
         assert_eq!(tok_kinds("#0xBEEF"), vec![Tok::Integer(0xBEEF)]);
     }
 
+    #[test]
+    fn immediate_float() {
+        assert_eq!(tok_kinds("#3.50000000"), vec![Tok::Float("3.50000000".into())]);
+    }
+
     // ---- Punctuation ----
 
     #[test]
     fn comma() {
-        assert_eq!(tok_kinds("x0, x1, x2"), vec![
-            Tok::Ident("x0".into()), Tok::Comma,
-            Tok::Ident("x1".into()), Tok::Comma,
-            Tok::Ident("x2".into()),
-        ]);
+        assert_eq!(
+            tok_kinds("x0, x1, x2"),
+            vec![
+                Tok::Ident("x0".into()),
+                Tok::Comma,
+                Tok::Ident("x1".into()),
+                Tok::Comma,
+                Tok::Ident("x2".into()),
+            ]
+        );
     }
 
     #[test]
     fn expression_tokens() {
-        assert_eq!(tok_kinds("1 + foo - (2)"), vec![
-            Tok::Integer(1),
-            Tok::Plus,
-            Tok::Ident("foo".into()),
-            Tok::Minus,
-            Tok::LParen,
-            Tok::Integer(2),
-            Tok::RParen,
-        ]);
+        assert_eq!(
+            tok_kinds("1 + foo - (2)"),
+            vec![
+                Tok::Integer(1),
+                Tok::Plus,
+                Tok::Ident("foo".into()),
+                Tok::Minus,
+                Tok::LParen,
+                Tok::Integer(2),
+                Tok::RParen,
+            ]
+        );
     }
 
     #[test]
     fn brackets() {
-        assert_eq!(tok_kinds("[x0]"), vec![
-            Tok::LBracket, Tok::Ident("x0".into()), Tok::RBracket,
-        ]);
+        assert_eq!(
+            tok_kinds("[x0]"),
+            vec![Tok::LBracket, Tok::Ident("x0".into()), Tok::RBracket,]
+        );
     }
 
     #[test]
     fn brackets_with_offset() {
-        assert_eq!(tok_kinds("[x1, #16]"), vec![
-            Tok::LBracket, Tok::Ident("x1".into()), Tok::Comma,
-            Tok::Integer(16), Tok::RBracket,
-        ]);
+        assert_eq!(
+            tok_kinds("[x1, #16]"),
+            vec![
+                Tok::LBracket,
+                Tok::Ident("x1".into()),
+                Tok::Comma,
+                Tok::Integer(16),
+                Tok::RBracket,
+            ]
+        );
     }
 
     #[test]
     fn pre_index() {
-        assert_eq!(tok_kinds("[x1, #-16]!"), vec![
-            Tok::LBracket, Tok::Ident("x1".into()), Tok::Comma,
-            Tok::Integer(-16), Tok::RBracket, Tok::Bang,
-        ]);
+        assert_eq!(
+            tok_kinds("[x1, #-16]!"),
+            vec![
+                Tok::LBracket,
+                Tok::Ident("x1".into()),
+                Tok::Comma,
+                Tok::Integer(-16),
+                Tok::RBracket,
+                Tok::Bang,
+            ]
+        );
     }
 
     #[test]
     fn label() {
-        assert_eq!(tok_kinds("_main:"), vec![
-            Tok::Ident("_main".into()), Tok::Colon,
-        ]);
+        assert_eq!(
+            tok_kinds("_main:"),
+            vec![Tok::Ident("_main".into()), Tok::Colon,]
+        );
     }
 
     #[test]
     fn local_label() {
-        assert_eq!(tok_kinds(".Lloop:"), vec![
-            Tok::Ident(".Lloop".into()), Tok::Colon,
-        ]);
+        assert_eq!(
+            tok_kinds(".Lloop:"),
+            vec![Tok::Ident(".Lloop".into()), Tok::Colon,]
+        );
     }
 
     #[test]
     fn embedded_dot_symbol_label() {
-        assert_eq!(tok_kinds("l_.str:"), vec![
-            Tok::Ident("l_.str".into()), Tok::Colon,
-        ]);
+        assert_eq!(
+            tok_kinds("l_.str:"),
+            vec![Tok::Ident("l_.str".into()), Tok::Colon,]
+        );
     }
 
     // ---- Directives ----
 
     #[test]
     fn directive_global() {
-        assert_eq!(tok_kinds(".global _main"), vec![
-            Tok::Ident(".global".into()), Tok::Ident("_main".into()),
-        ]);
+        assert_eq!(
+            tok_kinds(".global _main"),
+            vec![Tok::Ident(".global".into()), Tok::Ident("_main".into()),]
+        );
     }
 
     #[test]
     fn directive_globl() {
-        assert_eq!(tok_kinds(".globl _main"), vec![
-            Tok::Ident(".globl".into()), Tok::Ident("_main".into()),
-        ]);
+        assert_eq!(
+            tok_kinds(".globl _main"),
+            vec![Tok::Ident(".globl".into()), Tok::Ident("_main".into()),]
+        );
     }
 
     #[test]
@@ -541,152 +677,219 @@ mod tests {
 
     #[test]
     fn directive_data_content() {
-        assert_eq!(tok_kinds(".asciz \"Hello, World!\\n\""), vec![
-            Tok::Ident(".asciz".into()),
-            Tok::StringLit("Hello, World!\n".into()),
-        ]);
+        assert_eq!(
+            tok_kinds(".asciz \"Hello, World!\\n\""),
+            vec![
+                Tok::Ident(".asciz".into()),
+                Tok::StringLit("Hello, World!\n".into()),
+            ]
+        );
     }
 
     #[test]
     fn directive_byte() {
-        assert_eq!(tok_kinds(".byte 0x41, 0x42"), vec![
-            Tok::Ident(".byte".into()),
-            Tok::Integer(0x41), Tok::Comma, Tok::Integer(0x42),
-        ]);
+        assert_eq!(
+            tok_kinds(".byte 0x41, 0x42"),
+            vec![
+                Tok::Ident(".byte".into()),
+                Tok::Integer(0x41),
+                Tok::Comma,
+                Tok::Integer(0x42),
+            ]
+        );
     }
 
     #[test]
     fn directive_negative_number_uses_minus_token() {
-        assert_eq!(tok_kinds(".word -1"), vec![
-            Tok::Ident(".word".into()),
-            Tok::Minus,
-            Tok::Integer(1),
-        ]);
+        assert_eq!(
+            tok_kinds(".word -1"),
+            vec![Tok::Ident(".word".into()), Tok::Minus, Tok::Integer(1),]
+        );
     }
 
     #[test]
     fn directive_p2align() {
-        assert_eq!(tok_kinds(".p2align 4"), vec![
-            Tok::Ident(".p2align".into()), Tok::Integer(4),
-        ]);
+        assert_eq!(
+            tok_kinds(".p2align 4"),
+            vec![Tok::Ident(".p2align".into()), Tok::Integer(4),]
+        );
     }
 
     // ---- Comments ----
 
     #[test]
     fn line_comment() {
-        assert_eq!(tok_kinds("add x0, x1, x2 // this is a comment\n"), vec![
-            Tok::Ident("add".into()),
-            Tok::Ident("x0".into()), Tok::Comma,
-            Tok::Ident("x1".into()), Tok::Comma,
-            Tok::Ident("x2".into()),
-            Tok::Newline,
-        ]);
+        assert_eq!(
+            tok_kinds("add x0, x1, x2 // this is a comment\n"),
+            vec![
+                Tok::Ident("add".into()),
+                Tok::Ident("x0".into()),
+                Tok::Comma,
+                Tok::Ident("x1".into()),
+                Tok::Comma,
+                Tok::Ident("x2".into()),
+                Tok::Newline,
+            ]
+        );
     }
 
     #[test]
     fn block_comment() {
-        assert_eq!(tok_kinds("add /* comment */ x0, x1, x2"), vec![
-            Tok::Ident("add".into()),
-            Tok::Ident("x0".into()), Tok::Comma,
-            Tok::Ident("x1".into()), Tok::Comma,
-            Tok::Ident("x2".into()),
-        ]);
+        assert_eq!(
+            tok_kinds("add /* comment */ x0, x1, x2"),
+            vec![
+                Tok::Ident("add".into()),
+                Tok::Ident("x0".into()),
+                Tok::Comma,
+                Tok::Ident("x1".into()),
+                Tok::Comma,
+                Tok::Ident("x2".into()),
+            ]
+        );
     }
 
     #[test]
     fn semicolon_comment() {
-        assert_eq!(tok_kinds("nop ; comment\n"), vec![
-            Tok::Ident("nop".into()),
-            Tok::Newline,
-        ]);
+        assert_eq!(
+            tok_kinds("nop ; comment\n"),
+            vec![Tok::Ident("nop".into()), Tok::Newline,]
+        );
     }
 
     // ---- Relocation modifiers ----
 
     #[test]
     fn relocation_page() {
-        assert_eq!(tok_kinds("msg@PAGE"), vec![
-            Tok::Ident("msg".into()), Tok::At, Tok::Ident("PAGE".into()),
-        ]);
+        assert_eq!(
+            tok_kinds("msg@PAGE"),
+            vec![Tok::Ident("msg".into()), Tok::At, Tok::Ident("PAGE".into()),]
+        );
     }
 
     #[test]
     fn relocation_pageoff() {
-        assert_eq!(tok_kinds("msg@PAGEOFF"), vec![
-            Tok::Ident("msg".into()), Tok::At, Tok::Ident("PAGEOFF".into()),
-        ]);
+        assert_eq!(
+            tok_kinds("msg@PAGEOFF"),
+            vec![
+                Tok::Ident("msg".into()),
+                Tok::At,
+                Tok::Ident("PAGEOFF".into()),
+            ]
+        );
     }
 
     // ---- Full instruction lines ----
 
     #[test]
     fn full_add_instruction() {
-        assert_eq!(tok_kinds("add x0, x1, x2\n"), vec![
-            Tok::Ident("add".into()),
-            Tok::Ident("x0".into()), Tok::Comma,
-            Tok::Ident("x1".into()), Tok::Comma,
-            Tok::Ident("x2".into()),
-            Tok::Newline,
-        ]);
+        assert_eq!(
+            tok_kinds("add x0, x1, x2\n"),
+            vec![
+                Tok::Ident("add".into()),
+                Tok::Ident("x0".into()),
+                Tok::Comma,
+                Tok::Ident("x1".into()),
+                Tok::Comma,
+                Tok::Ident("x2".into()),
+                Tok::Newline,
+            ]
+        );
     }
 
     #[test]
     fn full_ldr_with_offset() {
-        assert_eq!(tok_kinds("ldr x0, [x1, #8]\n"), vec![
-            Tok::Ident("ldr".into()),
-            Tok::Ident("x0".into()), Tok::Comma,
-            Tok::LBracket, Tok::Ident("x1".into()), Tok::Comma,
-            Tok::Integer(8), Tok::RBracket,
-            Tok::Newline,
-        ]);
+        assert_eq!(
+            tok_kinds("ldr x0, [x1, #8]\n"),
+            vec![
+                Tok::Ident("ldr".into()),
+                Tok::Ident("x0".into()),
+                Tok::Comma,
+                Tok::LBracket,
+                Tok::Ident("x1".into()),
+                Tok::Comma,
+                Tok::Integer(8),
+                Tok::RBracket,
+                Tok::Newline,
+            ]
+        );
     }
 
     #[test]
     fn full_stp_pre_index() {
-        assert_eq!(tok_kinds("stp x29, x30, [sp, #-16]!\n"), vec![
-            Tok::Ident("stp".into()),
-            Tok::Ident("x29".into()), Tok::Comma,
-            Tok::Ident("x30".into()), Tok::Comma,
-            Tok::LBracket, Tok::Ident("sp".into()), Tok::Comma,
-            Tok::Integer(-16), Tok::RBracket, Tok::Bang,
-            Tok::Newline,
-        ]);
+        assert_eq!(
+            tok_kinds("stp x29, x30, [sp, #-16]!\n"),
+            vec![
+                Tok::Ident("stp".into()),
+                Tok::Ident("x29".into()),
+                Tok::Comma,
+                Tok::Ident("x30".into()),
+                Tok::Comma,
+                Tok::LBracket,
+                Tok::Ident("sp".into()),
+                Tok::Comma,
+                Tok::Integer(-16),
+                Tok::RBracket,
+                Tok::Bang,
+                Tok::Newline,
+            ]
+        );
     }
 
     #[test]
     fn full_movz_with_shift() {
-        assert_eq!(tok_kinds("movz x0, #0x1234, lsl #16\n"), vec![
-            Tok::Ident("movz".into()),
-            Tok::Ident("x0".into()), Tok::Comma,
-            Tok::Integer(0x1234), Tok::Comma,
-            Tok::Ident("lsl".into()),
-            Tok::Integer(16),
-            Tok::Newline,
-        ]);
+        assert_eq!(
+            tok_kinds("movz x0, #0x1234, lsl #16\n"),
+            vec![
+                Tok::Ident("movz".into()),
+                Tok::Ident("x0".into()),
+                Tok::Comma,
+                Tok::Integer(0x1234),
+                Tok::Comma,
+                Tok::Ident("lsl".into()),
+                Tok::Integer(16),
+                Tok::Newline,
+            ]
+        );
     }
 
     #[test]
     fn full_adrp_with_relocation() {
-        assert_eq!(tok_kinds("adrp x1, msg@PAGE\n"), vec![
-            Tok::Ident("adrp".into()),
-            Tok::Ident("x1".into()), Tok::Comma,
-            Tok::Ident("msg".into()), Tok::At, Tok::Ident("PAGE".into()),
-            Tok::Newline,
-        ]);
+        assert_eq!(
+            tok_kinds("adrp x1, msg@PAGE\n"),
+            vec![
+                Tok::Ident("adrp".into()),
+                Tok::Ident("x1".into()),
+                Tok::Comma,
+                Tok::Ident("msg".into()),
+                Tok::At,
+                Tok::Ident("PAGE".into()),
+                Tok::Newline,
+            ]
+        );
     }
 
     #[test]
     fn labeled_instruction() {
-        assert_eq!(tok_kinds("_main:\n    stp x29, x30, [sp, #-16]!\n"), vec![
-            Tok::Ident("_main".into()), Tok::Colon, Tok::Newline,
-            Tok::Ident("stp".into()),
-            Tok::Ident("x29".into()), Tok::Comma,
-            Tok::Ident("x30".into()), Tok::Comma,
-            Tok::LBracket, Tok::Ident("sp".into()), Tok::Comma,
-            Tok::Integer(-16), Tok::RBracket, Tok::Bang,
-            Tok::Newline,
-        ]);
+        assert_eq!(
+            tok_kinds("_main:\n    stp x29, x30, [sp, #-16]!\n"),
+            vec![
+                Tok::Ident("_main".into()),
+                Tok::Colon,
+                Tok::Newline,
+                Tok::Ident("stp".into()),
+                Tok::Ident("x29".into()),
+                Tok::Comma,
+                Tok::Ident("x30".into()),
+                Tok::Comma,
+                Tok::LBracket,
+                Tok::Ident("sp".into()),
+                Tok::Comma,
+                Tok::Integer(-16),
+                Tok::RBracket,
+                Tok::Bang,
+                Tok::Newline,
+            ]
+        );
     }
 
     // ---- Multi-line program ----
@@ -707,10 +910,15 @@ _main:
 ";
         let tokens = Lexer::tokenize(src).unwrap();
         // Should parse without errors; just verify count is reasonable.
-        let non_trivial: Vec<_> = tokens.iter()
+        let non_trivial: Vec<_> = tokens
+            .iter()
             .filter(|t| !matches!(t.kind, Tok::Newline | Tok::Eof))
             .collect();
-        assert!(non_trivial.len() > 30, "expected 30+ tokens, got {}", non_trivial.len());
+        assert!(
+            non_trivial.len() > 30,
+            "expected 30+ tokens, got {}",
+            non_trivial.len()
+        );
         // First token should be .global
         assert_eq!(tokens[0].kind, Tok::Ident(".global".into()));
     }
@@ -760,7 +968,10 @@ _main:
         // -9223372036854775808 = i64::MIN, should be accepted
         let result = Lexer::tokenize("#-9223372036854775808");
         assert!(result.is_ok());
-        assert_eq!(tok_kinds("#-9223372036854775808"), vec![Tok::Integer(i64::MIN)]);
+        assert_eq!(
+            tok_kinds("#-9223372036854775808"),
+            vec![Tok::Integer(i64::MIN)]
+        );
     }
 
     // ---- Source locations ----
@@ -772,7 +983,10 @@ _main:
         assert_eq!(tokens[0].line, 1);
         assert_eq!(tokens[0].col, 1);
         // "sub" is at line 2, col 3
-        let sub_tok = tokens.iter().find(|t| t.kind == Tok::Ident("sub".into())).unwrap();
+        let sub_tok = tokens
+            .iter()
+            .find(|t| t.kind == Tok::Ident("sub".into()))
+            .unwrap();
         assert_eq!(sub_tok.line, 2);
         assert_eq!(sub_tok.col, 3);
     }
@@ -782,10 +996,16 @@ _main:
     #[test]
     fn post_index_tokens() {
         // ldp x29, x30, [sp], #16
-        assert_eq!(tok_kinds("[sp], #16"), vec![
-            Tok::LBracket, Tok::Ident("sp".into()), Tok::RBracket,
-            Tok::Comma, Tok::Integer(16),
-        ]);
+        assert_eq!(
+            tok_kinds("[sp], #16"),
+            vec![
+                Tok::LBracket,
+                Tok::Ident("sp".into()),
+                Tok::RBracket,
+                Tok::Comma,
+                Tok::Integer(16),
+            ]
+        );
     }
 
     // ---- Conditional branch ----
@@ -793,9 +1013,6 @@ _main:
     #[test]
     fn b_dot_eq() {
         let kinds = tok_kinds("b.eq #8");
-        assert_eq!(kinds, vec![
-            Tok::Ident("b.eq".into()),
-            Tok::Integer(8),
-        ]);
+        assert_eq!(kinds, vec![Tok::Ident("b.eq".into()), Tok::Integer(8),]);
     }
 }

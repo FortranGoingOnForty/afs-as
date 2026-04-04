@@ -988,6 +988,7 @@ impl<'a> Parser<'a> {
             "cmp" => self.parse_cmp(),
             "cmn" => self.parse_cmn(),
             "mul" => self.parse_3reg("mul"),
+            "umull" => self.parse_umull(),
             "madd" => self.parse_madd(),
             "sdiv" => self.parse_3reg("sdiv"),
             "udiv" => self.parse_3reg("udiv"),
@@ -1047,6 +1048,7 @@ impl<'a> Parser<'a> {
             "fabs" => self.parse_fp_unary("fabs"),
             "fsqrt" => self.parse_fp_unary("fsqrt"),
             "fcmp" => self.parse_fcmp(),
+            "fcsel" => self.parse_fcsel(),
             "fmadd" => self.parse_fmadd(),
 
             // FP conversion
@@ -1726,6 +1728,24 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (ra, _) = self.parse_gp_reg_with_size()?;
         Ok(Inst::Madd { rd, rn, rm, ra, sf })
+    }
+
+    fn parse_umull(&mut self) -> Result<Inst, ParseError> {
+        let (rd, rd_is_64bit) = self.parse_gp_reg_with_size()?;
+        if !rd_is_64bit {
+            return Err(self.err("umull destination must be an X register".into()));
+        }
+        self.expect(&Tok::Comma)?;
+        let (rn, rn_is_64bit) = self.parse_gp_reg_with_size()?;
+        if rn_is_64bit {
+            return Err(self.err("umull sources must be W registers".into()));
+        }
+        self.expect(&Tok::Comma)?;
+        let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+        if rm_is_64bit {
+            return Err(self.err("umull sources must be W registers".into()));
+        }
+        Ok(Inst::Umull { rd, rn, rm })
     }
 
     fn parse_logic(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -2836,6 +2856,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_fcsel(&mut self) -> Result<Inst, ParseError> {
+        let (rd, is_double) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let cond_name = self.expect_ident()?;
+        let cond = parse_condition(&cond_name)
+            .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
+        if is_double {
+            Ok(Inst::FcselD { rd, rn, rm, cond })
+        } else {
+            Ok(Inst::FcselS { rd, rn, rm, cond })
+        }
+    }
+
     fn parse_fmadd(&mut self) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
@@ -2871,17 +2908,65 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
 
         if lower.starts_with('d') || lower.starts_with('s') {
-            // FMOV Dd, Xn (GP → FP)
             let rd = parse_fp_reg_name(&lower)
                 .ok_or_else(|| self.err(format!("bad FP reg '{}'", name)))?;
-            let rn = self.parse_gp_reg()?;
-            Ok(Inst::FmovToD { rd, rn })
+            let is_double = lower.starts_with('d');
+            match self.peek() {
+                Tok::Integer(_) | Tok::Float(_) => {
+                    let imm8 = self.parse_fp_modified_immediate(is_double)?;
+                    if is_double {
+                        Ok(Inst::FmovImmD { rd, imm8 })
+                    } else {
+                        Ok(Inst::FmovImmS { rd, imm8 })
+                    }
+                }
+                _ => {
+                    // FMOV Dd, Xn (GP → FP)
+                    let rn = self.parse_gp_reg()?;
+                    Ok(Inst::FmovToD { rd, rn })
+                }
+            }
         } else {
             // FMOV Xd, Dn (FP → GP)
             let rd = parse_gp_reg_name(&lower)
                 .ok_or_else(|| self.err(format!("bad GP reg '{}'", name)))?;
             let (rn, _) = self.parse_fp_reg_with_size()?;
             Ok(Inst::FmovFromD { rd, rn })
+        }
+    }
+
+    fn parse_fp_modified_immediate(&mut self, is_double: bool) -> Result<u8, ParseError> {
+        let literal = match self.peek().clone() {
+            Tok::Integer(value) => {
+                self.advance();
+                value.to_string()
+            }
+            Tok::Float(value) => {
+                self.advance();
+                value
+            }
+            other => {
+                return Err(self.err(format!(
+                    "expected floating-point immediate, got {}",
+                    other
+                )))
+            }
+        };
+
+        if is_double {
+            encode_fp_modified_immediate64(&literal).ok_or_else(|| {
+                self.err(format!(
+                    "unsupported floating-point immediate '{}'",
+                    literal
+                ))
+            })
+        } else {
+            encode_fp_modified_immediate32(&literal).ok_or_else(|| {
+                self.err(format!(
+                    "unsupported floating-point immediate '{}'",
+                    literal
+                ))
+            })
         }
     }
 
@@ -3213,6 +3298,35 @@ fn invert_condition(cond: Cond) -> Cond {
         Cond::AL => Cond::NV,
         Cond::NV => Cond::AL,
     }
+}
+
+fn encode_fp_modified_immediate32(literal: &str) -> Option<u8> {
+    let value: f32 = literal.parse().ok()?;
+    let bits = value.to_bits();
+    (0u8..=u8::MAX).find(|imm8| expand_fp_modified_immediate(*imm8, false) as u32 == bits)
+}
+
+fn encode_fp_modified_immediate64(literal: &str) -> Option<u8> {
+    let value: f64 = literal.parse().ok()?;
+    let bits = value.to_bits();
+    (0u8..=u8::MAX).find(|imm8| expand_fp_modified_immediate(*imm8, true) == bits)
+}
+
+fn expand_fp_modified_immediate(imm8: u8, is_double: bool) -> u64 {
+    let exponent_bits = if is_double { 11 } else { 8 };
+    let fraction_bits = if is_double { 52 } else { 23 };
+    let sign = ((imm8 >> 7) & 1) as u64;
+    let bit6 = ((imm8 >> 6) & 1) as u64;
+    let low_exponent = ((imm8 >> 4) & 0b11) as u64;
+    let repeated_len = exponent_bits - 3;
+    let repeated = if bit6 == 0 {
+        0
+    } else {
+        ((1u64 << repeated_len) - 1) << 2
+    };
+    let exponent = (((bit6 ^ 1) & 1) << (exponent_bits - 1)) | repeated | low_exponent;
+    let fraction = ((imm8 & 0xF) as u64) << (fraction_bits - 4);
+    (sign << (exponent_bits + fraction_bits)) | (exponent << fraction_bits) | fraction
 }
 
 fn parse_index_shift(amount: u8, scale: u8) -> Result<bool, &'static str> {
@@ -3549,6 +3663,18 @@ mod tests {
                 rm: W0,
                 ra: W8,
                 sf: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_umull_() {
+        assert_eq!(
+            parse_inst("umull x9, w8, w9"),
+            Inst::Umull {
+                rd: X9,
+                rn: W8,
+                rm: W9
             }
         );
     }
@@ -4684,10 +4810,52 @@ mod tests {
     }
 
     #[test]
+    fn parse_fmov_imm_d() {
+        assert_eq!(
+            parse_inst("fmov d2, #3.50000000"),
+            Inst::FmovImmD { rd: D2, imm8: 12 }
+        );
+    }
+
+    #[test]
+    fn parse_fmov_imm_s() {
+        assert_eq!(
+            parse_inst("fmov s2, #3.50000000"),
+            Inst::FmovImmS { rd: S2, imm8: 12 }
+        );
+    }
+
+    #[test]
     fn parse_fmov_from_fp() {
         assert_eq!(
             parse_inst("fmov x0, d1"),
             Inst::FmovFromD { rd: X0, rn: D1 }
+        );
+    }
+
+    #[test]
+    fn parse_fcsel_d() {
+        assert_eq!(
+            parse_inst("fcsel d0, d0, d1, mi"),
+            Inst::FcselD {
+                rd: D0,
+                rn: D0,
+                rm: D1,
+                cond: Cond::MI
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fcsel_s() {
+        assert_eq!(
+            parse_inst("fcsel s0, s0, s1, mi"),
+            Inst::FcselS {
+                rd: S0,
+                rn: S0,
+                rm: S1,
+                cond: Cond::MI
+            }
         );
     }
 

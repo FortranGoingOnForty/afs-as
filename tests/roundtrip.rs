@@ -145,6 +145,10 @@ fn rt_madd() {
     roundtrip(".text\nmadd w0, w0, w0, w8\n");
 }
 #[test]
+fn rt_umull() {
+    roundtrip(".text\numull x9, w8, w9\n");
+}
+#[test]
 fn rt_sdiv() {
     roundtrip(".text\nsdiv x3, x4, x5\n");
 }
@@ -533,6 +537,14 @@ fn rt_fcmp_d() {
     roundtrip(".text\nfcmp d3, d4\n");
 }
 #[test]
+fn rt_fmov_imm_d() {
+    roundtrip(".text\nfmov d2, #3.50000000\n");
+}
+#[test]
+fn rt_fcsel_d() {
+    roundtrip(".text\nfcsel d0, d0, d1, mi\n");
+}
+#[test]
 fn rt_fmadd_d() {
     roundtrip(".text\nfmadd d0, d1, d2, d3\n");
 }
@@ -649,6 +661,14 @@ fn rt_fsqrt_s() {
 #[test]
 fn rt_fcmp_s() {
     roundtrip(".text\nfcmp s0, s1\n");
+}
+#[test]
+fn rt_fmov_imm_s() {
+    roundtrip(".text\nfmov s2, #3.50000000\n");
+}
+#[test]
+fn rt_fcsel_s() {
+    roundtrip(".text\nfcsel s0, s0, s1, mi\n");
 }
 #[test]
 fn rt_fmadd_s() {

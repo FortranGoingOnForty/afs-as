@@ -229,6 +229,17 @@ fn sys_madd() {
     );
 }
 #[test]
+fn sys_umull() {
+    verify(
+        "umull x9, w8, w9",
+        Inst::Umull {
+            rd: X9,
+            rn: W8,
+            rm: W9,
+        },
+    );
+}
+#[test]
 fn sys_sdiv() {
     verify(
         "sdiv x3, x4, x5",
@@ -1182,6 +1193,22 @@ fn sys_fcmp_d() {
     verify("fcmp d3, d4", Inst::FcmpD { rn: D3, rm: D4 });
 }
 #[test]
+fn sys_fmov_imm_d() {
+    verify("fmov d2, #3.50000000", Inst::FmovImmD { rd: D2, imm8: 12 });
+}
+#[test]
+fn sys_fcsel_d() {
+    verify(
+        "fcsel d0, d0, d1, mi",
+        Inst::FcselD {
+            rd: D0,
+            rn: D0,
+            rm: D1,
+            cond: Cond::MI,
+        },
+    );
+}
+#[test]
 fn sys_fmadd_d() {
     verify(
         "fmadd d0, d1, d2, d3",
@@ -1211,6 +1238,22 @@ fn sys_fmov_to() {
 #[test]
 fn sys_fmov_from() {
     verify("fmov x5, d6", Inst::FmovFromD { rd: X5, rn: D6 });
+}
+#[test]
+fn sys_fmov_imm_s() {
+    verify("fmov s2, #3.50000000", Inst::FmovImmS { rd: S2, imm8: 12 });
+}
+#[test]
+fn sys_fcsel_s() {
+    verify(
+        "fcsel s0, s0, s1, mi",
+        Inst::FcselS {
+            rd: S0,
+            rn: S0,
+            rm: S1,
+            cond: Cond::MI,
+        },
+    );
 }
 
 // ---- System ----
