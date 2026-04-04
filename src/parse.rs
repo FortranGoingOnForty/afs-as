@@ -47,6 +47,9 @@ pub enum Directive {
     Text,
     Data,
     Global(String),
+    PrivateExtern(String),
+    WeakReference(String),
+    WeakDefinition(String),
     Align(u32),
     P2Align(u32),
     Byte(Vec<u8>),
@@ -217,6 +220,18 @@ impl<'a> Parser<'a> {
             ".global" | ".globl" => {
                 let sym = self.expect_ident()?;
                 Directive::Global(sym)
+            }
+            ".private_extern" => {
+                let sym = self.expect_ident()?;
+                Directive::PrivateExtern(sym)
+            }
+            ".weak_reference" => {
+                let sym = self.expect_ident()?;
+                Directive::WeakReference(sym)
+            }
+            ".weak_definition" => {
+                let sym = self.expect_ident()?;
+                Directive::WeakDefinition(sym)
             }
             ".align" => {
                 let n = self.parse_const_expr("alignment expression")? as u32;
@@ -1424,6 +1439,24 @@ mod tests {
     fn parse_global_directive() {
         let stmts = parse_stmts(".global _main");
         assert_eq!(stmts, vec![Stmt::Directive(Directive::Global("_main".into()))]);
+    }
+
+    #[test]
+    fn parse_private_extern_directive() {
+        let stmts = parse_stmts(".private_extern _hidden");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::PrivateExtern("_hidden".into()))]);
+    }
+
+    #[test]
+    fn parse_weak_reference_directive() {
+        let stmts = parse_stmts(".weak_reference _puts");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::WeakReference("_puts".into()))]);
+    }
+
+    #[test]
+    fn parse_weak_definition_directive() {
+        let stmts = parse_stmts(".weak_definition _entry");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::WeakDefinition("_entry".into()))]);
     }
 
     #[test]

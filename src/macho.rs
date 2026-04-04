@@ -30,8 +30,11 @@ const PLATFORM_MACOS: u32 = 1;
 
 // nlist_64 type bits
 const N_UNDF: u8 = 0x00;
+const N_PEXT: u8 = 0x10;
 const N_SECT: u8 = 0x0E;
 const N_EXT: u8 = 0x01;
+const N_WEAK_REF: u16 = 0x0040;
+const N_WEAK_DEF: u16 = 0x0080;
 
 // Relocation types
 pub const ARM64_RELOC_UNSIGNED: u32 = 0;
@@ -57,6 +60,9 @@ pub struct Symbol {
     pub value: u64,     // offset within section
     pub global: bool,   // N_EXT flag
     pub undefined: bool, // true for external references
+    pub private_extern: bool,
+    pub weak_ref: bool,
+    pub weak_def: bool,
 }
 
 /// A relocation entry.
@@ -367,17 +373,24 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- Symbol table ----
     for (i, sym) in obj.symbols.iter().enumerate() {
         let str_offset = string_offset(&strtab, &sym.name);
-        let n_type = if sym.undefined {
-            N_UNDF | N_EXT
-        } else if sym.global {
-            N_SECT | N_EXT
-        } else {
-            N_SECT
-        };
+        let mut n_type = if sym.undefined { N_UNDF } else { N_SECT };
+        if sym.global {
+            n_type |= N_EXT;
+        }
+        if sym.private_extern {
+            n_type |= N_PEXT;
+        }
+        let mut n_desc = 0u16;
+        if sym.weak_ref {
+            n_desc |= N_WEAK_REF;
+        }
+        if sym.weak_def {
+            n_desc |= N_WEAK_DEF;
+        }
         write_u32(w, str_offset as u32)?;  // n_strx
         w.write_all(&[n_type])?;           // n_type
         w.write_all(&[sym.section])?;      // n_sect
-        write_u16(w, 0)?;                  // n_desc
+        write_u16(w, n_desc)?;             // n_desc
         write_u64(w, sym.value)?;          // n_value
         let _ = i;
     }
@@ -507,6 +520,9 @@ mod tests {
             value: 0,
             global: true,
             undefined: false,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
         });
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
@@ -520,8 +536,26 @@ mod tests {
     #[test]
     fn string_table_lookup() {
         let syms = vec![
-            Symbol { name: "_main".into(), section: 1, value: 0, global: true, undefined: false },
-            Symbol { name: "msg".into(), section: 2, value: 0, global: false, undefined: false },
+            Symbol {
+                name: "_main".into(),
+                section: 1,
+                value: 0,
+                global: true,
+                undefined: false,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "msg".into(),
+                section: 2,
+                value: 0,
+                global: false,
+                undefined: false,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
         ];
         let strtab = build_string_table(&syms);
 
@@ -552,6 +586,52 @@ mod tests {
         assert_eq!((info >> 25) & 3, 2);         // length
         assert_eq!((info >> 27) & 1, 1);         // extern
         assert_eq!((info >> 28) & 0xF, 3);       // type = PAGE21
+    }
+
+    #[test]
+    fn symbol_flags_encode_private_and_weak_bits() {
+        let mut obj = ObjectFile::new();
+        obj.symbols.push(Symbol {
+            name: "_hidden".into(),
+            section: 1,
+            value: 0,
+            global: true,
+            undefined: false,
+            private_extern: true,
+            weak_ref: false,
+            weak_def: true,
+        });
+        obj.symbols.push(Symbol {
+            name: "_puts".into(),
+            section: 0,
+            value: 0,
+            global: true,
+            undefined: true,
+            private_extern: false,
+            weak_ref: true,
+            weak_def: false,
+        });
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let symtab_cmd_offset =
+            HEADER_SIZE as usize + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize + BUILD_VERSION_CMD_SIZE as usize;
+        let symoff = u32::from_le_bytes([
+            buf[symtab_cmd_offset + 8],
+            buf[symtab_cmd_offset + 9],
+            buf[symtab_cmd_offset + 10],
+            buf[symtab_cmd_offset + 11],
+        ]) as usize;
+        let hidden_type = buf[symoff + 4];
+        let hidden_desc = u16::from_le_bytes([buf[symoff + 6], buf[symoff + 7]]);
+        let puts_type = buf[symoff + 20];
+        let puts_desc = u16::from_le_bytes([buf[symoff + 22], buf[symoff + 23]]);
+
+        assert_eq!(hidden_type, N_SECT | N_EXT | N_PEXT);
+        assert_eq!(hidden_desc, N_WEAK_DEF);
+        assert_eq!(puts_type, N_UNDF | N_EXT);
+        assert_eq!(puts_desc, N_WEAK_REF);
     }
 
     #[test]

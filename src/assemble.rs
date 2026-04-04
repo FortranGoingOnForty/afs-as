@@ -63,6 +63,9 @@ pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
         value: 0,
         global: false,
         undefined: false,
+        private_extern: false,
+        weak_ref: false,
+        weak_def: false,
     });
     for name in globals {
         obj.symbols.push(Symbol {
@@ -71,6 +74,9 @@ pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
             value: 0,
             global: true,
             undefined: false,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
         });
     }
     obj
@@ -95,10 +101,18 @@ struct Assembler {
 
     /// Labels → (section index, offset within section).
     labels: BTreeMap<String, (usize, u64)>,
-    /// Global symbols.
-    globals: Vec<String>,
+    /// Symbol attributes declared via directives.
+    symbol_attrs: BTreeMap<String, SymbolAttrs>,
     /// Pending relocations for each section.
     pending_relocs: Vec<Vec<PendingReloc>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SymbolAttrs {
+    global: bool,
+    private_extern: bool,
+    weak_ref: bool,
+    weak_def: bool,
 }
 
 struct PendingReloc {
@@ -115,13 +129,17 @@ impl Assembler {
             section: 0,
             sections: vec![Section::text()],
             labels: BTreeMap::new(),
-            globals: Vec::new(),
+            symbol_attrs: BTreeMap::new(),
             pending_relocs: vec![Vec::new()],
         }
     }
 
     fn current_offset(&self) -> u64 {
         self.sections[self.section].size
+    }
+
+    fn symbol_attrs_mut(&mut self, name: &str) -> &mut SymbolAttrs {
+        self.symbol_attrs.entry(name.to_string()).or_default()
     }
 
     fn reset_for_emission(&mut self) {
@@ -227,9 +245,21 @@ impl Assembler {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
             Directive::Global(name) => {
-                if !self.globals.contains(name) {
-                    self.globals.push(name.clone());
-                }
+                self.symbol_attrs_mut(name).global = true;
+            }
+            Directive::PrivateExtern(name) => {
+                let attrs = self.symbol_attrs_mut(name);
+                attrs.global = true;
+                attrs.private_extern = true;
+            }
+            Directive::WeakReference(name) => {
+                let attrs = self.symbol_attrs_mut(name);
+                attrs.global = true;
+                attrs.weak_ref = true;
+            }
+            Directive::WeakDefinition(name) => {
+                let attrs = self.symbol_attrs_mut(name);
+                attrs.weak_def = true;
             }
             Directive::Align(n) | Directive::P2Align(n) => {
                 if *n > 30 {
@@ -263,7 +293,10 @@ impl Assembler {
         match dir {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
-            Directive::Global(_) => {}
+            Directive::Global(_)
+            | Directive::PrivateExtern(_)
+            | Directive::WeakReference(_)
+            | Directive::WeakDefinition(_) => {}
             Directive::Align(n) | Directive::P2Align(n) => {
                 if *n > 30 {
                     return Err(AsmError(format!("alignment power {} too large (max 30)", n)));
@@ -415,11 +448,14 @@ impl Assembler {
                 value: *base,
                 global: false,
                 undefined: false,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
             });
         }
 
         for (name, (section, offset)) in &self.labels {
-            if !self.globals.contains(name) && !name.starts_with("ltmp") {
+            if !self.symbol_attrs.contains_key(name) && !name.starts_with("ltmp") {
                 let value = section_bases[*section] + offset;
                 symbols.push(Symbol {
                     name: name.clone(),
@@ -427,28 +463,55 @@ impl Assembler {
                     value,
                     global: false,
                     undefined: false,
+                    private_extern: false,
+                    weak_ref: false,
+                    weak_def: false,
                 });
             }
         }
 
-        // External (global) symbols.
-        for name in &self.globals {
+        // Explicit symbol directives.
+        for (name, attrs) in &self.symbol_attrs {
             if let Some((section, offset)) = self.labels.get(name) {
+                if attrs.weak_ref {
+                    return Err(AsmError(format!(
+                        "weak reference '{}' must remain undefined",
+                        name
+                    )));
+                }
                 let value = section_bases[*section] + offset;
                 symbols.push(Symbol {
                     name: name.clone(),
                     section: (*section + 1) as u8,
                     value,
-                    global: true,
+                    global: attrs.global,
                     undefined: false,
+                    private_extern: attrs.private_extern,
+                    weak_ref: false,
+                    weak_def: attrs.weak_def,
                 });
             } else if !symbols.iter().any(|s| s.name == *name) {
+                if attrs.private_extern {
+                    return Err(AsmError(format!(
+                        "private extern '{}' must be defined in this object",
+                        name
+                    )));
+                }
+                if attrs.weak_def {
+                    return Err(AsmError(format!(
+                        "weak definition '{}' must be defined in this object",
+                        name
+                    )));
+                }
                 symbols.push(Symbol {
                     name: name.clone(),
                     section: 0,
                     value: 0,
                     global: true,
                     undefined: true,
+                    private_extern: false,
+                    weak_ref: attrs.weak_ref,
+                    weak_def: false,
                 });
             }
         }
@@ -462,6 +525,9 @@ impl Assembler {
                         value: 0,
                         global: true,
                         undefined: true,
+                        private_extern: false,
+                        weak_ref: false,
+                        weak_def: false,
                     });
                 }
             }
@@ -555,8 +621,56 @@ mod tests {
         let obj = assemble_source(".global _main\n.text\n_main:\nnop\nret\n").unwrap();
         let main = obj.symbols.iter().find(|s| s.name == "_main").unwrap();
         assert!(main.global);
+        assert!(!main.private_extern);
+        assert!(!main.weak_ref);
+        assert!(!main.weak_def);
         assert_eq!(main.section, 1);
         assert_eq!(main.value, 0);
+    }
+
+    #[test]
+    fn assemble_private_extern_symbol() {
+        let obj = assemble_source(".private_extern _helper\n.text\n_helper:\nret\n").unwrap();
+        let helper = obj.symbols.iter().find(|s| s.name == "_helper").unwrap();
+        assert!(helper.global);
+        assert!(helper.private_extern);
+        assert!(!helper.undefined);
+    }
+
+    #[test]
+    fn assemble_weak_reference_symbol() {
+        let obj = assemble_source(".weak_reference _puts\n.text\nbl _puts\nret\n").unwrap();
+        let puts = obj.symbols.iter().find(|s| s.name == "_puts").unwrap();
+        assert!(puts.global);
+        assert!(puts.undefined);
+        assert!(puts.weak_ref);
+    }
+
+    #[test]
+    fn assemble_weak_definition_symbol() {
+        let obj = assemble_source(".weak_definition _entry\n.text\n_entry:\nret\n").unwrap();
+        let entry = obj.symbols.iter().find(|s| s.name == "_entry").unwrap();
+        assert!(!entry.global);
+        assert!(!entry.undefined);
+        assert!(entry.weak_def);
+    }
+
+    #[test]
+    fn assemble_private_extern_requires_definition() {
+        let err = assemble_source(".private_extern _hidden\n.text\nret\n").unwrap_err();
+        assert!(err.0.contains("private extern"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_weak_definition_requires_definition() {
+        let err = assemble_source(".weak_definition _entry\n.text\nret\n").unwrap_err();
+        assert!(err.0.contains("weak definition"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_weak_reference_requires_undefined_symbol() {
+        let err = assemble_source(".weak_reference _helper\n.text\n_helper:\nret\n").unwrap_err();
+        assert!(err.0.contains("must remain undefined"), "got: {}", err.0);
     }
 
     #[test]
