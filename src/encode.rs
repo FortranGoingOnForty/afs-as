@@ -31,6 +31,8 @@ pub enum Inst {
     AndReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// ORR Xd, Xn, Xm
     OrrReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
+    /// ORN Xd, Xn, Xm
+    OrnReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// EOR Xd, Xn, Xm
     EorReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// ANDS Xd, Xn, Xm  (sets flags — TST is ANDS with XZR dest)
@@ -83,6 +85,8 @@ pub enum Inst {
     Br { rn: GpReg },
     /// BLR Xn  (indirect call)
     Blr { rn: GpReg },
+    /// CSINC Xd, Xn, Xm, cond
+    Csinc { rd: GpReg, rn: GpReg, rm: GpReg, cond: Cond, sf: bool },
 
     // ---- Address generation ----
 
@@ -230,10 +234,11 @@ impl Inst {
             }
 
             // ---- Logic (register) ----
-            Inst::AndReg { rd, rn, rm, sf } => logic_reg(*sf, 0b00, *rm, *rn, *rd),
-            Inst::OrrReg { rd, rn, rm, sf } => logic_reg(*sf, 0b01, *rm, *rn, *rd),
-            Inst::EorReg { rd, rn, rm, sf } => logic_reg(*sf, 0b10, *rm, *rn, *rd),
-            Inst::AndsReg { rd, rn, rm, sf } => logic_reg(*sf, 0b11, *rm, *rn, *rd),
+            Inst::AndReg { rd, rn, rm, sf } => logic_reg(*sf, 0b00, false, *rm, *rn, *rd),
+            Inst::OrrReg { rd, rn, rm, sf } => logic_reg(*sf, 0b01, false, *rm, *rn, *rd),
+            Inst::OrnReg { rd, rn, rm, sf } => logic_reg(*sf, 0b01, true, *rm, *rn, *rd),
+            Inst::EorReg { rd, rn, rm, sf } => logic_reg(*sf, 0b10, false, *rm, *rn, *rd),
+            Inst::AndsReg { rd, rn, rm, sf } => logic_reg(*sf, 0b11, false, *rm, *rn, *rd),
 
             // ---- Data processing (immediate) ----
             Inst::AddImm { rd, rn, imm12, shift, sf } =>
@@ -292,6 +297,7 @@ impl Inst {
             Inst::Ret { rn } => 0xD65F0000 | (rn.enc() << 5),
             Inst::Br { rn } => 0xD61F0000 | (rn.enc() << 5),
             Inst::Blr { rn } => 0xD63F0000 | (rn.enc() << 5),
+            Inst::Csinc { rd, rn, rm, cond, sf } => csel(*sf, 0b01, *rm, *cond, *rn, *rd),
 
             // ---- Address generation ----
             Inst::Adrp { rd, imm } => {
@@ -410,8 +416,8 @@ fn dp_reg(sf: bool, opc: u32, fixed: u32, shift: u32, rm: GpReg, imm6: u32, rn: 
         | (rm.enc() << 16) | (imm6 << 10) | (rn.enc() << 5) | rd.enc()
 }
 
-fn logic_reg(sf: bool, opc: u32, rm: GpReg, rn: GpReg, rd: GpReg) -> u32 {
-    ((sf as u32) << 31) | (opc << 29) | (0b01010 << 24)
+fn logic_reg(sf: bool, opc: u32, n: bool, rm: GpReg, rn: GpReg, rd: GpReg) -> u32 {
+    ((sf as u32) << 31) | (opc << 29) | (0b01010 << 24) | ((n as u32) << 21)
         | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
@@ -431,6 +437,11 @@ fn bitfield(sf: bool, opc: u32, immr: u8, imms: u8, rn: GpReg, rd: GpReg) -> u32
     ((sf as u32) << 31) | (opc << 29) | (0b100110 << 23) | (n << 22)
         | ((immr as u32) << 16) | ((imms as u32) << 10)
         | (rn.enc() << 5) | rd.enc()
+}
+
+fn csel(sf: bool, op: u32, rm: GpReg, cond: Cond, rn: GpReg, rd: GpReg) -> u32 {
+    ((sf as u32) << 31) | (0b0011010100 << 21) | (rm.enc() << 16)
+        | (cond.enc() << 12) | (op << 10) | (rn.enc() << 5) | rd.enc()
 }
 
 fn ldst_idx(size: u32, opc: u32, offset: i16, idx: u32, rn: GpReg, rt: GpReg) -> u32 {
@@ -501,6 +512,7 @@ mod tests {
 
     #[test] fn and_x0_x1_x2() { assert_eq!(Inst::AndReg  { rd: X0, rn: X1, rm: X2, sf: true }.encode(), 0x8A020020); }
     #[test] fn orr_x0_x1_x2() { assert_eq!(Inst::OrrReg  { rd: X0, rn: X1, rm: X2, sf: true }.encode(), 0xAA020020); }
+    #[test] fn orn_x0_xzr_x1() { assert_eq!(Inst::OrnReg { rd: X0, rn: XZR, rm: X1, sf: true }.encode(), 0xAA2103E0); }
     #[test] fn eor_x0_x1_x2() { assert_eq!(Inst::EorReg  { rd: X0, rn: X1, rm: X2, sf: true }.encode(), 0xCA020020); }
 
     // ---- Data processing (immediate) ----
@@ -546,6 +558,7 @@ mod tests {
     #[test] fn ret_x30()        { assert_eq!(Inst::Ret { rn: X30 }.encode(), 0xD65F03C0); }
     #[test] fn br_x16()         { assert_eq!(Inst::Br  { rn: X16 }.encode(), 0xD61F0200); }
     #[test] fn blr_x17()        { assert_eq!(Inst::Blr { rn: X17 }.encode(), 0xD63F0220); }
+    #[test] fn csinc_x2_x3_x3_ne() { assert_eq!(Inst::Csinc { rd: X2, rn: X3, rm: X3, cond: Cond::NE, sf: true }.encode(), 0x9A831462); }
 
     // ---- Address generation ----
 

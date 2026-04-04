@@ -633,9 +633,13 @@ impl<'a> Parser<'a> {
             "orr" => self.parse_logic("orr"),
             "eor" => self.parse_logic("eor"),
             "ands" => self.parse_logic("ands"),
+            "neg" => self.parse_neg(),
+            "mvn" => self.parse_mvn(),
             "tst" => self.parse_tst(),
 
             // Move
+            "cset" => self.parse_cset(),
+            "cinc" => self.parse_cinc(),
             "mov" => self.parse_mov(),
             "movz" => self.parse_mov_wide("movz"),
             "movk" => self.parse_mov_wide("movk"),
@@ -838,6 +842,52 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rm, _) = self.parse_gp_reg_with_size()?;
         Ok(Inst::AndsReg { rd: XZR, rn, rm, sf })
+    }
+
+    fn parse_neg(&mut self) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_gp_reg_with_size()?;
+        Ok(Inst::SubReg { rd, rn: XZR, rm, sf })
+    }
+
+    fn parse_mvn(&mut self) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_gp_reg_with_size()?;
+        Ok(Inst::OrnReg { rd, rn: XZR, rm, sf })
+    }
+
+    fn parse_cset(&mut self) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let cond_name = self.expect_ident()?;
+        let cond = parse_condition(&cond_name)
+            .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
+        Ok(Inst::Csinc {
+            rd,
+            rn: XZR,
+            rm: XZR,
+            cond: invert_condition(cond),
+            sf,
+        })
+    }
+
+    fn parse_cinc(&mut self) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let cond_name = self.expect_ident()?;
+        let cond = parse_condition(&cond_name)
+            .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
+        Ok(Inst::Csinc {
+            rd,
+            rn,
+            rm: rn,
+            cond: invert_condition(cond),
+            sf,
+        })
     }
 
     fn parse_3reg(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -1344,6 +1394,27 @@ fn parse_condition(s: &str) -> Option<Cond> {
     }
 }
 
+fn invert_condition(cond: Cond) -> Cond {
+    match cond {
+        Cond::EQ => Cond::NE,
+        Cond::NE => Cond::EQ,
+        Cond::CS => Cond::CC,
+        Cond::CC => Cond::CS,
+        Cond::MI => Cond::PL,
+        Cond::PL => Cond::MI,
+        Cond::VS => Cond::VC,
+        Cond::VC => Cond::VS,
+        Cond::HI => Cond::LS,
+        Cond::LS => Cond::HI,
+        Cond::GE => Cond::LT,
+        Cond::LT => Cond::GE,
+        Cond::GT => Cond::LE,
+        Cond::LE => Cond::GT,
+        Cond::AL => Cond::NV,
+        Cond::NV => Cond::AL,
+    }
+}
+
 fn mov_alias_imm(rd: GpReg, imm: i64, sf: bool) -> Option<Inst> {
     let mask = if sf { u64::MAX } else { u32::MAX as u64 };
     let shifts: &[u8] = if sf { &[0, 16, 32, 48] } else { &[0, 16] };
@@ -1447,6 +1518,32 @@ mod tests {
     #[test]
     fn parse_mov_reg() {
         assert_eq!(parse_inst("mov x0, x1"), Inst::OrrReg { rd: X0, rn: XZR, rm: X1, sf: true });
+    }
+
+    #[test]
+    fn parse_neg_alias() {
+        assert_eq!(parse_inst("neg x0, x1"), Inst::SubReg { rd: X0, rn: XZR, rm: X1, sf: true });
+    }
+
+    #[test]
+    fn parse_mvn_alias() {
+        assert_eq!(parse_inst("mvn x0, x1"), Inst::OrnReg { rd: X0, rn: XZR, rm: X1, sf: true });
+    }
+
+    #[test]
+    fn parse_cset_alias() {
+        assert_eq!(
+            parse_inst("cset x0, eq"),
+            Inst::Csinc { rd: X0, rn: XZR, rm: XZR, cond: Cond::NE, sf: true }
+        );
+    }
+
+    #[test]
+    fn parse_cinc_alias() {
+        assert_eq!(
+            parse_inst("cinc w2, w3, ne"),
+            Inst::Csinc { rd: W2, rn: W3, rm: W3, cond: Cond::EQ, sf: false }
+        );
     }
 
     #[test]

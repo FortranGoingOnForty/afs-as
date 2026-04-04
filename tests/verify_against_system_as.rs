@@ -77,6 +77,7 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_udiv()     { verify("udiv x3, x4, x5", Inst::Udiv    { rd: X3, rn: X4, rm: X5, sf: true }); }
 #[test] fn sys_and()      { verify("and x3, x4, x5",  Inst::AndReg  { rd: X3, rn: X4, rm: X5, sf: true }); }
 #[test] fn sys_orr()      { verify("orr x3, x4, x5",  Inst::OrrReg  { rd: X3, rn: X4, rm: X5, sf: true }); }
+#[test] fn sys_orn()      { verify("orn x3, x4, x5",  Inst::OrnReg  { rd: X3, rn: X4, rm: X5, sf: true }); }
 #[test] fn sys_eor()      { verify("eor x3, x4, x5",  Inst::EorReg  { rd: X3, rn: X4, rm: X5, sf: true }); }
 
 // ---- Data processing (immediate) ----
@@ -109,6 +110,7 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_ret()      { verify("ret",           Inst::Ret  { rn: X30 }); }
 #[test] fn sys_br()       { verify("br x8",         Inst::Br   { rn: X8 }); }
 #[test] fn sys_blr()      { verify("blr x9",        Inst::Blr  { rn: X9 }); }
+#[test] fn sys_csinc()    { verify("csinc x2, x3, x3, ne", Inst::Csinc { rd: X2, rn: X3, rm: X3, cond: Cond::NE, sf: true }); }
 
 // ---- Load/Store (unsigned offset) ----
 

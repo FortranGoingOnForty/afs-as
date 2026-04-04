@@ -95,10 +95,14 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_udiv()       { roundtrip(".text\nudiv x6, x7, x8\n"); }
 #[test] fn rt_and()        { roundtrip(".text\nand x0, x1, x2\n"); }
 #[test] fn rt_orr()        { roundtrip(".text\norr x0, x1, x2\n"); }
+#[test] fn rt_neg()        { roundtrip(".text\nneg x0, x1\n"); }
+#[test] fn rt_mvn()        { roundtrip(".text\nmvn x0, x1\n"); }
 #[test] fn rt_eor()        { roundtrip(".text\neor x0, x1, x2\n"); }
 #[test] fn rt_cmp_reg()    { roundtrip(".text\ncmp x5, x6\n"); }
 #[test] fn rt_cmp_imm()    { roundtrip(".text\ncmp x5, #42\n"); }
 #[test] fn rt_tst()        { roundtrip(".text\ntst x0, x1\n"); }
+#[test] fn rt_cset()       { roundtrip(".text\ncset x0, eq\n"); }
+#[test] fn rt_cinc()       { roundtrip(".text\ncinc w2, w3, ne\n"); }
 #[test] fn rt_movz()       { roundtrip(".text\nmovz x0, #0x1234\n"); }
 #[test] fn rt_movz_lsl16() { roundtrip(".text\nmovz x0, #0x5678, lsl #16\n"); }
 #[test] fn rt_movk()       { roundtrip(".text\nmovk x0, #0xABCD, lsl #32\n"); }
