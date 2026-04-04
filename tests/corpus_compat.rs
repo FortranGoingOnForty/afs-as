@@ -198,6 +198,39 @@ fn corpus_symbol_attributes_match_nm_output() {
 }
 
 #[test]
+fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
+    let paths = assemble_fixture("macho_writer_mix.s");
+
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+    let ours_symbols = common::object_symbols(&paths.obj);
+    let ref_symbols = common::object_symbols(&paths.ref_obj);
+    let ours_symbols_verbose = common::object_symbols_verbose(&paths.obj);
+    let ref_symbols_verbose = common::object_symbols_verbose(&paths.ref_obj);
+
+    assert!(ours_load.contains("sectname __const"), "missing __const section:\n{}", ours_load);
+    assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
+    assert!(ours_load.contains("sectname __bss"), "missing __bss section:\n{}", ours_load);
+    assert!(ours_relocs.contains("SUB"), "missing subtractor relocation:\n{}", ours_relocs);
+    assert!(ours_relocs.contains("BR26"), "missing branch relocation:\n{}", ours_relocs);
+    assert!(ours_symbols.contains(" C _common"), "missing common symbol:\n{}", ours_symbols);
+    assert!(ours_symbols.contains(" U _puts"), "missing undefined _puts:\n{}", ours_symbols);
+    assert!(ours_symbols_verbose.contains("ABS1"), "missing absolute symbol:\n{}", ours_symbols_verbose);
+    assert!(ours_symbols_verbose.contains("_helper"), "missing private extern helper:\n{}", ours_symbols_verbose);
+    assert!(ours_symbols_verbose.contains("zlocal"), "missing local weak definition:\n{}", ours_symbols_verbose);
+
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_symbols_verbose),
+        normalize_tool_output(&ref_symbols_verbose)
+    );
+}
+
+#[test]
 fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
     let paths = assemble_fixture("expression_symbols.s");
 
