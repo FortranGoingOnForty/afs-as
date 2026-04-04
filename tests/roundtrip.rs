@@ -140,7 +140,9 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_br()         { roundtrip(".text\nbr x8\n"); }
 #[test] fn rt_blr()        { roundtrip(".text\nblr x9\n"); }
 #[test] fn rt_adr()        { roundtrip(".text\nadr x0, #8\n"); }
+#[test] fn rt_adrp_tlvp()  { roundtrip(".text\nadrp x0, _tls_counter@TLVPPAGE\n"); }
 #[test] fn rt_ldr64()      { roundtrip(".text\nldr x0, [x1, #24]\n"); }
+#[test] fn rt_ldr64_tlvp_pageoff() { roundtrip(".text\nldr x0, [x0, _tls_counter@TLVPPAGEOFF]\n"); }
 #[test] fn rt_str64()      { roundtrip(".text\nstr x2, [x3, #32]\n"); }
 #[test] fn rt_ldr32()      { roundtrip(".text\nldr w4, [x5, #12]\n"); }
 #[test] fn rt_str32()      { roundtrip(".text\nstr w6, [x7, #16]\n"); }

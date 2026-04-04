@@ -133,6 +133,7 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_str64()    { verify("str x3, [x4, #32]",  Inst::StrImm64 { rt: X3, rn: X4, offset: 32 }); }
 #[test] fn sys_ldr32()    { verify("ldr w3, [x4, #12]",  Inst::LdrImm32 { rt: W3, rn: X4, offset: 12 }); }
 #[test] fn sys_str32()    { verify("str w3, [x4, #16]",  Inst::StrImm32 { rt: W3, rn: X4, offset: 16 }); }
+#[test] fn sys_ldr64_tlvp_pageoff() { verify("ldr x0, [x0, _tls_counter@TLVPPAGEOFF]", Inst::LdrImm64 { rt: X0, rn: X0, offset: 0 }); }
 #[test] fn sys_ldr_lit64() { verify("ldr x0, #8", Inst::LdrLit64 { rt: X0, offset: 8 }); }
 #[test] fn sys_ldr_lit32() { verify("ldr w1, #12", Inst::LdrLit32 { rt: W1, offset: 12 }); }
 #[test] fn sys_ldr64_reg() { verify("ldr x0, [x1, x2]", Inst::LdrReg64 { rt: X0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }); }
@@ -156,6 +157,7 @@ fn verify(asm: &str, inst: Inst) {
 // ---- Address generation ----
 
 #[test] fn sys_adr()      { verify("adr x0, #8", Inst::Adr { rd: X0, imm: 8 }); }
+#[test] fn sys_adrp_tlvp() { verify("adrp x0, _tls_counter@TLVPPAGE", Inst::Adrp { rd: X0, imm: 0 }); }
 
 // ---- Load/Store pair ----
 
