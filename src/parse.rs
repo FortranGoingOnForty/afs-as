@@ -831,33 +831,44 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_fp_unary(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, _) = self.parse_fp_reg_with_size()?;
+        let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_fp_reg_with_size()?;
-        Ok(match mnemonic {
-            "fneg" => Inst::FnegD { rd, rn },
-            "fabs" => Inst::FabsD { rd, rn },
-            "fsqrt" => Inst::FsqrtD { rd, rn },
+        Ok(match (mnemonic, is_double) {
+            ("fneg", true)  => Inst::FnegD  { rd, rn },
+            ("fneg", false) => Inst::FnegS  { rd, rn },
+            ("fabs", true)  => Inst::FabsD  { rd, rn },
+            ("fabs", false) => Inst::FabsS  { rd, rn },
+            ("fsqrt", true)  => Inst::FsqrtD { rd, rn },
+            ("fsqrt", false) => Inst::FsqrtS { rd, rn },
             _ => unreachable!(),
         })
     }
 
     fn parse_fcmp(&mut self) -> Result<Inst, ParseError> {
-        let (rn, _) = self.parse_fp_reg_with_size()?;
+        let (rn, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rm, _) = self.parse_fp_reg_with_size()?;
-        Ok(Inst::FcmpD { rn, rm })
+        if is_double {
+            Ok(Inst::FcmpD { rn, rm })
+        } else {
+            Ok(Inst::FcmpS { rn, rm })
+        }
     }
 
     fn parse_fmadd(&mut self) -> Result<Inst, ParseError> {
-        let (rd, _) = self.parse_fp_reg_with_size()?;
+        let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rm, _) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (ra, _) = self.parse_fp_reg_with_size()?;
-        Ok(Inst::FmaddD { rd, rn, rm, ra })
+        if is_double {
+            Ok(Inst::FmaddD { rd, rn, rm, ra })
+        } else {
+            Ok(Inst::FmaddS { rd, rn, rm, ra })
+        }
     }
 
     fn parse_fcvtzs(&mut self) -> Result<Inst, ParseError> {
@@ -1207,6 +1218,33 @@ mod tests {
     #[test]
     fn parse_fmov_from_fp() {
         assert_eq!(parse_inst("fmov x0, d1"), Inst::FmovFromD { rd: X0, rn: D1 });
+    }
+
+    // ---- FP single-precision ----
+
+    #[test]
+    fn parse_fneg_s() {
+        assert_eq!(parse_inst("fneg s0, s1"), Inst::FnegS { rd: S0, rn: S1 });
+    }
+
+    #[test]
+    fn parse_fabs_s() {
+        assert_eq!(parse_inst("fabs s0, s1"), Inst::FabsS { rd: S0, rn: S1 });
+    }
+
+    #[test]
+    fn parse_fsqrt_s() {
+        assert_eq!(parse_inst("fsqrt s0, s1"), Inst::FsqrtS { rd: S0, rn: S1 });
+    }
+
+    #[test]
+    fn parse_fcmp_s() {
+        assert_eq!(parse_inst("fcmp s0, s1"), Inst::FcmpS { rn: S0, rm: S1 });
+    }
+
+    #[test]
+    fn parse_fmadd_s() {
+        assert_eq!(parse_inst("fmadd s0, s1, s2, s3"), Inst::FmaddS { rd: S0, rn: S1, rm: S2, ra: S3 });
     }
 
     // ---- System ----

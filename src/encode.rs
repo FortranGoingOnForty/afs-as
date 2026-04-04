@@ -155,14 +155,24 @@ pub enum Inst {
     FdivS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FNEG Dd, Dn
     FnegD { rd: FpReg, rn: FpReg },
+    /// FNEG Sd, Sn
+    FnegS { rd: FpReg, rn: FpReg },
     /// FABS Dd, Dn
     FabsD { rd: FpReg, rn: FpReg },
+    /// FABS Sd, Sn
+    FabsS { rd: FpReg, rn: FpReg },
     /// FSQRT Dd, Dn
     FsqrtD { rd: FpReg, rn: FpReg },
+    /// FSQRT Sd, Sn
+    FsqrtS { rd: FpReg, rn: FpReg },
     /// FCMP Dn, Dm
     FcmpD { rn: FpReg, rm: FpReg },
+    /// FCMP Sn, Sm
+    FcmpS { rn: FpReg, rm: FpReg },
     /// FMADD Dd, Dn, Dm, Da  (Dd = Da + Dn*Dm)
     FmaddD { rd: FpReg, rn: FpReg, rm: FpReg, ra: FpReg },
+    /// FMADD Sd, Sn, Sm, Sa
+    FmaddS { rd: FpReg, rn: FpReg, rm: FpReg, ra: FpReg },
 
     // ---- FP / integer conversion ----
 
@@ -351,26 +361,16 @@ impl Inst {
             Inst::FmulS { rd, rn, rm } => fp_arith(0b00, 0b0000, *rm, *rn, *rd),
             Inst::FdivS { rd, rn, rm } => fp_arith(0b00, 0b0001, *rm, *rn, *rd),
 
-            Inst::FnegD { rd, rn } => {
-                (0b000_11110_01_1 << 21) | (0b0000_10 << 15) | (0b10000 << 10)
-                    | (rn.enc() << 5) | rd.enc()
-            }
-            Inst::FabsD { rd, rn } => {
-                (0b000_11110_01_1 << 21) | (0b0000_01 << 15) | (0b10000 << 10)
-                    | (rn.enc() << 5) | rd.enc()
-            }
-            Inst::FsqrtD { rd, rn } => {
-                (0b000_11110_01_1 << 21) | (0b0000_11 << 15) | (0b10000 << 10)
-                    | (rn.enc() << 5) | rd.enc()
-            }
-            Inst::FcmpD { rn, rm } => {
-                (0b000_11110_01_1 << 21) | (rm.enc() << 16) | (0b00_1000 << 10)
-                    | (rn.enc() << 5)
-            }
-            Inst::FmaddD { rd, rn, rm, ra } => {
-                (0b000_11111_01_0 << 21) | (rm.enc() << 16)
-                    | (ra.enc() << 10) | (rn.enc() << 5) | rd.enc()
-            }
+            Inst::FnegD { rd, rn } => fp_unary(0b01, 0b0000_10, *rn, *rd),
+            Inst::FnegS { rd, rn } => fp_unary(0b00, 0b0000_10, *rn, *rd),
+            Inst::FabsD { rd, rn } => fp_unary(0b01, 0b0000_01, *rn, *rd),
+            Inst::FabsS { rd, rn } => fp_unary(0b00, 0b0000_01, *rn, *rd),
+            Inst::FsqrtD { rd, rn } => fp_unary(0b01, 0b0000_11, *rn, *rd),
+            Inst::FsqrtS { rd, rn } => fp_unary(0b00, 0b0000_11, *rn, *rd),
+            Inst::FcmpD { rn, rm } => fp_cmp(0b01, *rn, *rm),
+            Inst::FcmpS { rn, rm } => fp_cmp(0b00, *rn, *rm),
+            Inst::FmaddD { rd, rn, rm, ra } => fp_madd(0b01, *rd, *rn, *rm, *ra),
+            Inst::FmaddS { rd, rn, rm, ra } => fp_madd(0b00, *rd, *rn, *rm, *ra),
 
             // ---- FP / integer conversion ----
             Inst::FcvtzsD { rd, rn } => {
@@ -448,6 +448,28 @@ fn ldp_stp(opc: u32, mode: u32, l: u32, offset: i16, rt2: GpReg, rn: GpReg, rt1:
         | (imm7 << 15) | (rt2.enc() << 10) | (rn.enc() << 5) | rt1.enc()
 }
 
+/// FP one-source (FNEG, FABS, FSQRT).
+/// Format: 0|00|11110|ftype(2)|1|opcode(6)|10000|Rn(5)|Rd(5)
+fn fp_unary(ftype: u32, opcode: u32, rn: FpReg, rd: FpReg) -> u32 {
+    (0b000_11110 << 24) | (ftype << 22) | (1 << 21)
+        | (opcode << 15) | (0b10000 << 10) | (rn.enc() << 5) | rd.enc()
+}
+
+/// FCMP Rn, Rm.
+/// Format: 0|00|11110|ftype(2)|1|Rm(5)|00|1000|Rn(5)|00000
+fn fp_cmp(ftype: u32, rn: FpReg, rm: FpReg) -> u32 {
+    (0b000_11110 << 24) | (ftype << 22) | (1 << 21)
+        | (rm.enc() << 16) | (0b00_1000 << 10) | (rn.enc() << 5)
+}
+
+/// FMADD Rd, Rn, Rm, Ra.
+/// Format: 0|00|11111|ftype(2)|0|Rm(5)|0|Ra(5)|Rn(5)|Rd(5)
+fn fp_madd(ftype: u32, rd: FpReg, rn: FpReg, rm: FpReg, ra: FpReg) -> u32 {
+    (0b000_11111 << 24) | (ftype << 22)
+        | (rm.enc() << 16) | (ra.enc() << 10) | (rn.enc() << 5) | rd.enc()
+}
+
+/// FP two-source arithmetic (FADD, FSUB, FMUL, FDIV).
 fn fp_arith(ftype: u32, opcode: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
     (0b000_11110 << 24) | (ftype << 22) | (1 << 21)
         | (rm.enc() << 16) | (opcode << 12) | (0b10 << 10)
@@ -564,6 +586,13 @@ mod tests {
     #[test] fn fsqrt_d0_d1()     { assert_eq!(Inst::FsqrtD { rd: D0, rn: D1 }.encode(), 0x1E61C020); }
     #[test] fn fcmp_d0_d1()      { assert_eq!(Inst::FcmpD  { rn: D0, rm: D1 }.encode(), 0x1E612000); }
     #[test] fn fmadd_d0_d1_d2_d3() { assert_eq!(Inst::FmaddD { rd: D0, rn: D1, rm: D2, ra: D3 }.encode(), 0x1F420C20); }
+
+    // Single-precision FP unary/compare/fmadd
+    #[test] fn fneg_s0_s1()         { assert_eq!(Inst::FnegS  { rd: S0, rn: S1 }.encode(), 0x1E214020); }
+    #[test] fn fabs_s0_s1()         { assert_eq!(Inst::FabsS  { rd: S0, rn: S1 }.encode(), 0x1E20C020); }
+    #[test] fn fsqrt_s0_s1()        { assert_eq!(Inst::FsqrtS { rd: S0, rn: S1 }.encode(), 0x1E21C020); }
+    #[test] fn fcmp_s0_s1()         { assert_eq!(Inst::FcmpS  { rn: S0, rm: S1 }.encode(), 0x1E212000); }
+    #[test] fn fmadd_s0_s1_s2_s3()  { assert_eq!(Inst::FmaddS { rd: S0, rn: S1, rm: S2, ra: S3 }.encode(), 0x1F020C20); }
 
     // ---- FP / integer conversion ----
 
