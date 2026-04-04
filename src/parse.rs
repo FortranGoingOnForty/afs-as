@@ -47,6 +47,7 @@ pub enum RelocKind {
 pub enum Directive {
     Text,
     Data,
+    Comm { name: String, size: u64, align_pow2: u8 },
     Extern(String),
     Global(String),
     PrivateExtern(String),
@@ -63,6 +64,13 @@ pub enum Directive {
     Asciz(Vec<u8>),
     Space(u64),
     Fill { repeat: u64, size: u8, value: u64 },
+    Zerofill {
+        segment: String,
+        section: String,
+        symbol: Option<String>,
+        size: u64,
+        align_pow2: u32,
+    },
     Section(String, String),
     SubsectionsViaSymbols,
     BuildVersion { platform: String, version: String },
@@ -228,6 +236,17 @@ impl<'a> Parser<'a> {
             ".text" => Directive::Text,
             ".data" => Directive::Data,
             ".cstring" => Directive::Section("__TEXT".into(), "__cstring".into()),
+            ".comm" => {
+                let sym = self.expect_ident()?;
+                self.expect(&Tok::Comma)?;
+                let size = self.parse_const_expr("common size expression")? as u64;
+                let align_pow2 = if self.eat(&Tok::Comma) {
+                    self.parse_const_expr("common alignment expression")? as u8
+                } else {
+                    0
+                };
+                Directive::Comm { name: sym, size, align_pow2 }
+            }
             ".extern" => {
                 let sym = self.expect_ident()?;
                 Directive::Extern(sym)
@@ -315,6 +334,25 @@ impl<'a> Parser<'a> {
                     0
                 };
                 Directive::Fill { repeat, size, value }
+            }
+            ".zerofill" => {
+                let segment = self.expect_ident()?;
+                self.expect(&Tok::Comma)?;
+                let section = self.expect_ident()?;
+                self.expect(&Tok::Comma)?;
+                let symbol = if matches!(self.peek(), Tok::Ident(_)) {
+                    Some(self.expect_ident()?)
+                } else {
+                    None
+                };
+                self.expect(&Tok::Comma)?;
+                let size = self.parse_const_expr("zerofill size expression")? as u64;
+                let align_pow2 = if self.eat(&Tok::Comma) {
+                    self.parse_const_expr("zerofill alignment expression")? as u32
+                } else {
+                    0
+                };
+                Directive::Zerofill { segment, section, symbol, size, align_pow2 }
             }
             ".section" => {
                 let seg = self.expect_ident()?;
@@ -1498,6 +1536,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_comm_directive() {
+        let stmts = parse_stmts(".comm _common, 24, 3");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Comm {
+                name: "_common".into(),
+                size: 24,
+                align_pow2: 3,
+            })]
+        );
+    }
+
+    #[test]
     fn parse_private_extern_directive() {
         let stmts = parse_stmts(".private_extern _hidden");
         assert_eq!(stmts, vec![Stmt::Directive(Directive::PrivateExtern("_hidden".into()))]);
@@ -1628,6 +1679,36 @@ mod tests {
         assert_eq!(
             stmts,
             vec![Stmt::Directive(Directive::Section("__TEXT".into(), "__cstring".into()))]
+        );
+    }
+
+    #[test]
+    fn parse_zerofill_directive() {
+        let stmts = parse_stmts(".zerofill __DATA, __bss, _scratch, 16, 4");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Zerofill {
+                segment: "__DATA".into(),
+                section: "__bss".into(),
+                symbol: Some("_scratch".into()),
+                size: 16,
+                align_pow2: 4,
+            })]
+        );
+    }
+
+    #[test]
+    fn parse_zerofill_without_symbol() {
+        let stmts = parse_stmts(".zerofill __DATA, __bss, , 8, 2");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Zerofill {
+                segment: "__DATA".into(),
+                section: "__bss".into(),
+                symbol: None,
+                size: 8,
+                align_pow2: 2,
+            })]
         );
     }
 

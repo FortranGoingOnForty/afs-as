@@ -66,6 +66,8 @@ pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
         global: false,
         undefined: false,
         absolute: false,
+        common: false,
+        common_align_pow2: 0,
         private_extern: false,
         weak_ref: false,
         weak_def: false,
@@ -78,6 +80,8 @@ pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
             global: true,
             undefined: false,
             absolute: false,
+            common: false,
+            common_align_pow2: 0,
             private_extern: false,
             weak_ref: false,
             weak_def: false,
@@ -108,6 +112,7 @@ struct Assembler {
     /// Absolute symbol assignments declared via `.set` / `.equ`.
     absolute_defs: BTreeMap<String, Expr>,
     absolute_symbols: BTreeMap<String, i64>,
+    common_symbols: BTreeMap<String, CommonSymbol>,
     section_bases: Vec<u64>,
     /// Symbol attributes declared via directives.
     symbol_attrs: BTreeMap<String, SymbolAttrs>,
@@ -121,6 +126,12 @@ struct SymbolAttrs {
     private_extern: bool,
     weak_ref: bool,
     weak_def: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CommonSymbol {
+    size: u64,
+    align_pow2: u8,
 }
 
 struct PendingReloc {
@@ -140,6 +151,7 @@ impl Assembler {
             labels: BTreeMap::new(),
             absolute_defs: BTreeMap::new(),
             absolute_symbols: BTreeMap::new(),
+            common_symbols: BTreeMap::new(),
             section_bases: Vec::new(),
             symbol_attrs: BTreeMap::new(),
             pending_relocs: vec![Vec::new()],
@@ -177,6 +189,9 @@ impl Assembler {
         for stmt in stmts {
             match stmt {
                 Stmt::Label(name) => {
+                    if self.common_symbols.contains_key(name) {
+                        return Err(AsmError(format!("duplicate symbol '{}'", name)));
+                    }
                     let offset = self.current_offset();
                     if self.labels.insert(name.clone(), (self.section, offset)).is_some() {
                         return Err(AsmError(format!("duplicate label '{}'", name)));
@@ -267,6 +282,9 @@ impl Assembler {
             Directive::Set(name, expr) => {
                 self.absolute_defs.insert(name.clone(), expr.clone());
             }
+            Directive::Comm { name, size, align_pow2 } => {
+                self.record_common_symbol(name, *size, *align_pow2)?;
+            }
             Directive::Extern(_) => {}
             Directive::Global(name) => {
                 self.symbol_attrs_mut(name).global = true;
@@ -312,6 +330,9 @@ impl Assembler {
                     .ok_or_else(|| AsmError(".fill size overflows u64".into()))?;
                 self.reserve_initialized_bytes(total, ".fill")?;
             }
+            Directive::Zerofill { segment, section, symbol, size, align_pow2 } => {
+                self.reserve_zerofill(segment, section, symbol.as_deref(), *size, *align_pow2)?;
+            }
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
@@ -325,6 +346,7 @@ impl Assembler {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
             Directive::Set(_ , _)
+            | Directive::Comm { .. }
             | Directive::Extern(_)
             | Directive::Global(_)
             | Directive::PrivateExtern(_)
@@ -373,6 +395,9 @@ impl Assembler {
             }
             Directive::Fill { repeat, size, value } => {
                 self.emit_fill(*repeat, *size, *value)?;
+            }
+            Directive::Zerofill { segment, section, size, align_pow2, .. } => {
+                self.emit_zerofill(segment, section, *size, *align_pow2)?;
             }
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
@@ -432,6 +457,99 @@ impl Assembler {
         for _ in 0..repeat {
             self.emit_initialized_bytes(&pattern[..byte_count], ".fill")?;
         }
+        Ok(())
+    }
+
+    fn record_common_symbol(&mut self, name: &str, size: u64, align_pow2: u8) -> Result<(), AsmError> {
+        if align_pow2 > 15 {
+            return Err(AsmError(format!(
+                "common symbol '{}' alignment power {} too large (max 15)",
+                name, align_pow2
+            )));
+        }
+        if self.labels.contains_key(name) || self.absolute_defs.contains_key(name) {
+            return Err(AsmError(format!("duplicate symbol '{}'", name)));
+        }
+        if self.common_symbols.insert(name.to_string(), CommonSymbol { size, align_pow2 }).is_some() {
+            return Err(AsmError(format!("duplicate common symbol '{}'", name)));
+        }
+        Ok(())
+    }
+
+    fn reserve_zerofill(
+        &mut self,
+        seg: &str,
+        sect: &str,
+        symbol: Option<&str>,
+        size: u64,
+        align_pow2: u32,
+    ) -> Result<(), AsmError> {
+        if align_pow2 > 30 {
+            return Err(AsmError(format!(
+                "zerofill alignment power {} too large (max 30)",
+                align_pow2
+            )));
+        }
+        let target = self.ensure_section(seg, sect)?;
+        if self.sections[target].kind != SectionKind::ZeroFill {
+            return Err(AsmError(format!(
+                ".zerofill requires a zero-fill section, got {},{}",
+                seg, sect
+            )));
+        }
+
+        let offset = {
+            let section = &mut self.sections[target];
+            section.align_pow2 = section.align_pow2.max(align_pow2);
+            let offset = align_value(section.size, align_pow2);
+            section.size = offset;
+            offset
+        };
+
+        if let Some(symbol) = symbol {
+            if self.common_symbols.contains_key(symbol) || self.absolute_defs.contains_key(symbol) {
+                return Err(AsmError(format!("duplicate symbol '{}'", symbol)));
+            }
+            if self.labels.insert(symbol.to_string(), (target, offset)).is_some() {
+                return Err(AsmError(format!("duplicate symbol '{}'", symbol)));
+            }
+        }
+
+        self.sections[target].size = self.sections[target]
+            .size
+            .checked_add(size)
+            .ok_or_else(|| AsmError(".zerofill size overflows u64".into()))?;
+        Ok(())
+    }
+
+    fn emit_zerofill(
+        &mut self,
+        seg: &str,
+        sect: &str,
+        size: u64,
+        align_pow2: u32,
+    ) -> Result<(), AsmError> {
+        if align_pow2 > 30 {
+            return Err(AsmError(format!(
+                "zerofill alignment power {} too large (max 30)",
+                align_pow2
+            )));
+        }
+        let target = self.ensure_section(seg, sect)?;
+        if self.sections[target].kind != SectionKind::ZeroFill {
+            return Err(AsmError(format!(
+                ".zerofill requires a zero-fill section, got {},{}",
+                seg, sect
+            )));
+        }
+
+        let section = &mut self.sections[target];
+        section.align_pow2 = section.align_pow2.max(align_pow2);
+        section.size = align_value(section.size, align_pow2);
+        section.size = section
+            .size
+            .checked_add(size)
+            .ok_or_else(|| AsmError(".zerofill size overflows u64".into()))?;
         Ok(())
     }
 
@@ -600,6 +718,15 @@ impl Assembler {
             }
         }
 
+        for name in self.common_symbols.keys() {
+            if self.labels.contains_key(name) || absolute_symbols.contains_key(name) {
+                return Err(AsmError(format!(
+                    "symbol '{}' cannot be both common and defined in this object",
+                    name
+                )));
+            }
+        }
+
         for (index, base) in section_bases.iter().enumerate() {
             symbols.push(Symbol {
                 name: format!("ltmp{}", index),
@@ -608,6 +735,8 @@ impl Assembler {
                 global: false,
                 undefined: false,
                 absolute: false,
+                common: false,
+                common_align_pow2: 0,
                 private_extern: false,
                 weak_ref: false,
                 weak_def: false,
@@ -624,6 +753,8 @@ impl Assembler {
                     global: false,
                     undefined: false,
                     absolute: false,
+                    common: false,
+                    common_align_pow2: 0,
                     private_extern: false,
                     weak_ref: false,
                     weak_def: false,
@@ -640,11 +771,42 @@ impl Assembler {
                     global: false,
                     undefined: false,
                     absolute: true,
+                    common: false,
+                    common_align_pow2: 0,
                     private_extern: false,
                     weak_ref: false,
                     weak_def: false,
                 });
             }
+        }
+
+        for (name, common) in &self.common_symbols {
+            let attrs = self.symbol_attrs.get(name).copied().unwrap_or_default();
+            if attrs.private_extern {
+                return Err(AsmError(format!(
+                    "common symbol '{}' cannot be private extern",
+                    name
+                )));
+            }
+            if attrs.weak_def {
+                return Err(AsmError(format!(
+                    "common symbol '{}' cannot be a weak definition",
+                    name
+                )));
+            }
+            symbols.push(Symbol {
+                name: name.clone(),
+                section: 0,
+                value: common.size,
+                global: true,
+                undefined: true,
+                absolute: false,
+                common: true,
+                common_align_pow2: common.align_pow2,
+                private_extern: false,
+                weak_ref: attrs.weak_ref,
+                weak_def: false,
+            });
         }
 
         // Explicit symbol directives.
@@ -663,6 +825,8 @@ impl Assembler {
                     global: attrs.global,
                     undefined: false,
                     absolute: true,
+                    common: false,
+                    common_align_pow2: 0,
                     private_extern: attrs.private_extern,
                     weak_ref: false,
                     weak_def: attrs.weak_def,
@@ -682,6 +846,8 @@ impl Assembler {
                     global: attrs.global,
                     undefined: false,
                     absolute: false,
+                    common: false,
+                    common_align_pow2: 0,
                     private_extern: attrs.private_extern,
                     weak_ref: false,
                     weak_def: attrs.weak_def,
@@ -706,6 +872,8 @@ impl Assembler {
                     global: true,
                     undefined: true,
                     absolute: false,
+                    common: false,
+                    common_align_pow2: 0,
                     private_extern: false,
                     weak_ref: attrs.weak_ref,
                     weak_def: false,
@@ -723,6 +891,8 @@ impl Assembler {
                         global: true,
                         undefined: true,
                         absolute: false,
+                        common: false,
+                        common_align_pow2: 0,
                         private_extern: false,
                         weak_ref: false,
                         weak_def: false,
@@ -1074,6 +1244,44 @@ mod tests {
     fn assemble_extern_declaration_does_not_emit_symbol_by_itself() {
         let obj = assemble_source(".extern _puts\n.text\nret\n").unwrap();
         assert!(!obj.symbols.iter().any(|sym| sym.name == "_puts"));
+    }
+
+    #[test]
+    fn assemble_comm_emits_common_symbol() {
+        let obj = assemble_source(".comm _common, 24, 3\n.text\nret\n").unwrap();
+        let common = obj.symbols.iter().find(|sym| sym.name == "_common").unwrap();
+        assert!(common.global);
+        assert!(common.undefined);
+        assert!(common.common);
+        assert_eq!(common.common_align_pow2, 3);
+        assert_eq!(common.value, 24);
+        assert_eq!(text_bytes(&obj), Inst::Ret { rn: X30 }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_zerofill_reserves_bss_without_switching_sections() {
+        let obj = assemble_source(".text\nret\n.zerofill __DATA,__bss,_scratch,16,4\nret\n").unwrap();
+        let bss = obj.section("__DATA", "__bss").unwrap();
+        let scratch = obj.symbols.iter().find(|sym| sym.name == "_scratch").unwrap();
+
+        assert_eq!(text_bytes(&obj), [
+            Inst::Ret { rn: X30 }.encode().to_le_bytes(),
+            Inst::Ret { rn: X30 }.encode().to_le_bytes(),
+        ]
+        .concat());
+        assert!(bss.data.is_empty());
+        assert_eq!(bss.size, 16);
+        assert_eq!(bss.align_pow2, 4);
+        assert_eq!(scratch.value, 16);
+    }
+
+    #[test]
+    fn assemble_zerofill_without_symbol_is_allowed() {
+        let obj = assemble_source(".text\nret\n.zerofill __DATA,__bss,,8,2\n").unwrap();
+        let bss = obj.section("__DATA", "__bss").unwrap();
+        assert_eq!(bss.size, 8);
+        assert_eq!(bss.align_pow2, 2);
+        assert!(!obj.symbols.iter().any(|sym| sym.name.is_empty()));
     }
 
     #[test]
