@@ -809,6 +809,7 @@ impl<'a> Parser<'a> {
             "tst" => self.parse_tst(),
 
             // Move
+            "csel" => self.parse_csel(),
             "cset" => self.parse_cset(),
             "cinc" => self.parse_cinc(),
             "mov" => self.parse_mov(),
@@ -1137,6 +1138,19 @@ impl<'a> Parser<'a> {
             cond: invert_condition(cond),
             sf,
         })
+    }
+
+    fn parse_csel(&mut self) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let cond_name = self.expect_ident()?;
+        let cond = parse_condition(&cond_name)
+            .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
+        Ok(Inst::Csel { rd, rn, rm, cond, sf })
     }
 
     fn parse_cinc(&mut self) -> Result<Inst, ParseError> {
@@ -2352,6 +2366,14 @@ mod tests {
         assert_eq!(
             parse_inst("cset x0, eq"),
             Inst::Csinc { rd: X0, rn: XZR, rm: XZR, cond: Cond::NE, sf: true }
+        );
+    }
+
+    #[test]
+    fn parse_csel() {
+        assert_eq!(
+            parse_inst("csel w0, w0, w1, gt"),
+            Inst::Csel { rd: W0, rn: W0, rm: W1, cond: Cond::GT, sf: false }
         );
     }
 

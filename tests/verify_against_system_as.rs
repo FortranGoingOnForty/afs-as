@@ -119,6 +119,7 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_ret()      { verify("ret",           Inst::Ret  { rn: X30 }); }
 #[test] fn sys_br()       { verify("br x8",         Inst::Br   { rn: X8 }); }
 #[test] fn sys_blr()      { verify("blr x9",        Inst::Blr  { rn: X9 }); }
+#[test] fn sys_csel()     { verify("csel w0, w0, w1, gt", Inst::Csel { rd: W0, rn: W0, rm: W1, cond: Cond::GT, sf: false }); }
 #[test] fn sys_csinc()    { verify("csinc x2, x3, x3, ne", Inst::Csinc { rd: X2, rn: X3, rm: X3, cond: Cond::NE, sf: true }); }
 
 // ---- Load/Store (unsigned offset) ----

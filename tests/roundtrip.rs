@@ -108,6 +108,7 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_cmp_reg()    { roundtrip(".text\ncmp x5, x6\n"); }
 #[test] fn rt_cmp_imm()    { roundtrip(".text\ncmp x5, #42\n"); }
 #[test] fn rt_tst()        { roundtrip(".text\ntst x0, x1\n"); }
+#[test] fn rt_csel()       { roundtrip(".text\ncsel w0, w0, w1, gt\n"); }
 #[test] fn rt_cset()       { roundtrip(".text\ncset x0, eq\n"); }
 #[test] fn rt_cinc()       { roundtrip(".text\ncinc w2, w3, ne\n"); }
 #[test] fn rt_movz()       { roundtrip(".text\nmovz x0, #0x1234\n"); }

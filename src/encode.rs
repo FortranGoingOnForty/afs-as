@@ -130,6 +130,8 @@ pub enum Inst {
     Sdiv { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// UDIV Xd, Xn, Xm
     Udiv { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
+    /// CSEL Xd, Xn, Xm, cond
+    Csel { rd: GpReg, rn: GpReg, rm: GpReg, cond: Cond, sf: bool },
 
     // ---- Logic (register) ----
 
@@ -535,6 +537,7 @@ impl Inst {
             Inst::Ret { rn } => 0xD65F0000 | (rn.enc() << 5),
             Inst::Br { rn } => 0xD61F0000 | (rn.enc() << 5),
             Inst::Blr { rn } => 0xD63F0000 | (rn.enc() << 5),
+            Inst::Csel { rd, rn, rm, cond, sf } => csel(*sf, 0b00, *rm, *cond, *rn, *rd),
             Inst::Csinc { rd, rn, rm, cond, sf } => csel(*sf, 0b01, *rm, *cond, *rn, *rd),
 
             // ---- Address generation ----
@@ -936,6 +939,7 @@ mod tests {
     #[test] fn ret_x30()        { assert_eq!(Inst::Ret { rn: X30 }.encode(), 0xD65F03C0); }
     #[test] fn br_x16()         { assert_eq!(Inst::Br  { rn: X16 }.encode(), 0xD61F0200); }
     #[test] fn blr_x17()        { assert_eq!(Inst::Blr { rn: X17 }.encode(), 0xD63F0220); }
+    #[test] fn csel_w0_w0_w1_gt() { assert_eq!(Inst::Csel { rd: W0, rn: W0, rm: W1, cond: Cond::GT, sf: false }.encode(), 0x1A81C000); }
     #[test] fn csinc_x2_x3_x3_ne() { assert_eq!(Inst::Csinc { rd: X2, rn: X3, rm: X3, cond: Cond::NE, sf: true }.encode(), 0x9A831462); }
 
     // ---- Address generation ----
