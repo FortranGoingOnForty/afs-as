@@ -200,6 +200,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "atomic_fences",
+        source: "atomic_fences.c",
+        driver: "extern int fence_acquire(int *);\nextern void fence_release(int *, int);\nextern int fence_acq_rel(int *);\nextern int fence_seq_cst(int *);\nint main(void) {\n    int x = 5;\n    if (fence_acquire(&x) != 5) return 1;\n    fence_release(&x, 9);\n    if (x != 9) return 1;\n    if (fence_acq_rel(&x) != 9) return 1;\n    if (fence_seq_cst(&x) != 9) return 1;\n    return 0;\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "atomics8",
         source: "atomics8.c",
         driver: "extern unsigned char load_then_store8(unsigned char);\nextern unsigned char swap8(unsigned char);\nint main(void) {\n    return (load_then_store8(4) != 0u)\n        || (load_then_store8(3) != 4u)\n        || (swap8(9) != 7u)\n        || (swap8(2) != 9u);\n}\n",
