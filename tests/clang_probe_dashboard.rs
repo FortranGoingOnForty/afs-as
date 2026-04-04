@@ -80,6 +80,18 @@ const CASES: &[ProbeCase] = &[
         support: Some("int ext_value = 41;\n"),
     },
     ProbeCase {
+        name: "ext_array",
+        source: "ext_array.c",
+        driver: "extern int read_ext_array_slot(int);\nint main(void) {\n    return (read_ext_array_slot(0) != 11)\n        || (read_ext_array_slot(1) != 22)\n        || (read_ext_array_slot(2) != 33)\n        || (read_ext_array_slot(7) != 44);\n}\n",
+        support: Some("int ext_array[4] = {11, 22, 33, 44};\n"),
+    },
+    ProbeCase {
+        name: "func_ptr",
+        source: "func_ptr.c",
+        driver: "extern int call_helper_ptr(int);\nint main(void) {\n    return (call_helper_ptr(4) != 15) || (call_helper_ptr(-1) != 0);\n}\n",
+        support: Some("int helper(int x) { return x * 3; }\n"),
+    },
+    ProbeCase {
         name: "float_branch",
         source: "float_branch.c",
         driver: "extern double clampish(double, double);\nint main(void) { double got = clampish(2.0, 3.0); return (got < 9.49) || (got > 9.51); }\n",
