@@ -713,7 +713,6 @@ impl Assembler {
             Directive::LinkerOptimizationHint(hint) => {
                 self.record_linker_optimization_hint(hint);
             }
-            Directive::Ignored(_) => {}
         }
         Ok(())
     }
@@ -824,7 +823,6 @@ impl Assembler {
             Directive::LinkerOptimizationHint(hint) => {
                 self.record_linker_optimization_hint(hint);
             }
-            Directive::Ignored(_) => {}
         }
         Ok(())
     }
@@ -2680,10 +2678,11 @@ mod tests {
     }
 
     #[test]
-    fn assemble_ignored_directive_does_not_switch_sections() {
-        let obj = assemble_source(".data\n.byte 1\n.unknown_directive\n.byte 2\n").unwrap();
-        assert_eq!(text_bytes(&obj), Vec::<u8>::new());
-        assert_eq!(data_bytes(&obj), vec![1, 2]);
+    fn assemble_unknown_directive_is_rejected() {
+        let err = assemble_source(".data\n.byte 1\n.unknown_directive\n.byte 2\n").unwrap_err();
+        assert_eq!(err.line, Some(3));
+        assert_eq!(err.col, Some(1));
+        assert!(err.msg.contains("unsupported directive '.unknown_directive'"), "got: {}", err);
     }
 
     #[test]

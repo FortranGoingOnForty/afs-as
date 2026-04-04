@@ -98,7 +98,6 @@ pub enum Directive {
     SubsectionsViaSymbols,
     BuildVersion(BuildVersionDirective),
     LinkerOptimizationHint(LinkerOptimizationHintDirective),
-    Ignored(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,7 +279,7 @@ impl<'a> Parser<'a> {
                 } else {
                     // Directive
                     stmts.push(LocatedStmt {
-                        stmt: self.parse_directive(&name)?,
+                        stmt: self.parse_directive(&name, start.line, start.col)?,
                         line: start.line,
                         col: start.col,
                     });
@@ -355,7 +354,7 @@ impl<'a> Parser<'a> {
         Ok(lower)
     }
 
-    fn parse_directive(&mut self, name: &str) -> Result<Stmt, ParseError> {
+    fn parse_directive(&mut self, name: &str, line: u32, col: u32) -> Result<Stmt, ParseError> {
         let dir = match name {
             ".text" => Directive::Text,
             ".data" => Directive::Data,
@@ -548,15 +547,20 @@ impl<'a> Parser<'a> {
                 Directive::LinkerOptimizationHint(LinkerOptimizationHintDirective { kind, labels })
             }
             _ if name.starts_with(".cfi_") => {
-                return Err(self.err(format!(
+                return Err(ParseError {
+                    line,
+                    col,
+                    msg: format!(
                     "unsupported CFI directive '{}' (supported: .cfi_startproc, .cfi_endproc, .cfi_def_cfa, .cfi_def_cfa_offset, .cfi_def_cfa_register, .cfi_offset, .cfi_restore, .cfi_adjust_cfa_offset)",
                     name
-                )));
+                )});
             }
             _ => {
-                // Unknown directive — skip to end of line.
-                while !self.at_end_of_stmt() { self.advance(); }
-                Directive::Ignored(name.to_string())
+                return Err(ParseError {
+                    line,
+                    col,
+                    msg: format!("unsupported directive '{}'", name),
+                });
             }
         };
         Ok(Stmt::Directive(dir))
@@ -3406,9 +3410,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_unknown_directive_is_ignored() {
-        let stmts = parse_stmts(".unknown_directive");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Ignored(".unknown_directive".into()))]);
+    fn parse_unknown_directive_errors() {
+        let err = parse_err(".unknown_directive");
+        assert!(err.contains("unsupported directive '.unknown_directive'"), "got: {}", err);
     }
 
     #[test]

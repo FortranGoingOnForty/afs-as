@@ -91,6 +91,29 @@ fn parse_errors_include_file_line_source_and_caret() {
 }
 
 #[test]
+fn unsupported_directive_errors_include_file_line_source_and_caret() {
+    let root = temp_root("afs_cli_unsupported_directive");
+    let input = root.join("broken.s");
+    fs::write(&input, ".text\n.unknown_directive\n").expect("write input");
+
+    let output = afs_as().arg(&input).output().expect("run afs-as");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("{}:2:1: error:", input.display())),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("unsupported directive '.unknown_directive'"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(stderr.contains(".unknown_directive"), "stderr:\n{}", stderr);
+    assert!(stderr.contains("^"), "stderr:\n{}", stderr);
+}
+
+#[test]
 fn assembly_errors_include_file_line_source_and_caret() {
     let root = temp_root("afs_cli_asm_error");
     let input = root.join("broken.s");
