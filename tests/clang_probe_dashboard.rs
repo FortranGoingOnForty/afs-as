@@ -62,10 +62,22 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "counted_loop",
+        source: "counted_loop.c",
+        driver: "extern int sum_to_n(int);\nint main(void) { return sum_to_n(10) != 45; }\n",
+        support: None,
+    },
+    ProbeCase {
         name: "ext_global",
         source: "ext_global.c",
         driver: "extern int read_ext_plus_one(void);\nint main(void) { return read_ext_plus_one() != 42; }\n",
         support: Some("int ext_value = 41;\n"),
+    },
+    ProbeCase {
+        name: "float_branch",
+        source: "float_branch.c",
+        driver: "extern double clampish(double, double);\nint main(void) { double got = clampish(2.0, 3.0); return (got < 9.49) || (got > 9.51); }\n",
+        support: None,
     },
     ProbeCase {
         name: "extern_puts",
