@@ -225,13 +225,18 @@ impl Assembler {
             Directive::Section(seg, sect) => {
                 let seg_lower = seg.to_lowercase();
                 let sect_lower = sect.to_lowercase();
-                if seg_lower.contains("text") || sect_lower.contains("text") {
+                if seg_lower == "__text" && sect_lower == "__text" {
                     self.section = 0;
-                } else {
+                } else if seg_lower == "__data" && sect_lower == "__data" {
                     self.section = 1;
+                } else {
+                    return Err(AsmError(format!(
+                        "unsupported section {},{} (only __TEXT,__text and __DATA,__data are currently supported)",
+                        seg, sect
+                    )));
                 }
             }
-            _ => {} // Skip unknown directives.
+            Directive::Ignored(_) | Directive::SubsectionsViaSymbols | Directive::BuildVersion { .. } => {}
         }
         Ok(())
     }
@@ -418,5 +423,18 @@ mod tests {
         let obj = assemble_source(src).unwrap();
         assert_eq!(obj.text.len(), 8); // nop + ret
         assert_eq!(obj.data, vec![1, 2]);
+    }
+
+    #[test]
+    fn assemble_ignored_directive_does_not_switch_sections() {
+        let obj = assemble_source(".data\n.byte 1\n.cfi_startproc\n.byte 2\n").unwrap();
+        assert_eq!(obj.text, Vec::<u8>::new());
+        assert_eq!(obj.data, vec![1, 2]);
+    }
+
+    #[test]
+    fn assemble_rejects_unsupported_section() {
+        let err = assemble_source(".section __DATA,__bss\n.space 16\n").unwrap_err();
+        assert!(err.0.contains("unsupported section"), "got: {}", err.0);
     }
 }

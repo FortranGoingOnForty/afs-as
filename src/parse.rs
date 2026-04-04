@@ -55,6 +55,7 @@ pub enum Directive {
     Section(String, String),
     SubsectionsViaSymbols,
     BuildVersion { platform: String, version: String },
+    Ignored(String),
 }
 
 /// Parse error with source location.
@@ -290,7 +291,7 @@ impl<'a> Parser<'a> {
             _ => {
                 // Unknown directive — skip to end of line.
                 while !self.at_end_of_stmt() { self.advance(); }
-                return Ok(Stmt::Directive(Directive::Text)); // placeholder
+                Directive::Ignored(name.to_string())
             }
         };
         Ok(Stmt::Directive(dir))
@@ -1300,6 +1301,12 @@ mod tests {
     fn parse_byte_directive() {
         let stmts = parse_stmts(".byte 0x41, 0x42, 0x43");
         assert_eq!(stmts, vec![Stmt::Directive(Directive::Byte(vec![0x41, 0x42, 0x43]))]);
+    }
+
+    #[test]
+    fn parse_unknown_directive_is_ignored() {
+        let stmts = parse_stmts(".cfi_startproc");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Ignored(".cfi_startproc".into()))]);
     }
 
     // ---- Multi-line programs ----
