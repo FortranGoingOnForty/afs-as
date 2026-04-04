@@ -107,6 +107,8 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_b_lt()     { verify("b.lt #32",      Inst::BCond { cond: Cond::LT, offset: 32 }); }
 #[test] fn sys_cbz()      { verify("cbz x5, #16",   Inst::Cbz  { rt: X5, offset: 16, sf: true }); }
 #[test] fn sys_cbnz()     { verify("cbnz x10, #24", Inst::Cbnz { rt: X10, offset: 24, sf: true }); }
+#[test] fn sys_tbz()      { verify("tbz x0, #5, #8", Inst::Tbz { rt: X0, bit: 5, offset: 8, sf: true }); }
+#[test] fn sys_tbnz()     { verify("tbnz x1, #33, #12", Inst::Tbnz { rt: X1, bit: 33, offset: 12, sf: true }); }
 #[test] fn sys_ret()      { verify("ret",           Inst::Ret  { rn: X30 }); }
 #[test] fn sys_br()       { verify("br x8",         Inst::Br   { rn: X8 }); }
 #[test] fn sys_blr()      { verify("blr x9",        Inst::Blr  { rn: X9 }); }
@@ -130,6 +132,10 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_ldrb_reg() { verify("ldrb w0, [x1, x2]", Inst::LdrbReg { rt: W0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }); }
 #[test] fn sys_ldrsw_reg() { verify("ldrsw x6, [x7, w8, sxtw #2]", Inst::LdrswReg { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Sxtw, shift: true }); }
 #[test] fn sys_ldrsw_lit() { verify("ldrsw x1, #8", Inst::LdrswLit { rt: X1, offset: 8 }); }
+
+// ---- Address generation ----
+
+#[test] fn sys_adr()      { verify("adr x0, #8", Inst::Adr { rd: X0, imm: 8 }); }
 
 // ---- Load/Store pair ----
 

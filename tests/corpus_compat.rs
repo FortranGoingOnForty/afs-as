@@ -55,6 +55,15 @@ fn corpus_addressing_surface_matches_text_bytes() {
 }
 
 #[test]
+fn corpus_branch_address_surface_matches_text_bytes() {
+    let paths = assemble_fixture("branch_address_surface.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
 fn corpus_external_call_matches_relocations_and_symbols() {
     let paths = assemble_fixture("external_call.s");
 

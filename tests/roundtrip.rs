@@ -120,9 +120,12 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_b_le()       { roundtrip(".text\nb.le #20\n"); }
 #[test] fn rt_cbz()        { roundtrip(".text\ncbz x5, #16\n"); }
 #[test] fn rt_cbnz()       { roundtrip(".text\ncbnz x10, #24\n"); }
+#[test] fn rt_tbz()        { roundtrip(".text\ntbz x0, #5, #8\n"); }
+#[test] fn rt_tbnz()       { roundtrip(".text\ntbnz x1, #33, #12\n"); }
 #[test] fn rt_ret()        { roundtrip(".text\nret\n"); }
 #[test] fn rt_br()         { roundtrip(".text\nbr x8\n"); }
 #[test] fn rt_blr()        { roundtrip(".text\nblr x9\n"); }
+#[test] fn rt_adr()        { roundtrip(".text\nadr x0, #8\n"); }
 #[test] fn rt_ldr64()      { roundtrip(".text\nldr x0, [x1, #24]\n"); }
 #[test] fn rt_str64()      { roundtrip(".text\nstr x2, [x3, #32]\n"); }
 #[test] fn rt_ldr32()      { roundtrip(".text\nldr w4, [x5, #12]\n"); }
