@@ -27,6 +27,7 @@ pub enum Stmt {
 pub struct LabelRef {
     pub symbol: String,
     pub kind: RelocKind,
+    pub addend: i64,
 }
 
 /// What kind of relocation is needed.
@@ -756,6 +757,16 @@ impl<'a> Parser<'a> {
         )))
     }
 
+    fn parse_optional_symbol_addend(&mut self) -> Result<i64, ParseError> {
+        if self.eat(&Tok::Plus) {
+            self.parse_const_expr("symbol addend")
+        } else if self.eat(&Tok::Minus) {
+            Ok(-self.parse_const_expr("symbol addend")?)
+        } else {
+            Ok(0)
+        }
+    }
+
     fn starts_non_register_symbol_reference(&self) -> bool {
         if self.numeric_label_ref_at(self.pos).is_some() {
             return true;
@@ -1048,8 +1059,9 @@ impl<'a> Parser<'a> {
                 &[("PAGEOFF", RelocKind::PageOff12)],
                 "add/sub symbol operand",
             )?;
+            let addend = self.parse_optional_symbol_addend()?;
             let inst = Inst::AddImm { rd, rn, imm12: 0, shift: false, sf };
-            return Ok(Stmt::InstructionWithReloc(inst, LabelRef { symbol: label, kind }));
+            return Ok(Stmt::InstructionWithReloc(inst, LabelRef { symbol: label, kind, addend }));
         }
 
         // Normal add/sub (immediate or register).
@@ -1352,9 +1364,10 @@ impl<'a> Parser<'a> {
             Ok(Stmt::Instruction(Inst::B { offset }))
         } else {
             let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::B { offset: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Branch26 },
+                LabelRef { symbol: label, kind: RelocKind::Branch26, addend },
             ))
         }
     }
@@ -1365,9 +1378,10 @@ impl<'a> Parser<'a> {
             Ok(Stmt::Instruction(Inst::Bl { offset }))
         } else {
             let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Bl { offset: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Branch26 },
+                LabelRef { symbol: label, kind: RelocKind::Branch26, addend },
             ))
         }
     }
@@ -1380,9 +1394,10 @@ impl<'a> Parser<'a> {
             Ok(Stmt::Instruction(Inst::BCond { cond, offset }))
         } else {
             let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::BCond { cond, offset: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Branch19 },
+                LabelRef { symbol: label, kind: RelocKind::Branch19, addend },
             ))
         }
     }
@@ -1400,6 +1415,7 @@ impl<'a> Parser<'a> {
             Ok(Stmt::Instruction(inst))
         } else {
             let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
             let inst = if is_nz {
                 Inst::Cbnz { rt, offset: 0, sf }
             } else {
@@ -1407,7 +1423,7 @@ impl<'a> Parser<'a> {
             };
             Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind: RelocKind::Branch19 },
+                LabelRef { symbol: label, kind: RelocKind::Branch19, addend },
             ))
         }
     }
@@ -1427,6 +1443,7 @@ impl<'a> Parser<'a> {
             Ok(Stmt::Instruction(inst))
         } else {
             let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
             let inst = if is_nz {
                 Inst::Tbnz { rt, bit, offset: 0, sf }
             } else {
@@ -1434,7 +1451,7 @@ impl<'a> Parser<'a> {
             };
             Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind: RelocKind::Branch14 },
+                LabelRef { symbol: label, kind: RelocKind::Branch14, addend },
             ))
         }
     }
@@ -1456,9 +1473,10 @@ impl<'a> Parser<'a> {
             Ok(Stmt::Instruction(Inst::Adr { rd, imm }))
         } else {
             let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Adr { rd, imm: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Adr21 },
+                LabelRef { symbol: label, kind: RelocKind::Adr21, addend },
             ))
         }
     }
@@ -1480,9 +1498,10 @@ impl<'a> Parser<'a> {
                 ],
                 "adrp symbol operand",
             )?;
+            let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Adrp { rd, imm: 0 },
-                LabelRef { symbol: label, kind },
+                LabelRef { symbol: label, kind, addend },
             ))
         }
     }
@@ -1510,6 +1529,7 @@ impl<'a> Parser<'a> {
 
         if is_load && self.starts_non_register_literal_reference() {
             let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
             let inst = if sf {
                 Inst::LdrLit64 { rt, offset: 0 }
             } else {
@@ -1517,7 +1537,7 @@ impl<'a> Parser<'a> {
             };
             return Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind: RelocKind::Literal19 },
+                LabelRef { symbol: label, kind: RelocKind::Literal19, addend },
             ));
         }
 
@@ -1566,6 +1586,7 @@ impl<'a> Parser<'a> {
                 &[("PAGEOFF", RelocKind::PageOff12)][..]
             };
             let kind = self.parse_symbol_reloc_modifier(None, allowed, "memory symbol operand")?;
+            let addend = self.parse_optional_symbol_addend()?;
             self.expect(&Tok::RBracket)?;
             let inst = if sf {
                 if is_load { Inst::LdrImm64 { rt, rn, offset: 0 } }
@@ -1576,7 +1597,7 @@ impl<'a> Parser<'a> {
             };
             return Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind },
+                LabelRef { symbol: label, kind, addend },
             ));
         }
 
@@ -1637,6 +1658,7 @@ impl<'a> Parser<'a> {
 
         if is_load && self.starts_non_register_literal_reference() {
             let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
             let inst = if is_double {
                 Inst::LdrFpLit64 { rt, offset: 0 }
             } else {
@@ -1644,7 +1666,7 @@ impl<'a> Parser<'a> {
             };
             return Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind: RelocKind::Literal19 },
+                LabelRef { symbol: label, kind: RelocKind::Literal19, addend },
             ));
         }
 
@@ -1756,9 +1778,10 @@ impl<'a> Parser<'a> {
 
         if self.starts_non_register_literal_reference() {
             let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
             return Ok(Stmt::InstructionWithReloc(
                 Inst::LdrswLit { rt, offset: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Literal19 },
+                LabelRef { symbol: label, kind: RelocKind::Literal19, addend },
             ));
         }
 
@@ -2608,7 +2631,7 @@ mod tests {
             parse_stmts("tbz x0, #5, target"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Tbz { rt: X0, bit: 5, offset: 0, sf: true },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Branch14 },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Branch14, addend: 0 },
             )]
         );
     }
@@ -2620,7 +2643,7 @@ mod tests {
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::Tbnz { rt: X0, bit: 33, offset: 0, sf: true },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch14 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch14, addend: 0 },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -2633,7 +2656,7 @@ mod tests {
             parse_stmts("adr x0, target"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Adr { rd: X0, imm: 0 },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Adr21 },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Adr21, addend: 0 },
             )]
         );
     }
@@ -2650,7 +2673,7 @@ mod tests {
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::Adr { rd: X0, imm: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Adr21 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Adr21, addend: 0 },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -2819,7 +2842,7 @@ mod tests {
             parse_stmts("ldr x0, target"),
             vec![Stmt::InstructionWithReloc(
                 Inst::LdrLit64 { rt: X0, offset: 0 },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19 },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19, addend: 0 },
             )]
         );
     }
@@ -2835,7 +2858,7 @@ mod tests {
             parse_stmts("ldr d10, target"),
             vec![Stmt::InstructionWithReloc(
                 Inst::LdrFpLit64 { rt: D10, offset: 0 },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19 },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19, addend: 0 },
             )]
         );
     }
@@ -2852,7 +2875,7 @@ mod tests {
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::LdrLit64 { rt: X0, offset: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19, addend: 0 },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -2866,7 +2889,7 @@ mod tests {
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::LdrFpLit32 { rt: S0, offset: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19, addend: 0 },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -2879,7 +2902,7 @@ mod tests {
             parse_stmts("ldrsw x0, target"),
             vec![Stmt::InstructionWithReloc(
                 Inst::LdrswLit { rt: X0, offset: 0 },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19 },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19, addend: 0 },
             )]
         );
     }
@@ -2896,7 +2919,7 @@ mod tests {
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::LdrswLit { rt: X0, offset: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19, addend: 0 },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -3656,7 +3679,7 @@ _main:
             parse_stmts("b done"),
             vec![Stmt::InstructionWithReloc(
                 Inst::B { offset: 0 },
-                LabelRef { symbol: "done".into(), kind: RelocKind::Branch26 },
+                LabelRef { symbol: "done".into(), kind: RelocKind::Branch26, addend: 0 },
             )]
         );
     }
@@ -3667,7 +3690,7 @@ _main:
             parse_stmts("b.eq done"),
             vec![Stmt::InstructionWithReloc(
                 Inst::BCond { cond: Cond::EQ, offset: 0 },
-                LabelRef { symbol: "done".into(), kind: RelocKind::Branch19 },
+                LabelRef { symbol: "done".into(), kind: RelocKind::Branch19, addend: 0 },
             )]
         );
     }
@@ -3680,11 +3703,11 @@ _main:
                 Stmt::Label("l_.str".into()),
                 Stmt::InstructionWithReloc(
                     Inst::Adrp { rd: X0, imm: 0 },
-                    LabelRef { symbol: "l_.str".into(), kind: RelocKind::Page21 },
+                    LabelRef { symbol: "l_.str".into(), kind: RelocKind::Page21, addend: 0 },
                 ),
                 Stmt::InstructionWithReloc(
                     Inst::AddImm { rd: X0, rn: X0, imm12: 0, shift: false, sf: true },
-                    LabelRef { symbol: "l_.str".into(), kind: RelocKind::PageOff12 },
+                    LabelRef { symbol: "l_.str".into(), kind: RelocKind::PageOff12, addend: 0 },
                 ),
             ]
         );
@@ -3696,7 +3719,7 @@ _main:
             parse_stmts("adrp x8, _ext_global@GOTPAGE"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Adrp { rd: X8, imm: 0 },
-                LabelRef { symbol: "_ext_global".into(), kind: RelocKind::GotLoadPage21 },
+                LabelRef { symbol: "_ext_global".into(), kind: RelocKind::GotLoadPage21, addend: 0 },
             )]
         );
     }
@@ -3710,6 +3733,7 @@ _main:
                 LabelRef {
                     symbol: "_ext_global".into(),
                     kind: RelocKind::GotLoadPageOff12,
+                    addend: 0,
                 },
             )]
         );
@@ -3721,7 +3745,29 @@ _main:
             parse_stmts("adrp x0, _tls_counter@TLVPPAGE"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Adrp { rd: X0, imm: 0 },
-                LabelRef { symbol: "_tls_counter".into(), kind: RelocKind::TlvpLoadPage21 },
+                LabelRef { symbol: "_tls_counter".into(), kind: RelocKind::TlvpLoadPage21, addend: 0 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_bl_symbol_addend() {
+        assert_eq!(
+            parse_stmts("bl _puts + 4"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::Bl { offset: 0 },
+                LabelRef { symbol: "_puts".into(), kind: RelocKind::Branch26, addend: 4 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_adrp_page_addend() {
+        assert_eq!(
+            parse_stmts("adrp x0, _data@PAGE + 0x24"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::Adrp { rd: X0, imm: 0 },
+                LabelRef { symbol: "_data".into(), kind: RelocKind::Page21, addend: 0x24 },
             )]
         );
     }
@@ -3735,7 +3781,19 @@ _main:
                 LabelRef {
                     symbol: "_tls_counter".into(),
                     kind: RelocKind::TlvpLoadPageOff12,
+                    addend: 0,
                 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_ldr_pageoff_addend_memory_operand() {
+        assert_eq!(
+            parse_stmts("ldr x0, [x0, _data@PAGEOFF + 0x24]"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::LdrImm64 { rt: X0, rn: X0, offset: 0 },
+                LabelRef { symbol: "_data".into(), kind: RelocKind::PageOff12, addend: 0x24 },
             )]
         );
     }
@@ -3746,7 +3804,7 @@ _main:
             parse_stmts("ldr x0, [x1, value@PAGEOFF]"),
             vec![Stmt::InstructionWithReloc(
                 Inst::LdrImm64 { rt: X0, rn: X1, offset: 0 },
-                LabelRef { symbol: "value".into(), kind: RelocKind::PageOff12 },
+                LabelRef { symbol: "value".into(), kind: RelocKind::PageOff12, addend: 0 },
             )]
         );
     }
@@ -3763,7 +3821,7 @@ _main:
             parse_stmts("b .Ldone"),
             vec![Stmt::InstructionWithReloc(
                 Inst::B { offset: 0 },
-                LabelRef { symbol: ".Ldone".into(), kind: RelocKind::Branch26 },
+                LabelRef { symbol: ".Ldone".into(), kind: RelocKind::Branch26, addend: 0 },
             )]
         );
     }
@@ -3774,7 +3832,7 @@ _main:
             parse_stmts("cbz x0, done"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Cbz { rt: X0, offset: 0, sf: true },
-                LabelRef { symbol: "done".into(), kind: RelocKind::Branch19 },
+                LabelRef { symbol: "done".into(), kind: RelocKind::Branch19, addend: 0 },
             )]
         );
     }
@@ -3787,7 +3845,7 @@ _main:
                 Stmt::Label(".Ltmp$1$1".into()),
                 Stmt::InstructionWithReloc(
                     Inst::B { offset: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch26 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch26, addend: 0 },
                 ),
             ]
         );
@@ -3800,7 +3858,7 @@ _main:
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::B { offset: 0 },
-                    LabelRef { symbol: ".Ltmp$2$1".into(), kind: RelocKind::Branch26 },
+                    LabelRef { symbol: ".Ltmp$2$1".into(), kind: RelocKind::Branch26, addend: 0 },
                 ),
                 Stmt::Label(".Ltmp$2$1".into()),
             ]
@@ -3815,7 +3873,7 @@ _main:
                 Stmt::Label(".Ltmp$1$1".into()),
                 Stmt::InstructionWithReloc(
                     Inst::Cbz { rt: X0, offset: 0, sf: true },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch19 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch19, addend: 0 },
                 ),
             ]
         );
@@ -3842,11 +3900,11 @@ _main:
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::Adrp { rd: X0, imm: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Page21 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Page21, addend: 0 },
                 ),
                 Stmt::InstructionWithReloc(
                     Inst::AddImm { rd: X0, rn: X0, imm12: 0, shift: false, sf: true },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::PageOff12 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::PageOff12, addend: 0 },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]

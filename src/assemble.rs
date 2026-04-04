@@ -15,7 +15,8 @@ use crate::encode::Inst;
 use crate::expr::{self, ClassifiedExpr, Expr, SymbolValue};
 use crate::macho::{self, BuildVersion, ObjectFile, Relocation, Section, SectionKind, Symbol};
 use crate::parse::{
-    self, BuildVersionDirective, Directive, LinkerOptimizationHintDirective, RelocKind, Stmt,
+    self, BuildVersionDirective, Directive, LabelRef, LinkerOptimizationHintDirective, RelocKind,
+    Stmt,
 };
 use crate::reg::{GpReg, SP};
 
@@ -177,10 +178,40 @@ enum FixupKind {
 struct PendingReloc {
     section: usize,
     offset: u32,
-    symbol: String,
+    target: PendingRelocTarget,
     length: u8,
     reloc_type: u32,
     pcrel: bool,
+    extern_: bool,
+}
+
+#[derive(Debug, Clone)]
+enum PendingRelocTarget {
+    Symbol(String),
+    Raw(u32),
+}
+
+fn label_ref_expr(label_ref: &LabelRef) -> Expr {
+    if label_ref.addend == 0 {
+        Expr::Symbol(label_ref.symbol.clone())
+    } else {
+        Expr::Add(
+            Box::new(Expr::Symbol(label_ref.symbol.clone())),
+            Box::new(Expr::Int(label_ref.addend)),
+        )
+    }
+}
+
+fn encode_addend_symbolnum(addend: i64) -> Result<u32, AsmError> {
+    const MIN: i64 = -(1 << 23);
+    const MAX: i64 = (1 << 23) - 1;
+    if !(MIN..=MAX).contains(&addend) {
+        return Err(AsmError(format!(
+            "relocation addend {} is out of range for ARM64_RELOC_ADDEND",
+            addend
+        )));
+    }
+    Ok((addend as i32 as u32) & 0x00FF_FFFF)
 }
 
 #[derive(Debug, Clone)]
@@ -472,7 +503,7 @@ impl Assembler {
                     self.fixups.push(Fixup {
                         section: self.section,
                         offset,
-                        expr: Expr::Symbol(label_ref.symbol.clone()),
+                        expr: label_ref_expr(label_ref),
                         kind: match label_ref.kind {
                             RelocKind::Page21 => FixupKind::Page21,
                             RelocKind::GotLoadPage21 => FixupKind::GotLoadPage21,
@@ -1040,10 +1071,7 @@ impl Assembler {
             )));
         }
         if addend != 0 {
-            return Err(AsmError(format!(
-                "external branch target '{}' must not include an addend",
-                symbol
-            )));
+            self.record_addend_reloc(fixup.section, fixup.offset, 2, addend)?;
         }
 
         self.record_pending_reloc(
@@ -1066,10 +1094,7 @@ impl Assembler {
         let context = if pcrel { "page fixup" } else { "pageoff fixup" };
         let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, context)?;
         if addend != 0 {
-            return Err(AsmError(format!(
-                "{} for '{}' must not include an addend",
-                context, symbol
-            )));
+            self.record_addend_reloc(fixup.section, fixup.offset, 2, addend)?;
         }
         self.record_pending_reloc(fixup.section, fixup.offset, symbol, 2, reloc_type, pcrel);
         Ok(())
@@ -1236,11 +1261,31 @@ impl Assembler {
         self.pending_relocs[section].push(PendingReloc {
             section,
             offset,
-            symbol,
+            target: PendingRelocTarget::Symbol(symbol),
             length,
             reloc_type,
             pcrel,
+            extern_: true,
         });
+    }
+
+    fn record_addend_reloc(
+        &mut self,
+        section: usize,
+        offset: u32,
+        length: u8,
+        addend: i64,
+    ) -> Result<(), AsmError> {
+        self.pending_relocs[section].push(PendingReloc {
+            section,
+            offset,
+            target: PendingRelocTarget::Raw(encode_addend_symbolnum(addend)?),
+            length,
+            reloc_type: crate::macho::ARM64_RELOC_ADDEND,
+            pcrel: false,
+            extern_: false,
+        });
+        Ok(())
     }
 
     fn record_common_symbol(&mut self, name: &str, size: u64, align_pow2: u8) -> Result<(), AsmError> {
@@ -1791,17 +1836,20 @@ impl Assembler {
         let mut missing_reloc_symbols = Vec::new();
         for relocs in &self.pending_relocs {
             for reloc in relocs {
-                if !self.labels.contains_key(&reloc.symbol)
-                    && !symbols.iter().any(|s| s.name == reloc.symbol)
-                    && !missing_reloc_symbols.iter().any(|name| name == &reloc.symbol)
+                let PendingRelocTarget::Symbol(symbol) = &reloc.target else {
+                    continue;
+                };
+                if !self.labels.contains_key(symbol)
+                    && !symbols.iter().any(|s| s.name == *symbol)
+                    && !missing_reloc_symbols.iter().any(|name| name == symbol)
                 {
-                    if is_assembler_local_symbol(&reloc.symbol) {
+                    if is_assembler_local_symbol(symbol) {
                         return Err(AsmError(format!(
                             "local symbol '{}' must be defined in this object",
-                            reloc.symbol
+                            symbol
                         )));
                     }
-                    missing_reloc_symbols.push(reloc.symbol.clone());
+                    missing_reloc_symbols.push(symbol.clone());
                 }
             }
         }
@@ -1830,7 +1878,10 @@ impl Assembler {
                 reloc.reloc_type == macho::ARM64_RELOC_PAGE21
                     || reloc.reloc_type == macho::ARM64_RELOC_PAGEOFF12
             })
-            .map(|reloc| reloc.symbol.clone())
+            .filter_map(|reloc| match &reloc.target {
+                PendingRelocTarget::Symbol(symbol) => Some(symbol.clone()),
+                PendingRelocTarget::Raw(_) => None,
+            })
             .collect();
         let symbol_order = self.symbol_order.clone();
         symbols.sort_by(|a, b| {
@@ -1868,16 +1919,20 @@ impl Assembler {
 
         for relocs in self.pending_relocs {
             for pending in relocs {
-                let sym_idx = symbols
-                    .iter()
-                    .position(|s| s.name == pending.symbol)
-                    .ok_or_else(|| AsmError(format!("missing relocation symbol '{}'", pending.symbol)))?;
+                let symbol_idx = match pending.target {
+                    PendingRelocTarget::Symbol(symbol) => symbols
+                        .iter()
+                        .position(|s| s.name == symbol)
+                        .ok_or_else(|| AsmError(format!("missing relocation symbol '{}'", symbol)))?
+                        as u32,
+                    PendingRelocTarget::Raw(value) => value,
+                };
                 self.sections[pending.section].relocations.push(Relocation {
                     offset: pending.offset,
-                    symbol_idx: sym_idx as u32,
+                    symbol_idx,
                     pcrel: pending.pcrel,
                     length: pending.length,
-                    extern_: true,
+                    extern_: pending.extern_,
                     reloc_type: pending.reloc_type,
                 });
             }
@@ -2845,6 +2900,39 @@ mod tests {
         assert!(relocs[0].pcrel);
         assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "_puts");
         assert_eq!(&text_bytes(&obj)[..4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn assemble_addend_relocations_precede_symbol_relocations() {
+        let obj = assemble_source(
+            ".text\n.globl _caller\n_caller:\nbl _puts + 4\nadrp x0, _data@PAGE + 0x24\nldr x0, [x0, _data@PAGEOFF + 0x24]\nret\n"
+        ).unwrap();
+
+        let relocs = text_relocs(&obj);
+        let reloc_types: Vec<_> = relocs.iter().map(|rel| rel.reloc_type).collect();
+        assert_eq!(
+            reloc_types,
+            vec![
+                crate::macho::ARM64_RELOC_ADDEND,
+                crate::macho::ARM64_RELOC_BRANCH26,
+                crate::macho::ARM64_RELOC_ADDEND,
+                crate::macho::ARM64_RELOC_PAGE21,
+                crate::macho::ARM64_RELOC_ADDEND,
+                crate::macho::ARM64_RELOC_PAGEOFF12,
+            ]
+        );
+        assert!(!relocs[0].extern_);
+        assert_eq!(relocs[0].symbol_idx, 4);
+        assert!(relocs[1].extern_);
+        assert_eq!(obj.symbols[relocs[1].symbol_idx as usize].name, "_puts");
+        assert!(!relocs[2].extern_);
+        assert_eq!(relocs[2].symbol_idx, 0x24);
+        assert!(relocs[3].extern_);
+        assert_eq!(obj.symbols[relocs[3].symbol_idx as usize].name, "_data");
+        assert!(!relocs[4].extern_);
+        assert_eq!(relocs[4].symbol_idx, 0x24);
+        assert!(relocs[5].extern_);
+        assert_eq!(obj.symbols[relocs[5].symbol_idx as usize].name, "_data");
     }
 
     #[test]

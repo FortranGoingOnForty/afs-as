@@ -55,6 +55,7 @@ pub const ARM64_RELOC_GOT_LOAD_PAGEOFF12: u32 = 6;
 pub const ARM64_RELOC_POINTER_TO_GOT: u32 = 7;
 pub const ARM64_RELOC_TLVP_LOAD_PAGE21: u32 = 8;
 pub const ARM64_RELOC_TLVP_LOAD_PAGEOFF12: u32 = 9;
+pub const ARM64_RELOC_ADDEND: u32 = 10;
 
 // Struct sizes
 const HEADER_SIZE: u32 = 32;

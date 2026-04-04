@@ -246,6 +246,20 @@ fn corpus_got_pointer_data_links_relocatable_with_support() {
 }
 
 #[test]
+fn corpus_addend_relocs_matches_raw_object() {
+    let paths = assemble_fixture("addend_relocs.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_relocations(&paths.obj)),
+        normalize_tool_output(&common::object_relocations(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
 fn corpus_shifted_addsub_matches_text_bytes() {
     let paths = assemble_fixture("shifted_addsub.s");
     assert_eq!(
