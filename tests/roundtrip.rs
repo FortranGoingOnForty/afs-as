@@ -417,8 +417,24 @@ fn rt_ldrb() {
     roundtrip(".text\nldrb w0, [x1, #3]\n");
 }
 #[test]
+fn rt_ldrb_post() {
+    roundtrip(".text\nldrb w9, [x1], #1\n");
+}
+#[test]
 fn rt_ldrh() {
     roundtrip(".text\nldrh w2, [x3, #6]\n");
+}
+#[test]
+fn rt_strb() {
+    roundtrip(".text\nstrb w8, [x9]\n");
+}
+#[test]
+fn rt_strb_post() {
+    roundtrip(".text\nstrb w9, [x8], #1\n");
+}
+#[test]
+fn rt_strh_pre() {
+    roundtrip(".text\nstrh w5, [x6, #2]!\n");
 }
 #[test]
 fn rt_ldrsw() {

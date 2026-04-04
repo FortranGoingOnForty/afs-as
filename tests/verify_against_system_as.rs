@@ -897,6 +897,17 @@ fn sys_ldrb() {
     );
 }
 #[test]
+fn sys_ldrb_post() {
+    verify(
+        "ldrb w9, [x1], #1",
+        Inst::LdrbPost {
+            rt: W9,
+            rn: X1,
+            offset: 1,
+        },
+    );
+}
+#[test]
 fn sys_ldrh() {
     verify(
         "ldrh w0, [x1, #6]",
@@ -904,6 +915,39 @@ fn sys_ldrh() {
             rt: W0,
             rn: X1,
             offset: 6,
+        },
+    );
+}
+#[test]
+fn sys_strb() {
+    verify(
+        "strb w8, [x9]",
+        Inst::Strb {
+            rt: W8,
+            rn: X9,
+            offset: 0,
+        },
+    );
+}
+#[test]
+fn sys_strb_post() {
+    verify(
+        "strb w9, [x8], #1",
+        Inst::StrbPost {
+            rt: W9,
+            rn: X8,
+            offset: 1,
+        },
+    );
+}
+#[test]
+fn sys_strh_pre() {
+    verify(
+        "strh w5, [x6, #2]!",
+        Inst::StrhPre {
+            rt: W5,
+            rn: X6,
+            offset: 2,
         },
     );
 }

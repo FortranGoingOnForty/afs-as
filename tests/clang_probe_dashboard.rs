@@ -115,6 +115,12 @@ const CASES: &[ProbeCase] = &[
         driver: "extern int both_small(int, int);\nint main(void) {\n    return (both_small(1, 2) != 2) || (both_small(3, 9) != 1) || (both_small(30, 40) != 0);\n}\n",
         support: None,
     },
+    ProbeCase {
+        name: "copy_until_zero",
+        source: "copy_until_zero.c",
+        driver: "extern int copy_until_zero(char *, const char *);\nint main(void) {\n    char buf[8] = {0};\n    int n = copy_until_zero(buf, \"cat\");\n    return (n != 3) || (buf[0] != 'c') || (buf[1] != 'a') || (buf[2] != 't') || (buf[3] != 0);\n}\n",
+        support: None,
+    },
 ];
 
 fn probe_source_path(name: &str) -> PathBuf {
