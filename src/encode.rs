@@ -547,6 +547,10 @@ pub enum Inst {
     Ldrb { rt: GpReg, rn: GpReg, offset: u16 },
     /// LDRH Wt, [Xn, #offset]  (halfword load, zero-extend)
     Ldrh { rt: GpReg, rn: GpReg, offset: u16 },
+    /// STRB Wt, [Xn, #offset]
+    Strb { rt: GpReg, rn: GpReg, offset: u16 },
+    /// STRH Wt, [Xn, #offset]
+    Strh { rt: GpReg, rn: GpReg, offset: u16 },
     /// LDRSW Xt, [Xn, #offset]  (32-bit load, sign-extend to 64)
     Ldrsw { rt: GpReg, rn: GpReg, offset: u16 },
     /// LDRB Wt, [Xn, Rm{, extend}]
@@ -559,6 +563,22 @@ pub enum Inst {
     },
     /// LDRH Wt, [Xn, Rm{, extend}]
     LdrhReg {
+        rt: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        extend: AddrExtend,
+        shift: bool,
+    },
+    /// STRB Wt, [Xn, Rm{, extend}]
+    StrbReg {
+        rt: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        extend: AddrExtend,
+        shift: bool,
+    },
+    /// STRH Wt, [Xn, Rm{, extend}]
+    StrhReg {
         rt: GpReg,
         rn: GpReg,
         rm: GpReg,
@@ -631,6 +651,14 @@ pub enum Inst {
     LdrPre32 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STR Wt, [Xn, #offset]!  (pre-index, 32-bit)
     StrPre32 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRB Wt, [Xn, #offset]!  (pre-index, byte)
+    LdrbPre { rt: GpReg, rn: GpReg, offset: i16 },
+    /// STRB Wt, [Xn, #offset]!  (pre-index, byte)
+    StrbPre { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRH Wt, [Xn, #offset]!  (pre-index, halfword)
+    LdrhPre { rt: GpReg, rn: GpReg, offset: i16 },
+    /// STRH Wt, [Xn, #offset]!  (pre-index, halfword)
+    StrhPre { rt: GpReg, rn: GpReg, offset: i16 },
     /// LDR Xt, [Xn, #offset]!  (pre-index, 64-bit)
     LdrPre64 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STR Xt, [Xn, #offset]!  (pre-index, 64-bit)
@@ -649,6 +677,14 @@ pub enum Inst {
     LdrPost32 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STR Wt, [Xn], #offset  (post-index, 32-bit)
     StrPost32 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRB Wt, [Xn], #offset  (post-index, byte)
+    LdrbPost { rt: GpReg, rn: GpReg, offset: i16 },
+    /// STRB Wt, [Xn], #offset  (post-index, byte)
+    StrbPost { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDRH Wt, [Xn], #offset  (post-index, halfword)
+    LdrhPost { rt: GpReg, rn: GpReg, offset: i16 },
+    /// STRH Wt, [Xn], #offset  (post-index, halfword)
+    StrhPost { rt: GpReg, rn: GpReg, offset: i16 },
     /// LDR Xt, [Xn], #offset  (post-index, 64-bit)
     LdrPost64 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STR Xt, [Xn], #offset  (post-index, 64-bit)
@@ -1374,6 +1410,14 @@ impl Inst {
                 let uoff = (*offset / 2) as u32;
                 (0b01_111_0_01_01 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
+            Inst::Strb { rt, rn, offset } => {
+                let uoff = *offset as u32;
+                (0b00_111_0_01_00 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Strh { rt, rn, offset } => {
+                let uoff = (*offset / 2) as u32;
+                (0b01_111_0_01_00 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
+            }
             Inst::Ldrsw { rt, rn, offset } => {
                 let uoff = (*offset / 4) as u32;
                 (0b10_111_0_01_10 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
@@ -1392,6 +1436,20 @@ impl Inst {
                 extend,
                 shift,
             } => ldst_reg(0b01, 0b01, *rm, *extend, *shift, *rn, *rt),
+            Inst::StrbReg {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            } => ldst_reg(0b00, 0b00, *rm, *extend, *shift, *rn, *rt),
+            Inst::StrhReg {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            } => ldst_reg(0b01, 0b00, *rm, *extend, *shift, *rn, *rt),
             Inst::LdrswReg {
                 rt,
                 rn,
@@ -1442,10 +1500,18 @@ impl Inst {
             // ---- Load/Store (pre/post-index) ----
             Inst::LdrPre32 { rt, rn, offset } => ldst_idx(0b10, 0b01, *offset, 0b11, *rn, *rt),
             Inst::StrPre32 { rt, rn, offset } => ldst_idx(0b10, 0b00, *offset, 0b11, *rn, *rt),
+            Inst::LdrbPre { rt, rn, offset } => ldst_idx(0b00, 0b01, *offset, 0b11, *rn, *rt),
+            Inst::StrbPre { rt, rn, offset } => ldst_idx(0b00, 0b00, *offset, 0b11, *rn, *rt),
+            Inst::LdrhPre { rt, rn, offset } => ldst_idx(0b01, 0b01, *offset, 0b11, *rn, *rt),
+            Inst::StrhPre { rt, rn, offset } => ldst_idx(0b01, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrPre64 { rt, rn, offset } => ldst_idx(0b11, 0b01, *offset, 0b11, *rn, *rt),
             Inst::StrPre64 { rt, rn, offset } => ldst_idx(0b11, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrPost32 { rt, rn, offset } => ldst_idx(0b10, 0b01, *offset, 0b01, *rn, *rt),
             Inst::StrPost32 { rt, rn, offset } => ldst_idx(0b10, 0b00, *offset, 0b01, *rn, *rt),
+            Inst::LdrbPost { rt, rn, offset } => ldst_idx(0b00, 0b01, *offset, 0b01, *rn, *rt),
+            Inst::StrbPost { rt, rn, offset } => ldst_idx(0b00, 0b00, *offset, 0b01, *rn, *rt),
+            Inst::LdrhPost { rt, rn, offset } => ldst_idx(0b01, 0b01, *offset, 0b01, *rn, *rt),
+            Inst::StrhPost { rt, rn, offset } => ldst_idx(0b01, 0b00, *offset, 0b01, *rn, *rt),
             Inst::LdrPost64 { rt, rn, offset } => ldst_idx(0b11, 0b01, *offset, 0b01, *rn, *rt),
             Inst::StrPost64 { rt, rn, offset } => ldst_idx(0b11, 0b00, *offset, 0b01, *rn, *rt),
             Inst::LdrFpPre64 { rt, rn, offset } => ldst_idx_fp(0b11, 0b01, *offset, 0b11, *rn, *rt),
@@ -3013,6 +3079,18 @@ mod tests {
         );
     }
     #[test]
+    fn ldrb_w9_x1_post_1() {
+        assert_eq!(
+            Inst::LdrbPost {
+                rt: W9,
+                rn: X1,
+                offset: 1
+            }
+            .encode(),
+            0x38401429
+        );
+    }
+    #[test]
     fn ldrh_w10_x11_2() {
         assert_eq!(
             Inst::Ldrh {
@@ -3022,6 +3100,66 @@ mod tests {
             }
             .encode(),
             0x7940056A
+        );
+    }
+    #[test]
+    fn strb_w9_x8_post_1() {
+        assert_eq!(
+            Inst::StrbPost {
+                rt: W9,
+                rn: X8,
+                offset: 1
+            }
+            .encode(),
+            0x38001509
+        );
+    }
+    #[test]
+    fn strb_w8_x9() {
+        assert_eq!(
+            Inst::Strb {
+                rt: W8,
+                rn: X9,
+                offset: 0
+            }
+            .encode(),
+            0x39000128
+        );
+    }
+    #[test]
+    fn strh_w10_x11_6() {
+        assert_eq!(
+            Inst::Strh {
+                rt: W10,
+                rn: X11,
+                offset: 6
+            }
+            .encode(),
+            0x79000D6A
+        );
+    }
+    #[test]
+    fn ldrh_w3_x4_pre_2() {
+        assert_eq!(
+            Inst::LdrhPre {
+                rt: W3,
+                rn: X4,
+                offset: 2
+            }
+            .encode(),
+            0x78402C83
+        );
+    }
+    #[test]
+    fn strh_w5_x6_post_2() {
+        assert_eq!(
+            Inst::StrhPost {
+                rt: W5,
+                rn: X6,
+                offset: 2
+            }
+            .encode(),
+            0x780024C5
         );
     }
     #[test]

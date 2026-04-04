@@ -164,6 +164,7 @@ Major covered families include:
 - load/store:
   - `ldr`, `str`
   - `ldrb`, `ldrh`, `ldrsw`
+  - `strb`, `strh`
   - `ldp`, `stp`
   - integer, FP scalar, and FP pair forms across the supported addressing modes
 - scalar atomic memory:
