@@ -196,6 +196,16 @@ fn corpus_extended_addsub_matches_text_bytes() {
 }
 
 #[test]
+fn corpus_conditional_select_surface_matches_raw_object() {
+    let paths = assemble_fixture("conditional_select_surface.s");
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
 fn corpus_external_call_matches_relocations_and_symbols() {
     let paths = assemble_fixture("external_call.s");
 
