@@ -1676,6 +1676,12 @@ mod tests {
     }
 
     #[test]
+    fn assemble_backward_branch_label() {
+        let obj = assemble_source(".text\nstart:\nnop\nb start\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[4..8], &Inst::B { offset: -4 }.encode().to_le_bytes());
+    }
+
+    #[test]
     fn assemble_local_cbz_label() {
         let obj = assemble_source(".text\nstart:\ncbz x0, done\nret\ndone:\nret\n").unwrap();
         assert_eq!(&text_bytes(&obj)[0..4], &Inst::Cbz { rt: X0, offset: 8, sf: true }.encode().to_le_bytes());
@@ -1690,8 +1696,34 @@ mod tests {
     }
 
     #[test]
+    fn assemble_external_b_creates_branch_relocation() {
+        let obj = assemble_source(".text\nb _exit\n").unwrap();
+        let reloc_name = &obj.symbols[text_relocs(&obj)[0].symbol_idx as usize].name;
+        assert_eq!(reloc_name, "_exit");
+        assert!(obj.symbols.iter().any(|sym| sym.name == "_exit" && sym.undefined));
+    }
+
+    #[test]
     fn assemble_branch19_requires_local_label() {
         let err = assemble_source(".text\nb.eq _foo\n").unwrap_err();
         assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_branch_rejects_misaligned_local_target() {
+        let err = assemble_source(".text\nb done\n.byte 0\ndone:\nret\n").unwrap_err();
+        assert!(err.0.contains("not 4-byte aligned"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_branch19_rejects_out_of_range_target() {
+        let err = assemble_source(".text\ncbz x0, done\n.space 1048576\ndone:\nret\n").unwrap_err();
+        assert!(err.0.contains("out of range"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn check_branch_offset_rejects_branch26_out_of_range() {
+        let err = check_branch_offset(1i64 << 27, 26).unwrap_err();
+        assert!(err.0.contains("out of range"), "got: {}", err.0);
     }
 }
