@@ -273,6 +273,30 @@ pub enum Inst {
     LdpPre64 { rt1: GpReg, rt2: GpReg, rn: GpReg, offset: i16 },
     /// LDP Xt1, Xt2, [Xn], #offset  (post-index, 64-bit)
     LdpPost64 { rt1: GpReg, rt2: GpReg, rn: GpReg, offset: i16 },
+    /// STP Dt1, Dt2, [Xn, #offset]  (signed offset, double)
+    StpFpOff64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP Dt1, Dt2, [Xn, #offset]  (signed offset, double)
+    LdpFpOff64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP Dt1, Dt2, [Xn, #offset]!  (pre-index, double)
+    StpFpPre64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP Dt1, Dt2, [Xn], #offset  (post-index, double)
+    StpFpPost64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP Dt1, Dt2, [Xn, #offset]!  (pre-index, double)
+    LdpFpPre64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP Dt1, Dt2, [Xn], #offset  (post-index, double)
+    LdpFpPost64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP St1, St2, [Xn, #offset]  (signed offset, single)
+    StpFpOff32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP St1, St2, [Xn, #offset]  (signed offset, single)
+    LdpFpOff32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP St1, St2, [Xn, #offset]!  (pre-index, single)
+    StpFpPre32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP St1, St2, [Xn], #offset  (post-index, single)
+    StpFpPost32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP St1, St2, [Xn, #offset]!  (pre-index, single)
+    LdpFpPre32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP St1, St2, [Xn], #offset  (post-index, single)
+    LdpFpPost32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
 
     // ---- Floating point arithmetic ----
 
@@ -569,6 +593,30 @@ impl Inst {
                 ldp_stp(0b10, 0b011, 1, *offset, *rt2, *rn, *rt1),
             Inst::LdpPost64 { rt1, rt2, rn, offset } =>
                 ldp_stp(0b10, 0b001, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpOff64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b010, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpOff64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b010, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPre64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b011, 0, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPost64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b001, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPre64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b011, 1, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPost64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b001, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpOff32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b010, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpOff32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b010, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPre32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b011, 0, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPost32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b001, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPre32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b011, 1, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPost32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b001, 1, *offset, *rt2, *rn, *rt1),
 
             // ---- FP arithmetic ----
             Inst::FaddD { rd, rn, rm } => fp_arith(0b01, 0b0010, *rm, *rn, *rd),
@@ -704,6 +752,13 @@ fn ldst_idx_fp(size: u32, opc: u32, offset: i16, idx: u32, rn: GpReg, rt: FpReg)
 fn ldp_stp(opc: u32, mode: u32, l: u32, offset: i16, rt2: GpReg, rn: GpReg, rt1: GpReg) -> u32 {
     let imm7 = ((offset / 8) as u32) & 0x7F;
     (opc << 30) | (0b101 << 27) | (mode << 23) | (l << 22)
+        | (imm7 << 15) | (rt2.enc() << 10) | (rn.enc() << 5) | rt1.enc()
+}
+
+fn ldp_stp_fp(opc: u32, mode: u32, l: u32, offset: i16, rt2: FpReg, rn: GpReg, rt1: FpReg) -> u32 {
+    let scale = if opc == 0b00 { 2 } else { 3 };
+    let imm7 = ((offset >> scale) as u32) & 0x7F;
+    (opc << 30) | (0b101 << 27) | (1 << 26) | (mode << 23) | (l << 22)
         | (imm7 << 15) | (rt2.enc() << 10) | (rn.enc() << 5) | rt1.enc()
 }
 
@@ -862,6 +917,12 @@ mod tests {
     #[test] fn ldp_x19_x20_sp_pre_m32() { assert_eq!(Inst::LdpPre64  { rt1: X19, rt2: X20, rn: SP, offset: -32 }.encode(), 0xA9FE53F3); }
     #[test] fn stp_x19_x20_sp_16()      { assert_eq!(Inst::StpOff64  { rt1: X19, rt2: X20, rn: SP, offset: 16  }.encode(), 0xA90153F3); }
     #[test] fn ldp_x19_x20_sp_16()      { assert_eq!(Inst::LdpOff64  { rt1: X19, rt2: X20, rn: SP, offset: 16  }.encode(), 0xA94153F3); }
+    #[test] fn ldp_d8_d9_sp_pre_m16()   { assert_eq!(Inst::LdpFpPre64 { rt1: D8, rt2: D9, rn: SP, offset: -16 }.encode(), 0x6DFF27E8); }
+    #[test] fn stp_d10_d11_sp_post_16() { assert_eq!(Inst::StpFpPost64 { rt1: D10, rt2: D11, rn: SP, offset: 16 }.encode(), 0x6C812FEA); }
+    #[test] fn ldp_d12_d13_sp_32()      { assert_eq!(Inst::LdpFpOff64 { rt1: D12, rt2: D13, rn: SP, offset: 32 }.encode(), 0x6D4237EC); }
+    #[test] fn stp_s0_s1_sp_post_8()    { assert_eq!(Inst::StpFpPost32 { rt1: S0, rt2: S1, rn: SP, offset: 8 }.encode(), 0x2C8107E0); }
+    #[test] fn ldp_s2_s3_sp_pre_m8()    { assert_eq!(Inst::LdpFpPre32 { rt1: S2, rt2: S3, rn: SP, offset: -8 }.encode(), 0x2DFF0FE2); }
+    #[test] fn ldp_s4_s5_sp_16()        { assert_eq!(Inst::LdpFpOff32 { rt1: S4, rt2: S5, rn: SP, offset: 16 }.encode(), 0x2D4217E4); }
 
     // ---- Load/Store (pre/post-index) ----
 

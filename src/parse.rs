@@ -1506,6 +1506,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldp_stp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
+        if self.starts_fp_register_like_operand() {
+            return self.parse_ldp_stp_fp(is_load);
+        }
+        self.parse_ldp_stp_gp(is_load)
+    }
+
+    fn parse_ldp_stp_gp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
         let (rt1, _sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rt2, _) = self.parse_gp_reg_with_size()?;
@@ -1542,6 +1549,49 @@ impl<'a> Parser<'a> {
             Inst::LdpOff64 { rt1, rt2, rn, offset }
         } else {
             Inst::StpOff64 { rt1, rt2, rn, offset }
+        })
+    }
+
+    fn parse_ldp_stp_fp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
+        let (rt1, is_double) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rt2, second_is_double) = self.parse_fp_reg_with_size()?;
+        if is_double != second_is_double {
+            return Err(self.err("ldp/stp FP register pair must use matching register widths".into()));
+        }
+        self.expect(&Tok::Comma)?;
+        self.expect(&Tok::LBracket)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+
+        if self.eat(&Tok::RBracket) {
+            self.expect(&Tok::Comma)?;
+            let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
+            return Ok(match (is_load, is_double) {
+                (true, true) => Inst::LdpFpPost64 { rt1, rt2, rn, offset },
+                (false, true) => Inst::StpFpPost64 { rt1, rt2, rn, offset },
+                (true, false) => Inst::LdpFpPost32 { rt1, rt2, rn, offset },
+                (false, false) => Inst::StpFpPost32 { rt1, rt2, rn, offset },
+            });
+        }
+
+        self.expect(&Tok::Comma)?;
+        let offset = self.parse_immediate_const_expr("pair offset")? as i16;
+        self.expect(&Tok::RBracket)?;
+
+        if self.eat(&Tok::Bang) {
+            return Ok(match (is_load, is_double) {
+                (true, true) => Inst::LdpFpPre64 { rt1, rt2, rn, offset },
+                (false, true) => Inst::StpFpPre64 { rt1, rt2, rn, offset },
+                (true, false) => Inst::LdpFpPre32 { rt1, rt2, rn, offset },
+                (false, false) => Inst::StpFpPre32 { rt1, rt2, rn, offset },
+            });
+        }
+
+        Ok(match (is_load, is_double) {
+            (true, true) => Inst::LdpFpOff64 { rt1, rt2, rn, offset },
+            (false, true) => Inst::StpFpOff64 { rt1, rt2, rn, offset },
+            (true, false) => Inst::LdpFpOff32 { rt1, rt2, rn, offset },
+            (false, false) => Inst::StpFpOff32 { rt1, rt2, rn, offset },
         })
     }
 
@@ -2509,6 +2559,42 @@ mod tests {
     fn parse_stp_pre() {
         assert_eq!(parse_inst("stp x29, x30, [sp, #-16]!"),
             Inst::StpPre64 { rt1: X29, rt2: X30, rn: SP, offset: -16 });
+    }
+
+    #[test]
+    fn parse_ldp_d_pre() {
+        assert_eq!(parse_inst("ldp d8, d9, [sp, #-16]!"),
+            Inst::LdpFpPre64 { rt1: D8, rt2: D9, rn: SP, offset: -16 });
+    }
+
+    #[test]
+    fn parse_stp_d_post() {
+        assert_eq!(parse_inst("stp d10, d11, [sp], #16"),
+            Inst::StpFpPost64 { rt1: D10, rt2: D11, rn: SP, offset: 16 });
+    }
+
+    #[test]
+    fn parse_ldp_d_offset() {
+        assert_eq!(parse_inst("ldp d12, d13, [sp, #32]"),
+            Inst::LdpFpOff64 { rt1: D12, rt2: D13, rn: SP, offset: 32 });
+    }
+
+    #[test]
+    fn parse_stp_s_post() {
+        assert_eq!(parse_inst("stp s0, s1, [sp], #8"),
+            Inst::StpFpPost32 { rt1: S0, rt2: S1, rn: SP, offset: 8 });
+    }
+
+    #[test]
+    fn parse_ldp_s_pre() {
+        assert_eq!(parse_inst("ldp s2, s3, [sp, #-8]!"),
+            Inst::LdpFpPre32 { rt1: S2, rt2: S3, rn: SP, offset: -8 });
+    }
+
+    #[test]
+    fn error_ldp_fp_pair_requires_matching_widths() {
+        let err = parse_err("ldp d0, s1, [sp]");
+        assert!(err.contains("matching register widths"), "got: {}", err);
     }
 
     #[test]
