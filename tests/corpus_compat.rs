@@ -64,6 +64,15 @@ fn corpus_fp_load_store_surface_matches_text_bytes() {
 }
 
 #[test]
+fn corpus_fp_pair_surface_matches_text_bytes() {
+    let paths = assemble_fixture("fp_pair_surface.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
 fn corpus_branch_address_surface_matches_text_bytes() {
     let paths = assemble_fixture("branch_address_surface.s");
     assert_eq!(

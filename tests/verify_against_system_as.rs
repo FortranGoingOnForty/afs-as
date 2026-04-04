@@ -157,6 +157,12 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_ldp_post() { verify("ldp x29, x30, [sp], #32",  Inst::LdpPost64 { rt1: X29, rt2: X30, rn: SP, offset: 32 }); }
 #[test] fn sys_stp_off()  { verify("stp x19, x20, [sp, #32]",  Inst::StpOff64 { rt1: X19, rt2: X20, rn: SP, offset: 32 }); }
 #[test] fn sys_ldp_off()  { verify("ldp x21, x22, [sp, #48]",  Inst::LdpOff64 { rt1: X21, rt2: X22, rn: SP, offset: 48 }); }
+#[test] fn sys_ldp_d_pre() { verify("ldp d8, d9, [sp, #-16]!", Inst::LdpFpPre64 { rt1: D8, rt2: D9, rn: SP, offset: -16 }); }
+#[test] fn sys_stp_d_post() { verify("stp d10, d11, [sp], #16", Inst::StpFpPost64 { rt1: D10, rt2: D11, rn: SP, offset: 16 }); }
+#[test] fn sys_ldp_d_off() { verify("ldp d12, d13, [sp, #32]", Inst::LdpFpOff64 { rt1: D12, rt2: D13, rn: SP, offset: 32 }); }
+#[test] fn sys_stp_s_post() { verify("stp s0, s1, [sp], #8", Inst::StpFpPost32 { rt1: S0, rt2: S1, rn: SP, offset: 8 }); }
+#[test] fn sys_ldp_s_pre() { verify("ldp s2, s3, [sp, #-8]!", Inst::LdpFpPre32 { rt1: S2, rt2: S3, rn: SP, offset: -8 }); }
+#[test] fn sys_ldp_s_off() { verify("ldp s4, s5, [sp, #16]", Inst::LdpFpOff32 { rt1: S4, rt2: S5, rn: SP, offset: 16 }); }
 
 // ---- FP arithmetic ----
 

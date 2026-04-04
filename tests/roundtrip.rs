@@ -162,6 +162,12 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_ldp_post()   { roundtrip(".text\nldp x29, x30, [sp], #16\n"); }
 #[test] fn rt_stp_off()    { roundtrip(".text\nstp x19, x20, [sp, #16]\n"); }
 #[test] fn rt_ldp_off()    { roundtrip(".text\nldp x21, x22, [sp, #48]\n"); }
+#[test] fn rt_ldp_d_pre()  { roundtrip(".text\nldp d8, d9, [sp, #-16]!\n"); }
+#[test] fn rt_stp_d_post() { roundtrip(".text\nstp d10, d11, [sp], #16\n"); }
+#[test] fn rt_ldp_d_off()  { roundtrip(".text\nldp d12, d13, [sp, #32]\n"); }
+#[test] fn rt_stp_s_post() { roundtrip(".text\nstp s0, s1, [sp], #8\n"); }
+#[test] fn rt_ldp_s_pre()  { roundtrip(".text\nldp s2, s3, [sp, #-8]!\n"); }
+#[test] fn rt_ldp_s_off()  { roundtrip(".text\nldp s4, s5, [sp, #16]\n"); }
 #[test] fn rt_fadd_d()     { roundtrip(".text\nfadd d0, d1, d2\n"); }
 #[test] fn rt_fsub_d()     { roundtrip(".text\nfsub d3, d4, d5\n"); }
 #[test] fn rt_fmul_d()     { roundtrip(".text\nfmul d6, d7, d8\n"); }
