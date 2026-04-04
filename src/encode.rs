@@ -98,6 +98,10 @@ pub enum Inst {
     Cbz { rt: GpReg, offset: i32, sf: bool },
     /// CBNZ Xt, #offset
     Cbnz { rt: GpReg, offset: i32, sf: bool },
+    /// TBZ Xt, #bit, #offset
+    Tbz { rt: GpReg, bit: u8, offset: i32, sf: bool },
+    /// TBNZ Xt, #bit, #offset
+    Tbnz { rt: GpReg, bit: u8, offset: i32, sf: bool },
     /// RET {Xn}
     Ret { rn: GpReg },
     /// BR Xn  (indirect branch)
@@ -109,6 +113,8 @@ pub enum Inst {
 
     // ---- Address generation ----
 
+    /// ADR Xd, #imm  (PC-relative, ±1MB range)
+    Adr { rd: GpReg, imm: i32 },
     /// ADRP Xd, #imm  (page-relative, 4KB pages, ±4GB range)
     Adrp { rd: GpReg, imm: i32 },
 
@@ -334,12 +340,29 @@ impl Inst {
                 let imm19 = ((*offset >> 2) as u32) & 0x7FFFF;
                 s | (0b011010_1 << 24) | (imm19 << 5) | rt.enc()
             }
+            Inst::Tbz { rt, bit, offset, sf: _ } => {
+                let b5 = ((*bit >> 5) as u32) & 0x1;
+                let b40 = (*bit as u32) & 0x1F;
+                let imm14 = ((*offset >> 2) as u32) & 0x3FFF;
+                (b5 << 31) | (0b011011 << 25) | (b40 << 19) | (imm14 << 5) | rt.enc()
+            }
+            Inst::Tbnz { rt, bit, offset, sf: _ } => {
+                let b5 = ((*bit >> 5) as u32) & 0x1;
+                let b40 = (*bit as u32) & 0x1F;
+                let imm14 = ((*offset >> 2) as u32) & 0x3FFF;
+                (b5 << 31) | (0b011011 << 25) | (1 << 24) | (b40 << 19) | (imm14 << 5) | rt.enc()
+            }
             Inst::Ret { rn } => 0xD65F0000 | (rn.enc() << 5),
             Inst::Br { rn } => 0xD61F0000 | (rn.enc() << 5),
             Inst::Blr { rn } => 0xD63F0000 | (rn.enc() << 5),
             Inst::Csinc { rd, rn, rm, cond, sf } => csel(*sf, 0b01, *rm, *cond, *rn, *rd),
 
             // ---- Address generation ----
+            Inst::Adr { rd, imm } => {
+                let immlo = (*imm as u32) & 0x3;
+                let immhi = ((*imm as u32) >> 2) & 0x7FFFF;
+                (immlo << 29) | (0b10000 << 24) | (immhi << 5) | rd.enc()
+            }
             Inst::Adrp { rd, imm } => {
                 let page = (*imm >> 12) as u32;
                 let immlo = page & 0x3;
@@ -624,6 +647,8 @@ mod tests {
     #[test] fn b_ge_plus16()    { assert_eq!(Inst::BCond { cond: Cond::GE, offset: 16 }.encode(), 0x5400008A); }
     #[test] fn cbz_x0_plus8()   { assert_eq!(Inst::Cbz  { rt: X0, offset: 8,  sf: true }.encode(), 0xB4000040); }
     #[test] fn cbnz_x1_plus12() { assert_eq!(Inst::Cbnz { rt: X1, offset: 12, sf: true }.encode(), 0xB5000061); }
+    #[test] fn tbz_x0_bit5_plus8() { assert_eq!(Inst::Tbz { rt: X0, bit: 5, offset: 8, sf: true }.encode(), 0x36280040); }
+    #[test] fn tbnz_x1_bit33_plus12() { assert_eq!(Inst::Tbnz { rt: X1, bit: 33, offset: 12, sf: true }.encode(), 0xB7080061); }
     #[test] fn ret_x30()        { assert_eq!(Inst::Ret { rn: X30 }.encode(), 0xD65F03C0); }
     #[test] fn br_x16()         { assert_eq!(Inst::Br  { rn: X16 }.encode(), 0xD61F0200); }
     #[test] fn blr_x17()        { assert_eq!(Inst::Blr { rn: X17 }.encode(), 0xD63F0220); }
@@ -631,6 +656,7 @@ mod tests {
 
     // ---- Address generation ----
 
+    #[test] fn adr_x0_8() { assert_eq!(Inst::Adr { rd: X0, imm: 8 }.encode(), 0x10000040); }
     #[test] fn adrp_x0_0() { assert_eq!(Inst::Adrp { rd: X0, imm: 0 }.encode(), 0x90000000); }
 
     // ---- Load/Store (unsigned offset) ----

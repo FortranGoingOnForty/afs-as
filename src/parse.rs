@@ -40,8 +40,12 @@ pub enum RelocKind {
     Branch26,
     /// B.cond / CBZ / CBNZ — assembler-resolved 19-bit branch immediate
     Branch19,
+    /// TBZ / TBNZ — assembler-resolved 14-bit branch immediate
+    Branch14,
     /// LDR literal — assembler-resolved 19-bit PC-relative load
     Literal19,
+    /// ADR — assembler-resolved 21-bit PC-relative address
+    Adr21,
 }
 
 /// Assembly directives.
@@ -614,6 +618,15 @@ impl<'a> Parser<'a> {
         if mnemonic == "cbnz" {
             return self.parse_cbz(true);
         }
+        if mnemonic == "tbz" {
+            return self.parse_tbz(false);
+        }
+        if mnemonic == "tbnz" {
+            return self.parse_tbz(true);
+        }
+        if mnemonic == "adr" {
+            return self.parse_adr();
+        }
         if mnemonic == "ldr" {
             return self.parse_ldr_str(true);
         }
@@ -1045,12 +1058,54 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_tbz(&mut self, is_nz: bool) -> Result<Stmt, ParseError> {
+        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let bit = self.parse_bit_index(sf, if is_nz { "tbnz bit index" } else { "tbz bit index" })?;
+        self.expect(&Tok::Comma)?;
+        if self.starts_immediate_expr() {
+            let offset = self.parse_immediate_const_expr("tbz/tbnz offset")? as i32;
+            let inst = if is_nz {
+                Inst::Tbnz { rt, bit, offset, sf }
+            } else {
+                Inst::Tbz { rt, bit, offset, sf }
+            };
+            Ok(Stmt::Instruction(inst))
+        } else {
+            let label = self.parse_label_reference()?;
+            let inst = if is_nz {
+                Inst::Tbnz { rt, bit, offset: 0, sf }
+            } else {
+                Inst::Tbz { rt, bit, offset: 0, sf }
+            };
+            Ok(Stmt::InstructionWithReloc(
+                inst,
+                LabelRef { symbol: label, kind: RelocKind::Branch14 },
+            ))
+        }
+    }
+
     fn parse_ret(&mut self) -> Result<Inst, ParseError> {
         if self.at_end_of_stmt() {
             Ok(Inst::Ret { rn: X30 })
         } else {
             let rn = self.parse_gp_reg()?;
             Ok(Inst::Ret { rn })
+        }
+    }
+
+    fn parse_adr(&mut self) -> Result<Stmt, ParseError> {
+        let rd = self.parse_gp_reg()?;
+        self.expect(&Tok::Comma)?;
+        if self.starts_immediate_expr() {
+            let imm = self.parse_immediate_const_expr("adr immediate")? as i32;
+            Ok(Stmt::Instruction(Inst::Adr { rd, imm }))
+        } else {
+            let label = self.parse_label_reference()?;
+            Ok(Stmt::InstructionWithReloc(
+                Inst::Adr { rd, imm: 0 },
+                LabelRef { symbol: label, kind: RelocKind::Adr21 },
+            ))
         }
     }
 
@@ -1416,6 +1471,18 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_bit_index(&mut self, sf: bool, context: &str) -> Result<u8, ParseError> {
+        let bit = self.parse_immediate_const_expr(context)?;
+        let max = if sf { 63 } else { 31 };
+        if !(0..=max).contains(&bit) {
+            return Err(self.err(format!(
+                "{} must be in the range 0..={} for this register width",
+                context, max
+            )));
+        }
+        Ok(bit as u8)
+    }
+
     fn starts_register_like_operand(&self) -> bool {
         matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
     }
@@ -1745,8 +1812,79 @@ mod tests {
     }
 
     #[test]
+    fn parse_tbz_() {
+        assert_eq!(parse_inst("tbz x0, #5, #8"), Inst::Tbz { rt: X0, bit: 5, offset: 8, sf: true });
+    }
+
+    #[test]
+    fn parse_tbnz_() {
+        assert_eq!(parse_inst("tbnz w1, #31, #12"), Inst::Tbnz { rt: W1, bit: 31, offset: 12, sf: false });
+    }
+
+    #[test]
+    fn parse_tbz_label() {
+        assert_eq!(
+            parse_stmts("tbz x0, #5, target"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::Tbz { rt: X0, bit: 5, offset: 0, sf: true },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Branch14 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_tbnz_numeric_local_label() {
+        assert_eq!(
+            parse_stmts("tbnz x0, #33, 1f\n1:\n"),
+            vec![
+                Stmt::InstructionWithReloc(
+                    Inst::Tbnz { rt: X0, bit: 33, offset: 0, sf: true },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch14 },
+                ),
+                Stmt::Label(".Ltmp$1$1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_adr_label() {
+        assert_eq!(
+            parse_stmts("adr x0, target"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::Adr { rd: X0, imm: 0 },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Adr21 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_adr_offset() {
+        assert_eq!(parse_inst("adr x0, #8"), Inst::Adr { rd: X0, imm: 8 });
+    }
+
+    #[test]
+    fn parse_adr_numeric_local_label() {
+        assert_eq!(
+            parse_stmts("adr x0, 1f\n1:\n"),
+            vec![
+                Stmt::InstructionWithReloc(
+                    Inst::Adr { rd: X0, imm: 0 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Adr21 },
+                ),
+                Stmt::Label(".Ltmp$1$1".into()),
+            ]
+        );
+    }
+
+    #[test]
     fn parse_cbz_() {
         assert_eq!(parse_inst("cbz x0, #8"), Inst::Cbz { rt: X0, offset: 8, sf: true });
+    }
+
+    #[test]
+    fn error_tbz_bit_index_out_of_range() {
+        let err = parse_err("tbz w0, #32, #8");
+        assert!(err.contains("range 0..=31"), "got: {}", err);
     }
 
     #[test]

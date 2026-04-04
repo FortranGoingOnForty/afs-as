@@ -150,7 +150,9 @@ struct Fixup {
 enum FixupKind {
     Branch26(Inst),
     Branch19(Inst),
+    Branch14(Inst),
     Literal19(Inst),
+    Adr21(Inst),
     Page21,
     PageOff12,
     Data64,
@@ -257,7 +259,9 @@ impl Assembler {
                             RelocKind::PageOff12 => FixupKind::PageOff12,
                             RelocKind::Branch26 => FixupKind::Branch26(inst.clone()),
                             RelocKind::Branch19 => FixupKind::Branch19(inst.clone()),
+                            RelocKind::Branch14 => FixupKind::Branch14(inst.clone()),
                             RelocKind::Literal19 => FixupKind::Literal19(inst.clone()),
+                            RelocKind::Adr21 => FixupKind::Adr21(inst.clone()),
                         },
                     });
                 }
@@ -537,7 +541,9 @@ impl Assembler {
             match fixup.kind.clone() {
                 FixupKind::Branch26(template) => self.resolve_branch_or_reloc(fixup, template, 26, true)?,
                 FixupKind::Branch19(template) => self.resolve_branch_or_reloc(fixup, template, 19, false)?,
+                FixupKind::Branch14(template) => self.resolve_branch_or_reloc(fixup, template, 14, false)?,
                 FixupKind::Literal19(template) => self.resolve_literal_fixup(fixup, template)?,
+                FixupKind::Adr21(template) => self.resolve_adr_fixup(fixup, template)?,
                 FixupKind::Page21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true)?,
                 FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false)?,
                 FixupKind::Data64 => self.resolve_data64_fixup(fixup)?,
@@ -622,6 +628,24 @@ impl Assembler {
             .ok_or_else(|| AsmError("ldr literal offset overflows i64".into()))?;
         let resolved = self.resolve_literal_inst(&template, delta)?;
         self.patch_section_data(fixup.section, fixup.offset, &resolved.encode().to_le_bytes(), "ldr literal fixup")?;
+        Ok(())
+    }
+
+    fn resolve_adr_fixup(&mut self, fixup: Fixup, template: Inst) -> Result<(), AsmError> {
+        let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, "adr target")?;
+        let Some((target_section, target_offset)) = self.labels.get(&symbol) else {
+            return Err(AsmError(format!(
+                "adr target '{}' requires an assembler-local label",
+                symbol
+            )));
+        };
+        self.ensure_same_section(fixup.section, *target_section, &symbol)?;
+        let delta = (*target_offset as i64)
+            .checked_sub(fixup.offset as i64)
+            .and_then(|value| value.checked_add(addend))
+            .ok_or_else(|| AsmError("adr offset overflows i64".into()))?;
+        let resolved = self.resolve_adr_inst(&template, delta)?;
+        self.patch_section_data(fixup.section, fixup.offset, &resolved.encode().to_le_bytes(), "adr fixup")?;
         Ok(())
     }
 
@@ -869,6 +893,8 @@ impl Assembler {
             Inst::BCond { cond, .. } => Ok(Inst::BCond { cond: *cond, offset: checked }),
             Inst::Cbz { rt, sf, .. } => Ok(Inst::Cbz { rt: *rt, offset: checked, sf: *sf }),
             Inst::Cbnz { rt, sf, .. } => Ok(Inst::Cbnz { rt: *rt, offset: checked, sf: *sf }),
+            Inst::Tbz { rt, bit, sf, .. } => Ok(Inst::Tbz { rt: *rt, bit: *bit, offset: checked, sf: *sf }),
+            Inst::Tbnz { rt, bit, sf, .. } => Ok(Inst::Tbnz { rt: *rt, bit: *bit, offset: checked, sf: *sf }),
             _ => Err(AsmError("internal error: invalid branch fixup instruction".into())),
         }
     }
@@ -880,6 +906,14 @@ impl Assembler {
             Inst::LdrLit32 { rt, .. } => Ok(Inst::LdrLit32 { rt: *rt, offset: checked }),
             Inst::LdrswLit { rt, .. } => Ok(Inst::LdrswLit { rt: *rt, offset: checked }),
             _ => Err(AsmError("internal error: invalid literal fixup instruction".into())),
+        }
+    }
+
+    fn resolve_adr_inst(&self, inst: &Inst, offset: i64) -> Result<Inst, AsmError> {
+        let checked = check_pcrel_offset(offset, 21, "adr offset")?;
+        match inst {
+            Inst::Adr { rd, .. } => Ok(Inst::Adr { rd: *rd, imm: checked }),
+            _ => Err(AsmError("internal error: invalid adr fixup instruction".into())),
         }
     }
 
@@ -1257,6 +1291,19 @@ fn check_branch_offset(offset: i64, bits: u8) -> Result<i32, AsmError> {
     let max = (1i64 << (bits - 1)) - 1;
     if scaled < min || scaled > max {
         return Err(AsmError(format!("branch offset {} is out of range for {}-bit immediate", offset, bits)));
+    }
+
+    Ok(offset as i32)
+}
+
+fn check_pcrel_offset(offset: i64, bits: u8, context: &str) -> Result<i32, AsmError> {
+    let min = -(1i64 << (bits - 1));
+    let max = (1i64 << (bits - 1)) - 1;
+    if offset < min || offset > max {
+        return Err(AsmError(format!(
+            "{} {} is out of range for {}-bit immediate",
+            context, offset, bits
+        )));
     }
 
     Ok(offset as i32)
@@ -1729,6 +1776,18 @@ mod tests {
     }
 
     #[test]
+    fn assemble_local_tbz_label() {
+        let obj = assemble_source(".text\ntbz x0, #5, done\nnop\ndone:\nret\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::Tbz { rt: X0, bit: 5, offset: 8, sf: true }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_adr_local_label() {
+        let obj = assemble_source(".text\nadr x0, target\nret\ntarget:\nret\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::Adr { rd: X0, imm: 8 }.encode().to_le_bytes());
+    }
+
+    #[test]
     fn assemble_ldr_literal_local_label() {
         let obj = assemble_source(".text\nldr x0, target\nret\n.p2align 3\ntarget:\n.quad 42\n").unwrap();
         assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrLit64 { rt: X0, offset: 8 }.encode().to_le_bytes());
@@ -1750,6 +1809,12 @@ mod tests {
     fn assemble_ldr_literal_requires_same_section() {
         let err = assemble_source(".text\nldr x0, target\n.data\ntarget: .quad 42\n").unwrap_err();
         assert!(err.0.contains("current section"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_adr_requires_local_label() {
+        let err = assemble_source(".text\nadr x0, _ext\n").unwrap_err();
+        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
     }
 
     #[test]
@@ -1781,6 +1846,12 @@ mod tests {
     }
 
     #[test]
+    fn assemble_branch14_requires_local_label() {
+        let err = assemble_source(".text\ntbnz x0, #33, _foo\n").unwrap_err();
+        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
+    }
+
+    #[test]
     fn assemble_branch_rejects_misaligned_local_target() {
         let err = assemble_source(".text\nb done\n.byte 0\ndone:\nret\n").unwrap_err();
         assert!(err.0.contains("not 4-byte aligned"), "got: {}", err.0);
@@ -1793,8 +1864,20 @@ mod tests {
     }
 
     #[test]
+    fn assemble_branch14_rejects_out_of_range_target() {
+        let err = assemble_source(".text\ntbz x0, #5, done\n.space 32768\ndone:\nret\n").unwrap_err();
+        assert!(err.0.contains("out of range"), "got: {}", err.0);
+    }
+
+    #[test]
     fn check_branch_offset_rejects_branch26_out_of_range() {
         let err = check_branch_offset(1i64 << 27, 26).unwrap_err();
+        assert!(err.0.contains("out of range"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn check_pcrel_offset_rejects_adr21_out_of_range() {
+        let err = check_pcrel_offset(1i64 << 20, 21, "adr offset").unwrap_err();
         assert!(err.0.contains("out of range"), "got: {}", err.0);
     }
 }
