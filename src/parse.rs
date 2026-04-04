@@ -142,6 +142,14 @@ pub struct LinkerOptimizationHintDirective {
     pub labels: Vec<String>,
 }
 
+fn linker_optimization_hint_label_count(kind: &str) -> Option<usize> {
+    match kind {
+        "AdrpLdrGotLdr" => Some(3),
+        "AdrpAdd" | "AdrpLdr" | "AdrpLdrGot" => Some(2),
+        _ => None,
+    }
+}
+
 /// Parse error with source location.
 #[derive(Debug, Clone)]
 pub struct ParseError {
@@ -604,11 +612,23 @@ impl<'a> Parser<'a> {
             ".loh" => {
                 let kind = self.expect_ident()?;
                 let mut labels = Vec::new();
-                while !self.at_end_of_stmt() {
-                    if self.eat(&Tok::Comma) {
-                        continue;
-                    }
+                if !self.at_end_of_stmt() {
                     labels.push(self.expect_ident()?);
+                    while !self.at_end_of_stmt() {
+                        self.expect(&Tok::Comma)?;
+                        labels.push(self.expect_ident()?);
+                    }
+                }
+                if let Some(expected) = linker_optimization_hint_label_count(&kind) {
+                    if labels.len() != expected {
+                        return Err(self.err(format!(
+                            ".loh {} expects {} label{}, got {}",
+                            kind,
+                            expected,
+                            if expected == 1 { "" } else { "s" },
+                            labels.len()
+                        )));
+                    }
                 }
                 Directive::LinkerOptimizationHint(LinkerOptimizationHintDirective { kind, labels })
             }
@@ -5609,6 +5629,22 @@ mod tests {
                 }
             ))]
         );
+    }
+
+    #[test]
+    fn parse_linker_optimization_hint_requires_expected_label_count() {
+        let err = parse(".loh AdrpAdd Lloh0").unwrap_err();
+        assert_eq!(err.line, 1);
+        assert_eq!(err.col, 19);
+        assert_eq!(err.msg, ".loh AdrpAdd expects 2 labels, got 1");
+    }
+
+    #[test]
+    fn parse_linker_optimization_hint_requires_commas() {
+        let err = parse(".loh AdrpAdd Lloh0 Lloh1").unwrap_err();
+        assert_eq!(err.line, 1);
+        assert_eq!(err.col, 20);
+        assert_eq!(err.msg, "expected ,, got Lloh1");
     }
 
     // ---- Multi-line programs ----
