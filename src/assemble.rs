@@ -12,6 +12,7 @@ use std::io::BufWriter;
 use std::path::Path;
 
 use crate::encode::Inst;
+use crate::expr::{self, Expr};
 use crate::macho::{self, ObjectFile, Relocation, Section, SectionKind, Symbol};
 use crate::parse::{self, Stmt, Directive, RelocKind};
 
@@ -63,6 +64,7 @@ pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
         value: 0,
         global: false,
         undefined: false,
+        absolute: false,
         private_extern: false,
         weak_ref: false,
         weak_def: false,
@@ -74,6 +76,7 @@ pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
             value: 0,
             global: true,
             undefined: false,
+            absolute: false,
             private_extern: false,
             weak_ref: false,
             weak_def: false,
@@ -101,6 +104,8 @@ struct Assembler {
 
     /// Labels → (section index, offset within section).
     labels: BTreeMap<String, (usize, u64)>,
+    /// Absolute symbol assignments declared via `.set` / `.equ`.
+    absolute_defs: BTreeMap<String, Expr>,
     /// Symbol attributes declared via directives.
     symbol_attrs: BTreeMap<String, SymbolAttrs>,
     /// Pending relocations for each section.
@@ -129,6 +134,7 @@ impl Assembler {
             section: 0,
             sections: vec![Section::text()],
             labels: BTreeMap::new(),
+            absolute_defs: BTreeMap::new(),
             symbol_attrs: BTreeMap::new(),
             pending_relocs: vec![Vec::new()],
         }
@@ -244,6 +250,9 @@ impl Assembler {
         match dir {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
+            Directive::Set(name, expr) => {
+                self.absolute_defs.insert(name.clone(), expr.clone());
+            }
             Directive::Global(name) => {
                 self.symbol_attrs_mut(name).global = true;
             }
@@ -293,7 +302,8 @@ impl Assembler {
         match dir {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
-            Directive::Global(_)
+            Directive::Set(_ , _)
+            | Directive::Global(_)
             | Directive::PrivateExtern(_)
             | Directive::WeakReference(_)
             | Directive::WeakDefinition(_) => {}
@@ -439,7 +449,17 @@ impl Assembler {
 
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
         let section_bases = self.section_base_addresses();
+        let absolute_symbols = self.resolve_absolute_symbols()?;
         let mut symbols: Vec<Symbol> = Vec::new();
+
+        for name in absolute_symbols.keys() {
+            if self.labels.contains_key(name) {
+                return Err(AsmError(format!(
+                    "symbol '{}' cannot be both a label and an absolute assignment",
+                    name
+                )));
+            }
+        }
 
         for (index, base) in section_bases.iter().enumerate() {
             symbols.push(Symbol {
@@ -448,6 +468,7 @@ impl Assembler {
                 value: *base,
                 global: false,
                 undefined: false,
+                absolute: false,
                 private_extern: false,
                 weak_ref: false,
                 weak_def: false,
@@ -463,6 +484,23 @@ impl Assembler {
                     value,
                     global: false,
                     undefined: false,
+                    absolute: false,
+                    private_extern: false,
+                    weak_ref: false,
+                    weak_def: false,
+                });
+            }
+        }
+
+        for (name, value) in &absolute_symbols {
+            if !self.symbol_attrs.contains_key(name) {
+                symbols.push(Symbol {
+                    name: name.clone(),
+                    section: 0,
+                    value: *value as u64,
+                    global: false,
+                    undefined: false,
+                    absolute: true,
                     private_extern: false,
                     weak_ref: false,
                     weak_def: false,
@@ -472,7 +510,25 @@ impl Assembler {
 
         // Explicit symbol directives.
         for (name, attrs) in &self.symbol_attrs {
-            if let Some((section, offset)) = self.labels.get(name) {
+            if let Some(value) = absolute_symbols.get(name) {
+                if attrs.weak_ref {
+                    return Err(AsmError(format!(
+                        "weak reference '{}' must remain undefined",
+                        name
+                    )));
+                }
+                symbols.push(Symbol {
+                    name: name.clone(),
+                    section: 0,
+                    value: *value as u64,
+                    global: attrs.global,
+                    undefined: false,
+                    absolute: true,
+                    private_extern: attrs.private_extern,
+                    weak_ref: false,
+                    weak_def: attrs.weak_def,
+                });
+            } else if let Some((section, offset)) = self.labels.get(name) {
                 if attrs.weak_ref {
                     return Err(AsmError(format!(
                         "weak reference '{}' must remain undefined",
@@ -486,6 +542,7 @@ impl Assembler {
                     value,
                     global: attrs.global,
                     undefined: false,
+                    absolute: false,
                     private_extern: attrs.private_extern,
                     weak_ref: false,
                     weak_def: attrs.weak_def,
@@ -509,6 +566,7 @@ impl Assembler {
                     value: 0,
                     global: true,
                     undefined: true,
+                    absolute: false,
                     private_extern: false,
                     weak_ref: attrs.weak_ref,
                     weak_def: false,
@@ -525,6 +583,7 @@ impl Assembler {
                         value: 0,
                         global: true,
                         undefined: true,
+                        absolute: false,
                         private_extern: false,
                         weak_ref: false,
                         weak_def: false,
@@ -551,6 +610,46 @@ impl Assembler {
         }
 
         Ok(ObjectFile { sections: self.sections, symbols })
+    }
+
+    fn resolve_absolute_symbols(&self) -> Result<BTreeMap<String, i64>, AsmError> {
+        let mut resolved = BTreeMap::new();
+        let mut progress = true;
+
+        while progress {
+            progress = false;
+            for (name, expr) in &self.absolute_defs {
+                if resolved.contains_key(name) {
+                    continue;
+                }
+                match expr::eval_with_symbols(expr, &resolved) {
+                    Ok(value) => {
+                        resolved.insert(name.clone(), value);
+                        progress = true;
+                    }
+                    Err(expr::EvalError::UndefinedSymbol(_)) => {}
+                    Err(expr::EvalError::Overflow) => {
+                        return Err(AsmError(format!(
+                            "absolute symbol '{}' overflows i64",
+                            name
+                        )));
+                    }
+                }
+            }
+        }
+
+        if let Some(name) = self
+            .absolute_defs
+            .keys()
+            .find(|name| !resolved.contains_key(*name))
+        {
+            return Err(AsmError(format!(
+                "absolute symbol '{}' must resolve from constants or earlier absolute symbols",
+                name
+            )));
+        }
+
+        Ok(resolved)
     }
 }
 
@@ -621,11 +720,40 @@ mod tests {
         let obj = assemble_source(".global _main\n.text\n_main:\nnop\nret\n").unwrap();
         let main = obj.symbols.iter().find(|s| s.name == "_main").unwrap();
         assert!(main.global);
+        assert!(!main.absolute);
         assert!(!main.private_extern);
         assert!(!main.weak_ref);
         assert!(!main.weak_def);
         assert_eq!(main.section, 1);
         assert_eq!(main.value, 0);
+    }
+
+    #[test]
+    fn assemble_absolute_symbol() {
+        let obj = assemble_source(".set ABS1, 7\n.text\nret\n").unwrap();
+        let abs1 = obj.symbols.iter().find(|s| s.name == "ABS1").unwrap();
+        assert!(abs1.absolute);
+        assert!(!abs1.global);
+        assert!(!abs1.undefined);
+        assert_eq!(abs1.section, 0);
+        assert_eq!(abs1.value, 7);
+    }
+
+    #[test]
+    fn assemble_global_absolute_symbol() {
+        let obj = assemble_source(".set ABS1, 7\n.globl ABS1\n.text\nret\n").unwrap();
+        let abs1 = obj.symbols.iter().find(|s| s.name == "ABS1").unwrap();
+        assert!(abs1.absolute);
+        assert!(abs1.global);
+        assert_eq!(abs1.value, 7);
+    }
+
+    #[test]
+    fn assemble_absolute_symbol_chain() {
+        let obj = assemble_source(".set ABS1, 7\n.equ ABS2, ABS1 + 5\n.text\nret\n").unwrap();
+        let abs2 = obj.symbols.iter().find(|s| s.name == "ABS2").unwrap();
+        assert!(abs2.absolute);
+        assert_eq!(abs2.value, 12);
     }
 
     #[test]

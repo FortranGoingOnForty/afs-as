@@ -30,9 +30,11 @@ const PLATFORM_MACOS: u32 = 1;
 
 // nlist_64 type bits
 const N_UNDF: u8 = 0x00;
+const N_ABS: u8 = 0x02;
 const N_PEXT: u8 = 0x10;
 const N_SECT: u8 = 0x0E;
 const N_EXT: u8 = 0x01;
+const N_NO_DEAD_STRIP: u16 = 0x0020;
 const N_WEAK_REF: u16 = 0x0040;
 const N_WEAK_DEF: u16 = 0x0080;
 
@@ -60,6 +62,7 @@ pub struct Symbol {
     pub value: u64,     // offset within section
     pub global: bool,   // N_EXT flag
     pub undefined: bool, // true for external references
+    pub absolute: bool,
     pub private_extern: bool,
     pub weak_ref: bool,
     pub weak_def: bool,
@@ -373,7 +376,13 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- Symbol table ----
     for (i, sym) in obj.symbols.iter().enumerate() {
         let str_offset = string_offset(&strtab, &sym.name);
-        let mut n_type = if sym.undefined { N_UNDF } else { N_SECT };
+        let mut n_type = if sym.undefined {
+            N_UNDF
+        } else if sym.absolute {
+            N_ABS
+        } else {
+            N_SECT
+        };
         if sym.global {
             n_type |= N_EXT;
         }
@@ -381,6 +390,9 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
             n_type |= N_PEXT;
         }
         let mut n_desc = 0u16;
+        if sym.absolute {
+            n_desc |= N_NO_DEAD_STRIP;
+        }
         if sym.weak_ref {
             n_desc |= N_WEAK_REF;
         }
@@ -520,6 +532,7 @@ mod tests {
             value: 0,
             global: true,
             undefined: false,
+            absolute: false,
             private_extern: false,
             weak_ref: false,
             weak_def: false,
@@ -542,6 +555,7 @@ mod tests {
                 value: 0,
                 global: true,
                 undefined: false,
+                absolute: false,
                 private_extern: false,
                 weak_ref: false,
                 weak_def: false,
@@ -552,6 +566,7 @@ mod tests {
                 value: 0,
                 global: false,
                 undefined: false,
+                absolute: false,
                 private_extern: false,
                 weak_ref: false,
                 weak_def: false,
@@ -597,6 +612,7 @@ mod tests {
             value: 0,
             global: true,
             undefined: false,
+            absolute: false,
             private_extern: true,
             weak_ref: false,
             weak_def: true,
@@ -607,6 +623,7 @@ mod tests {
             value: 0,
             global: true,
             undefined: true,
+            absolute: false,
             private_extern: false,
             weak_ref: true,
             weak_def: false,
@@ -632,6 +649,51 @@ mod tests {
         assert_eq!(hidden_desc, N_WEAK_DEF);
         assert_eq!(puts_type, N_UNDF | N_EXT);
         assert_eq!(puts_desc, N_WEAK_REF);
+    }
+
+    #[test]
+    fn symbol_flags_encode_absolute_symbol() {
+        let mut obj = ObjectFile::new();
+        obj.symbols.push(Symbol {
+            name: "ABS1".into(),
+            section: 0,
+            value: 7,
+            global: false,
+            undefined: false,
+            absolute: true,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let symtab_cmd_offset =
+            HEADER_SIZE as usize + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize + BUILD_VERSION_CMD_SIZE as usize;
+        let symoff = u32::from_le_bytes([
+            buf[symtab_cmd_offset + 8],
+            buf[symtab_cmd_offset + 9],
+            buf[symtab_cmd_offset + 10],
+            buf[symtab_cmd_offset + 11],
+        ]) as usize;
+
+        let abs_type = buf[symoff + 4];
+        let abs_desc = u16::from_le_bytes([buf[symoff + 6], buf[symoff + 7]]);
+        let abs_value = u64::from_le_bytes([
+            buf[symoff + 8],
+            buf[symoff + 9],
+            buf[symoff + 10],
+            buf[symoff + 11],
+            buf[symoff + 12],
+            buf[symoff + 13],
+            buf[symoff + 14],
+            buf[symoff + 15],
+        ]);
+
+        assert_eq!(abs_type, N_ABS);
+        assert_eq!(abs_desc, N_NO_DEAD_STRIP);
+        assert_eq!(abs_value, 7);
     }
 
     #[test]
