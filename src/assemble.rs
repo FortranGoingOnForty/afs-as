@@ -41,7 +41,7 @@ pub fn assemble_source(src: &str) -> Result<ObjectFile, AsmError> {
 pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
     let mut asm = Assembler::new();
     asm.process(stmts)?;
-    Ok(asm.finish())
+    asm.finish()
 }
 
 /// Assemble a list of pre-encoded instructions into an ObjectFile (compiler API).
@@ -241,7 +241,7 @@ impl Assembler {
         Ok(())
     }
 
-    fn finish(self) -> ObjectFile {
+    fn finish(self) -> Result<ObjectFile, AsmError> {
         let text_size = self.text.len() as u64;
         let mut symbols: Vec<Symbol> = Vec::new();
 
@@ -292,39 +292,52 @@ impl Assembler {
                     global: true,
                     undefined: false,
                 });
+            } else if !symbols.iter().any(|s| s.name == *name) {
+                symbols.push(Symbol {
+                    name: name.clone(),
+                    section: 0,
+                    value: 0,
+                    global: true,
+                    undefined: true,
+                });
+            }
+        }
+
+        for reloc in &self.text_relocs {
+            if !self.labels.contains_key(&reloc.symbol) && !symbols.iter().any(|s| s.name == reloc.symbol) {
+                symbols.push(Symbol {
+                    name: reloc.symbol.clone(),
+                    section: 0,
+                    value: 0,
+                    global: true,
+                    undefined: true,
+                });
             }
         }
 
         // Convert pending relocations.
-        // For relocations referencing data labels, point to the data section start
-        // symbol (ltmp1) since ld uses section-relative relocations.
         let text_relocs = self.text_relocs.into_iter().map(|pr| {
-            // Find which section the referenced symbol is in.
-            let target_section = self.labels.get(&pr.symbol).map(|(s, _)| *s).unwrap_or(1);
-            let (sym_idx, is_extern) = if target_section == 2 {
-                let idx = symbols.iter().position(|s| s.name == "ltmp1").unwrap_or(0);
-                (idx as u32, true)
-            } else {
-                let idx = symbols.iter().position(|s| s.name == pr.symbol).unwrap_or(0);
-                (idx as u32, true)
-            };
-            Relocation {
+            let sym_idx = symbols
+                .iter()
+                .position(|s| s.name == pr.symbol)
+                .ok_or_else(|| AsmError(format!("missing relocation symbol '{}'", pr.symbol)))?;
+            Ok(Relocation {
                 offset: pr.offset,
-                symbol_idx: sym_idx,
+                symbol_idx: sym_idx as u32,
                 pcrel: pr.pcrel,
                 length: 2,
-                extern_: is_extern,
+                extern_: true,
                 reloc_type: pr.reloc_type,
-            }
-        }).collect();
+            })
+        }).collect::<Result<Vec<_>, AsmError>>()?;
 
-        ObjectFile {
+        Ok(ObjectFile {
             text: self.text,
             data: self.data,
             symbols,
             text_relocs,
             text_align: self.text_align,
-        }
+        })
     }
 }
 
@@ -436,5 +449,33 @@ mod tests {
     fn assemble_rejects_unsupported_section() {
         let err = assemble_source(".section __DATA,__bss\n.space 16\n").unwrap_err();
         assert!(err.0.contains("unsupported section"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_page_reloc_uses_target_label_symbol() {
+        let obj = assemble_source(
+            ".global _main\n.text\n_main:\nadrp x0, second@PAGE\nadd x0, x0, second@PAGEOFF\nret\n.data\nfirst: .byte 1\nsecond: .byte 2\n"
+        ).unwrap();
+
+        let reloc_syms: Vec<_> = obj.text_relocs.iter()
+            .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
+            .collect();
+        assert_eq!(reloc_syms, vec!["second", "second"]);
+    }
+
+    #[test]
+    fn assemble_page_reloc_creates_undefined_external_symbol() {
+        let obj = assemble_source(
+            ".global _main\n.text\n_main:\nadrp x0, _foo@PAGE\nadd x0, x0, _foo@PAGEOFF\nret\n"
+        ).unwrap();
+
+        let foo = obj.symbols.iter().find(|sym| sym.name == "_foo").unwrap();
+        assert!(foo.undefined);
+        assert!(foo.global);
+
+        let reloc_syms: Vec<_> = obj.text_relocs.iter()
+            .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
+            .collect();
+        assert_eq!(reloc_syms, vec!["_foo", "_foo"]);
     }
 }
