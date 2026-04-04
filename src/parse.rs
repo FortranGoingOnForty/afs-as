@@ -327,8 +327,8 @@ impl<'a> Parser<'a> {
         if mnemonic == "cbnz" {
             return self.parse_cbz(true);
         }
-        if mnemonic.starts_with("b.") {
-            return self.parse_bcond(&mnemonic[2..]);
+        if let Some(cond) = mnemonic.strip_prefix("b.") {
+            return self.parse_bcond(cond);
         }
 
         // All other instructions return Inst, wrapped as Stmt::Instruction.

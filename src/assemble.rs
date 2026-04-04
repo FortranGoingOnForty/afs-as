@@ -480,6 +480,26 @@ impl Assembler {
     }
 }
 
+fn align_value(value: u64, power: u32) -> u64 {
+    let alignment = 1u64 << power;
+    (value + alignment - 1) & !(alignment - 1)
+}
+
+fn check_branch_offset(offset: i64, bits: u8) -> Result<i32, AsmError> {
+    if offset % 4 != 0 {
+        return Err(AsmError(format!("branch offset {} is not 4-byte aligned", offset)));
+    }
+
+    let scaled = offset / 4;
+    let min = -(1i64 << (bits - 1));
+    let max = (1i64 << (bits - 1)) - 1;
+    if scaled < min || scaled > max {
+        return Err(AsmError(format!("branch offset {} is out of range for {}-bit immediate", offset, bits)));
+    }
+
+    Ok(offset as i32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,24 +663,4 @@ mod tests {
         let err = assemble_source(".text\nb.eq _foo\n").unwrap_err();
         assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
     }
-}
-
-fn align_value(value: u64, power: u32) -> u64 {
-    let alignment = 1u64 << power;
-    (value + alignment - 1) & !(alignment - 1)
-}
-
-fn check_branch_offset(offset: i64, bits: u8) -> Result<i32, AsmError> {
-    if offset % 4 != 0 {
-        return Err(AsmError(format!("branch offset {} is not 4-byte aligned", offset)));
-    }
-
-    let scaled = offset / 4;
-    let min = -(1i64 << (bits - 1));
-    let max = (1i64 << (bits - 1)) - 1;
-    if scaled < min || scaled > max {
-        return Err(AsmError(format!("branch offset {} is out of range for {}-bit immediate", offset, bits)));
-    }
-
-    Ok(offset as i32)
 }
