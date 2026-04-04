@@ -200,6 +200,18 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "atomics8",
+        source: "atomics8.c",
+        driver: "extern unsigned char load_then_store8(unsigned char);\nextern unsigned char swap8(unsigned char);\nint main(void) {\n    return (load_then_store8(4) != 0u)\n        || (load_then_store8(3) != 4u)\n        || (swap8(9) != 7u)\n        || (swap8(2) != 9u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
+        name: "atomics16",
+        source: "atomics16.c",
+        driver: "extern unsigned short load_then_store16(unsigned short);\nextern unsigned short swap16(unsigned short);\nint main(void) {\n    return (load_then_store16(400u) != 0u)\n        || (load_then_store16(300u) != 400u)\n        || (swap16(900u) != 700u)\n        || (swap16(200u) != 900u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "atomic_exchange_cas",
         source: "atomic_exchange_cas.c",
         driver: "extern int swap_acqrel(int);\nextern long swap64_acqrel(long);\nextern int cas_acqrel(int, int);\nextern long cas64_acqrel(long, long);\nint main(void) {\n    return (swap_acqrel(4) != 0)\n        || (swap_acqrel(7) != 4)\n        || (cas_acqrel(7, 9) != 7)\n        || (cas_acqrel(0, 11) != 9)\n        || (swap64_acqrel(10) != 0)\n        || (swap64_acqrel(15) != 10)\n        || (cas64_acqrel(15, 21) != 15)\n        || (cas64_acqrel(0, 31) != 21);\n}\n",
