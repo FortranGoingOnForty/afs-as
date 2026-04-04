@@ -1021,6 +1021,12 @@ impl<'a> Parser<'a> {
         if mnemonic == "ldaddal" {
             return self.parse_ldaddal();
         }
+        if mnemonic == "swpal" {
+            return self.parse_swpal();
+        }
+        if mnemonic == "casal" {
+            return self.parse_casal();
+        }
         if let Some(cond) = mnemonic.strip_prefix("b.") {
             return self.parse_bcond(cond);
         }
@@ -1267,22 +1273,41 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_ldaddal(&mut self) -> Result<Stmt, ParseError> {
-        let (rs, sf) = self.parse_atomic_data_reg("ldaddal")?;
+    fn parse_atomic_rmw(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
+        let (rs, sf) = self.parse_atomic_data_reg(mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rt, rt_sf) = self.parse_atomic_data_reg("ldaddal")?;
+        let (rt, rt_sf) = self.parse_atomic_data_reg(mnemonic)?;
         if sf != rt_sf {
             return Err(self.err(
-                "ldaddal requires source and destination registers of the same width".into(),
+                format!(
+                    "{} requires source and destination registers of the same width",
+                    mnemonic
+                ),
             ));
         }
         self.expect(&Tok::Comma)?;
-        let rn = self.parse_atomic_base_reg("ldaddal")?;
-        Ok(Stmt::Instruction(if sf {
-            Inst::Ldaddal64 { rs, rt, rn }
-        } else {
-            Inst::Ldaddal32 { rs, rt, rn }
+        let rn = self.parse_atomic_base_reg(mnemonic)?;
+        Ok(Stmt::Instruction(match (mnemonic, sf) {
+            ("ldaddal", true) => Inst::Ldaddal64 { rs, rt, rn },
+            ("ldaddal", false) => Inst::Ldaddal32 { rs, rt, rn },
+            ("swpal", true) => Inst::Swpal64 { rs, rt, rn },
+            ("swpal", false) => Inst::Swpal32 { rs, rt, rn },
+            ("casal", true) => Inst::Casal64 { rs, rt, rn },
+            ("casal", false) => Inst::Casal32 { rs, rt, rn },
+            _ => unreachable!(),
         }))
+    }
+
+    fn parse_ldaddal(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_atomic_rmw("ldaddal")
+    }
+
+    fn parse_swpal(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_atomic_rmw("swpal")
+    }
+
+    fn parse_casal(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_atomic_rmw("casal")
     }
 
     fn parse_add_sub(&mut self, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
@@ -5021,6 +5046,30 @@ mod tests {
                 rs: W0,
                 rt: W8,
                 rn: X8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_swpal_x() {
+        assert_eq!(
+            parse_inst("swpal x1, x2, [x3]"),
+            Inst::Swpal64 {
+                rs: X1,
+                rt: X2,
+                rn: X3
+            }
+        );
+    }
+
+    #[test]
+    fn parse_casal_w() {
+        assert_eq!(
+            parse_inst("casal w4, w5, [x6]"),
+            Inst::Casal32 {
+                rs: W4,
+                rt: W5,
+                rn: X6
             }
         );
     }

@@ -711,6 +711,14 @@ pub enum Inst {
     Ldaddal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDADDAL Xs, Xt, [Xn]
     Ldaddal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// SWPAL Ws, Wt, [Xn]
+    Swpal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// SWPAL Xs, Xt, [Xn]
+    Swpal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// CASAL Ws, Wt, [Xn]
+    Casal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// CASAL Xs, Xt, [Xn]
+    Casal64 { rs: GpReg, rt: GpReg, rn: GpReg },
 
     // ---- Load/Store pair ----
     /// STP Wt1, Wt2, [Xn, #offset]  (signed offset, 32-bit)
@@ -1541,6 +1549,18 @@ impl Inst {
             }
             Inst::Ldaddal64 { rs, rt, rn } => {
                 0xF8E00000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Swpal32 { rs, rt, rn } => {
+                0xB8E08000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Swpal64 { rs, rt, rn } => {
+                0xF8E08000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Casal32 { rs, rt, rn } => {
+                0x88E0FC00 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Casal64 { rs, rt, rn } => {
+                0xC8E0FC00 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
 
             // ---- Load/Store pair ----
@@ -3260,6 +3280,54 @@ mod tests {
             }
             .encode(),
             0xF8E00108
+        );
+    }
+    #[test]
+    fn swpal_w0_w0_x8() {
+        assert_eq!(
+            Inst::Swpal32 {
+                rs: W0,
+                rt: W0,
+                rn: X8
+            }
+            .encode(),
+            0xB8E08100
+        );
+    }
+    #[test]
+    fn swpal_x1_x2_x3() {
+        assert_eq!(
+            Inst::Swpal64 {
+                rs: X1,
+                rt: X2,
+                rn: X3
+            }
+            .encode(),
+            0xF8E18062
+        );
+    }
+    #[test]
+    fn casal_w4_w5_x6() {
+        assert_eq!(
+            Inst::Casal32 {
+                rs: W4,
+                rt: W5,
+                rn: X6
+            }
+            .encode(),
+            0x88E4FCC5
+        );
+    }
+    #[test]
+    fn casal_x7_x8_x9() {
+        assert_eq!(
+            Inst::Casal64 {
+                rs: X7,
+                rt: X8,
+                rn: X9
+            }
+            .encode(),
+            0xC8E7FD28
         );
     }
     #[test]

@@ -171,6 +171,8 @@ Major covered families include:
   - `ldapr`
   - `stlr`
   - `ldaddal`
+  - `swpal`
+  - `casal`
 - floating point:
   - `fadd`, `fsub`, `fmul`, `fdiv`
   - `fabs`, `fneg`, `fsqrt`, `fcmp`, `fmadd`
