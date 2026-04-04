@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -16,6 +17,23 @@ fn afs_as() -> Command {
     Command::new(env!("CARGO_BIN_EXE_afs-as"))
 }
 
+fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
+    let mut child = afs_as()
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn afs-as");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin pipe")
+        .write_all(input.as_bytes())
+        .expect("write stdin");
+    child.wait_with_output().expect("wait for afs-as")
+}
+
 #[test]
 fn help_flag_prints_usage_to_stdout() {
     let output = afs_as().arg("--help").output().expect("run afs-as --help");
@@ -23,6 +41,8 @@ fn help_flag_prints_usage_to_stdout() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("usage: afs-as <input.s> [-o <output.o>]"), "stdout:\n{}", stdout);
+    assert!(stdout.contains("exit status:"), "stdout:\n{}", stdout);
+    assert!(stdout.contains("0            success"), "stdout:\n{}", stdout);
     assert!(stderr.is_empty(), "stderr:\n{}", stderr);
 }
 
@@ -69,6 +89,49 @@ fn default_output_path_is_created_next_to_input() {
     assert!(result.status.success(), "stderr:\n{}", String::from_utf8_lossy(&result.stderr));
     assert!(output.exists(), "expected {} to exist", output.display());
     assert!(!fs::read(&output).expect("read output").is_empty());
+}
+
+#[test]
+fn stdin_requires_explicit_output_path() {
+    let output = run_with_stdin(&["-"], ".text\nret\n");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("afs-as: input '-' requires explicit -o <output.o> or -o -"),
+        "stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn stdin_can_write_object_to_stdout() {
+    let output = run_with_stdin(
+        &["-", "-o", "-"],
+        ".text\n.globl _entry\n_entry:\nret\n",
+    );
+    assert!(output.status.success(), "stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.stderr.is_empty(), "stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.stdout.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]),
+        "stdout bytes: {:?}",
+        &output.stdout.get(..8).unwrap_or(&output.stdout)
+    );
+}
+
+#[test]
+fn double_dash_allows_dash_prefixed_input_file() {
+    let root = temp_root("afs_cli_double_dash");
+    let input = root.join("--version.s");
+    let output = root.join("--version.o");
+    fs::write(&input, ".text\n.globl _entry\n_entry:\nret\n").expect("write input");
+
+    let result = afs_as()
+        .current_dir(&root)
+        .args(["--", "--version.s"])
+        .output()
+        .expect("run afs-as with --");
+    assert!(result.status.success(), "stderr:\n{}", String::from_utf8_lossy(&result.stderr));
+    assert!(output.exists(), "expected {} to exist", output.display());
 }
 
 #[test]
