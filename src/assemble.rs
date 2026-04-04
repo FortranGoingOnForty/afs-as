@@ -58,6 +58,7 @@ pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
         text.data.extend_from_slice(&word.to_le_bytes());
         text.size += 4;
     }
+    text.has_instructions = !insts.is_empty();
     // Add a section-start local symbol.
     obj.symbols.push(Symbol {
         name: "ltmp0".into(),
@@ -171,6 +172,7 @@ impl Assembler {
         for section in &mut self.sections {
             section.data.clear();
             section.relocations.clear();
+            section.has_instructions = false;
             section.size = 0;
         }
         self.pending_relocs.clear();
@@ -215,10 +217,12 @@ impl Assembler {
                 Stmt::Label(_) => {}
                 Stmt::Directive(dir) => self.process_directive(dir)?,
                 Stmt::Instruction(inst) => {
+                    self.sections[self.section].has_instructions = true;
                     let word = inst.encode();
                     self.emit_initialized_bytes(&word.to_le_bytes(), "instruction")?;
                 }
                 Stmt::InstructionWithReloc(inst, label_ref) => {
+                    self.sections[self.section].has_instructions = true;
                     let offset = self.current_offset() as u32;
                     match label_ref.kind {
                         RelocKind::Page21 | RelocKind::PageOff12 => {

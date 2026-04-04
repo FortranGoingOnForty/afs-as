@@ -93,10 +93,11 @@ pub enum SectionKind {
 }
 
 impl SectionKind {
-    fn flags(&self, size: u64) -> u32 {
+    fn flags(&self, size: u64, has_instructions: bool) -> u32 {
         match self {
+            Self::Text if has_instructions => S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS,
             Self::Text if size == 0 => S_ATTR_PURE_INSTRUCTIONS,
-            Self::Text => S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS,
+            Self::Text => S_ATTR_PURE_INSTRUCTIONS,
             Self::CStringLiterals => S_CSTRING_LITERALS,
             Self::ZeroFill => S_ZEROFILL,
             Self::Data | Self::ConstData => S_REGULAR,
@@ -115,6 +116,7 @@ pub struct Section {
     pub name: String,
     pub kind: SectionKind,
     pub align_pow2: u32,
+    pub has_instructions: bool,
     pub data: Vec<u8>,
     pub size: u64,
     pub relocations: Vec<Relocation>,
@@ -127,6 +129,7 @@ impl Section {
             name: name.into(),
             kind,
             align_pow2: 0,
+            has_instructions: false,
             data: Vec::new(),
             size: 0,
             relocations: Vec::new(),
@@ -201,6 +204,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     let mut layouts = vec![SectionLayout::default(); obj.sections.len()];
     let mut file_cursor = content_offset;
     let mut vm_cursor = 0u64;
+    let mut saw_file_backed_section = false;
 
     let mut allocation_order: Vec<_> = (0..obj.sections.len()).collect();
     allocation_order.sort_by_key(|&index| obj.sections[index].kind.is_zerofill());
@@ -227,9 +231,12 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         let offset = if section.kind.is_zerofill() {
             0
         } else {
-            file_cursor = align_to(file_cursor, 1 << section.align_pow2);
+            if saw_file_backed_section {
+                file_cursor = align_to(file_cursor, 1 << section.align_pow2);
+            }
             let offset = file_cursor;
             file_cursor = file_cursor.saturating_add(section.file_size() as u32);
+            saw_file_backed_section = true;
             offset
         };
 
@@ -320,7 +327,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         write_u32(w, section.align_pow2)?;
         write_u32(w, layout.reloff)?;
         write_u32(w, layout.nreloc)?;
-        write_u32(w, section.kind.flags(section.size))?;
+        write_u32(w, section.kind.flags(section.size, section.has_instructions))?;
         write_u32(w, 0)?;
         write_u32(w, 0)?;
         write_u32(w, 0)?;
@@ -789,6 +796,7 @@ mod tests {
             name: "__bss".into(),
             kind: SectionKind::ZeroFill,
             align_pow2: 4,
+            has_instructions: false,
             data: Vec::new(),
             size: 16,
             relocations: Vec::new(),
