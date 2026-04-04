@@ -68,6 +68,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "div_mod",
+        source: "div_mod.c",
+        driver: "extern int div_mod_mix(int, int);\nint main(void) { return div_mod_mix(17, 5) != 5; }\n",
+        support: None,
+    },
+    ProbeCase {
         name: "ext_global",
         source: "ext_global.c",
         driver: "extern int read_ext_plus_one(void);\nint main(void) { return read_ext_plus_one() != 42; }\n",
@@ -77,6 +83,12 @@ const CASES: &[ProbeCase] = &[
         name: "float_branch",
         source: "float_branch.c",
         driver: "extern double clampish(double, double);\nint main(void) { double got = clampish(2.0, 3.0); return (got < 9.49) || (got > 9.51); }\n",
+        support: None,
+    },
+    ProbeCase {
+        name: "bitops",
+        source: "bitops.c",
+        driver: "extern unsigned bit_mix(unsigned);\nint main(void) { return bit_mix(0xABu) != 117u; }\n",
         support: None,
     },
     ProbeCase {
