@@ -13,8 +13,9 @@ use std::path::Path;
 
 use crate::encode::Inst;
 use crate::expr::{self, ClassifiedExpr, Expr, SymbolValue};
-use crate::macho::{self, ObjectFile, Relocation, Section, SectionKind, Symbol};
-use crate::parse::{self, Stmt, Directive, RelocKind};
+use crate::macho::{self, BuildVersion, ObjectFile, Relocation, Section, SectionKind, Symbol};
+use crate::parse::{self, BuildVersionDirective, Directive, RelocKind, Stmt};
+use crate::reg::{GpReg, SP};
 
 /// Assemble a source file to a Mach-O object file.
 pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
@@ -122,6 +123,11 @@ struct Assembler {
     fixups: Vec<Fixup>,
     /// Pending relocations for each section.
     pending_relocs: Vec<Vec<PendingReloc>>,
+    subsections_via_symbols: bool,
+    build_version: Option<BuildVersionDirective>,
+    active_cfi_proc: Option<CfiProcState>,
+    compact_unwind_rows: Vec<CompactUnwindRow>,
+    eh_frame_rows: Vec<EhFrameRecord>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -150,7 +156,9 @@ struct Fixup {
 enum FixupKind {
     Branch26(Inst),
     Branch19(Inst),
+    Branch14(Inst),
     Literal19(Inst),
+    Adr21(Inst),
     Page21,
     PageOff12,
     Data64,
@@ -163,6 +171,177 @@ struct PendingReloc {
     length: u8,
     reloc_type: u32,
     pcrel: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CfiProcState {
+    start_section: usize,
+    start_offset: u64,
+    function_symbol: String,
+    cfa_register: GpReg,
+    cfa_offset: i64,
+    saved_gp_offsets: BTreeMap<u8, i64>,
+    compact_unwind_forbidden: bool,
+    events: Vec<CfiEvent>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CompactUnwindRow {
+    start_section: usize,
+    start_offset: u64,
+    length: u32,
+    encoding: u32,
+}
+
+#[derive(Debug, Clone)]
+struct EhFrameRecord {
+    function_symbol: String,
+    length: u64,
+    instructions: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct CfiEvent {
+    code_offset: u64,
+    op: CfiOp,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CfiOp {
+    DefCfa { register: GpReg, offset: u64 },
+    DefCfaOffset(u64),
+    DefCfaRegister(GpReg),
+    Offset { register: GpReg, offset: u64 },
+    Restore(GpReg),
+}
+
+const UNWIND_ARM64_MODE_FRAMELESS: u32 = 0x02000000;
+const UNWIND_ARM64_MODE_DWARF: u32 = 0x03000000;
+const UNWIND_ARM64_MODE_FRAME: u32 = 0x04000000;
+const UNWIND_ARM64_FRAME_X19_X20_PAIR: u32 = 0x00000001;
+const UNWIND_ARM64_FRAME_X21_X22_PAIR: u32 = 0x00000002;
+const UNWIND_ARM64_FRAME_X23_X24_PAIR: u32 = 0x00000004;
+const UNWIND_ARM64_FRAME_X25_X26_PAIR: u32 = 0x00000008;
+const UNWIND_ARM64_FRAME_X27_X28_PAIR: u32 = 0x00000010;
+
+impl CfiProcState {
+    fn new(start_section: usize, start_offset: u64, function_symbol: String) -> Self {
+        Self {
+            start_section,
+            start_offset,
+            function_symbol,
+            cfa_register: SP,
+            cfa_offset: 0,
+            saved_gp_offsets: BTreeMap::new(),
+            compact_unwind_forbidden: false,
+            events: Vec::new(),
+        }
+    }
+
+    fn code_offset(&self, current_offset: u64) -> u64 {
+        current_offset.saturating_sub(self.start_offset)
+    }
+
+    fn push_event(&mut self, current_offset: u64, op: CfiOp) {
+        self.events.push(CfiEvent {
+            code_offset: self.code_offset(current_offset),
+            op,
+        });
+    }
+
+    fn compact_unwind_encoding(&self) -> Result<Option<u32>, AsmError> {
+        if self.compact_unwind_forbidden {
+            return Ok(None);
+        }
+
+        if self.cfa_register == SP {
+            if !self.saved_gp_offsets.is_empty() {
+                return Ok(None);
+            }
+            if self.cfa_offset < 0 {
+                return Err(AsmError("compact unwind stack size must be non-negative".into()));
+            }
+            let stack_size = self.cfa_offset as u64;
+            if !stack_size.is_multiple_of(16) {
+                return Err(AsmError(format!(
+                    "compact unwind frameless stack size {} must be a multiple of 16",
+                    stack_size
+                )));
+            }
+            let scaled = stack_size / 16;
+            if scaled > 0xFFF {
+                return Err(AsmError(format!(
+                    "compact unwind frameless stack size {} is too large",
+                    stack_size
+                )));
+            }
+            return Ok(Some(UNWIND_ARM64_MODE_FRAMELESS | ((scaled as u32) << 12)));
+        }
+
+        if self.cfa_register.num() != 29 {
+            return Ok(None);
+        }
+        if self.cfa_offset != 16 {
+            return Ok(None);
+        }
+        if self.saved_gp_offsets.get(&29) != Some(&-16) || self.saved_gp_offsets.get(&30) != Some(&-8) {
+            return Ok(None);
+        }
+
+        let mut encoding = UNWIND_ARM64_MODE_FRAME;
+        let mut next_offset = -24;
+        for (low, high, bit) in [
+            (19u8, 20u8, UNWIND_ARM64_FRAME_X19_X20_PAIR),
+            (21u8, 22u8, UNWIND_ARM64_FRAME_X21_X22_PAIR),
+            (23u8, 24u8, UNWIND_ARM64_FRAME_X23_X24_PAIR),
+            (25u8, 26u8, UNWIND_ARM64_FRAME_X25_X26_PAIR),
+            (27u8, 28u8, UNWIND_ARM64_FRAME_X27_X28_PAIR),
+        ] {
+            match (
+                self.saved_gp_offsets.get(&low),
+                self.saved_gp_offsets.get(&high),
+            ) {
+                (None, None) => {}
+                (Some(&low_offset), Some(&high_offset))
+                    if low_offset == next_offset && high_offset == next_offset - 8 =>
+                {
+                    encoding |= bit;
+                    next_offset -= 16;
+                }
+                (Some(_), Some(_)) => return Ok(None),
+                _ => return Ok(None),
+            }
+        }
+
+        for reg in self.saved_gp_offsets.keys() {
+            if !matches!(*reg, 19..=30) {
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(encoding))
+    }
+
+    fn eh_frame_record(&self, current_offset: u64) -> Result<EhFrameRecord, AsmError> {
+        let mut instructions = Vec::new();
+        let mut previous_code_offset = 0u64;
+        for event in &self.events {
+            if event.code_offset < previous_code_offset {
+                return Err(AsmError("CFI events regressed in code offset".into()));
+            }
+            emit_advance_loc(&mut instructions, event.code_offset - previous_code_offset)?;
+            emit_cfi_op(&mut instructions, event.op)?;
+            previous_code_offset = event.code_offset;
+        }
+
+        Ok(EhFrameRecord {
+            function_symbol: self.function_symbol.clone(),
+            length: current_offset
+                .checked_sub(self.start_offset)
+                .ok_or_else(|| AsmError("internal error: invalid CFI range length".into()))?,
+            instructions,
+        })
+    }
 }
 
 impl Assembler {
@@ -178,6 +357,11 @@ impl Assembler {
             symbol_attrs: BTreeMap::new(),
             fixups: Vec::new(),
             pending_relocs: vec![Vec::new()],
+            subsections_via_symbols: false,
+            build_version: None,
+            active_cfi_proc: None,
+            compact_unwind_rows: Vec::new(),
+            eh_frame_rows: Vec::new(),
         }
     }
 
@@ -200,6 +384,9 @@ impl Assembler {
         self.fixups.clear();
         self.pending_relocs.clear();
         self.pending_relocs.resize_with(self.sections.len(), Vec::new);
+        self.active_cfi_proc = None;
+        self.compact_unwind_rows.clear();
+        self.eh_frame_rows.clear();
     }
 
     fn prepare_expression_state(&mut self, _stmts: &[Stmt]) -> Result<(), AsmError> {
@@ -257,7 +444,9 @@ impl Assembler {
                             RelocKind::PageOff12 => FixupKind::PageOff12,
                             RelocKind::Branch26 => FixupKind::Branch26(inst.clone()),
                             RelocKind::Branch19 => FixupKind::Branch19(inst.clone()),
+                            RelocKind::Branch14 => FixupKind::Branch14(inst.clone()),
                             RelocKind::Literal19 => FixupKind::Literal19(inst.clone()),
+                            RelocKind::Adr21 => FixupKind::Adr21(inst.clone()),
                         },
                     });
                 }
@@ -320,10 +509,24 @@ impl Assembler {
             Directive::Zerofill { segment, section, symbol, size, align_pow2 } => {
                 self.reserve_zerofill(segment, section, symbol.as_deref(), *size, *align_pow2)?;
             }
+            Directive::CfiStartProc
+            | Directive::CfiEndProc
+            | Directive::CfiDefCfa { .. }
+            | Directive::CfiDefCfaOffset(_)
+            | Directive::CfiDefCfaRegister(_)
+            | Directive::CfiOffset { .. }
+            | Directive::CfiRestore(_)
+            | Directive::CfiAdjustCfaOffset(_) => {}
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
-            Directive::Ignored(_) | Directive::SubsectionsViaSymbols | Directive::BuildVersion { .. } => {}
+            Directive::SubsectionsViaSymbols => {
+                self.subsections_via_symbols = true;
+            }
+            Directive::BuildVersion(build_version) => {
+                self.record_build_version(build_version)?;
+            }
+            Directive::Ignored(_) => {}
         }
         Ok(())
     }
@@ -387,12 +590,193 @@ impl Assembler {
             Directive::Zerofill { segment, section, size, align_pow2, .. } => {
                 self.emit_zerofill(segment, section, *size, *align_pow2)?;
             }
+            Directive::CfiStartProc => {
+                self.start_cfi_proc()?;
+            }
+            Directive::CfiEndProc => {
+                self.finish_cfi_proc()?;
+            }
+            Directive::CfiDefCfa { .. }
+            | Directive::CfiDefCfaOffset(_)
+            | Directive::CfiDefCfaRegister(_)
+            | Directive::CfiOffset { .. }
+            | Directive::CfiRestore(_)
+            | Directive::CfiAdjustCfaOffset(_) => self.apply_cfi_directive(dir)?,
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
-            Directive::Ignored(_) | Directive::SubsectionsViaSymbols | Directive::BuildVersion { .. } => {}
+            Directive::SubsectionsViaSymbols => {
+                self.subsections_via_symbols = true;
+            }
+            Directive::BuildVersion(build_version) => {
+                self.record_build_version(build_version)?;
+            }
+            Directive::Ignored(_) => {}
         }
         Ok(())
+    }
+
+    fn function_symbol_at(&self, section: usize, offset: u64) -> Option<String> {
+        let mut exact: Vec<_> = self.labels
+            .iter()
+            .filter(|(_, (label_section, label_offset))| *label_section == section && *label_offset == offset)
+            .map(|(name, _)| name.as_str())
+            .collect();
+
+        exact.sort_unstable();
+
+        exact
+            .iter()
+            .copied()
+            .find(|name| {
+                !is_assembler_local_symbol(name)
+                    && self.symbol_attrs.get(*name).is_some_and(|attrs| attrs.global)
+            })
+            .or_else(|| exact.iter().copied().find(|name| !is_assembler_local_symbol(name)))
+            .or_else(|| exact.into_iter().next())
+            .map(str::to_string)
+    }
+
+    fn start_cfi_proc(&mut self) -> Result<(), AsmError> {
+        if self.active_cfi_proc.is_some() {
+            return Err(AsmError("nested .cfi_startproc directives are not supported".into()));
+        }
+        if self.sections[self.section].kind != SectionKind::Text {
+            return Err(AsmError(
+                ".cfi_startproc is only supported in __TEXT,__text".into(),
+            ));
+        }
+        let start_offset = self.current_offset();
+        let function_symbol = self
+            .function_symbol_at(self.section, start_offset)
+            .ok_or_else(|| AsmError(".cfi_startproc must follow a function label".into()))?;
+        self.active_cfi_proc = Some(CfiProcState::new(self.section, start_offset, function_symbol));
+        Ok(())
+    }
+
+    fn apply_cfi_directive(&mut self, dir: &Directive) -> Result<(), AsmError> {
+        let current_offset = self.current_offset();
+        let proc = self
+            .active_cfi_proc
+            .as_mut()
+            .ok_or_else(|| AsmError("CFI directives require an active .cfi_startproc".into()))?;
+
+        match dir {
+            Directive::CfiDefCfa { register, offset } => {
+                if *offset < 0 {
+                    return Err(AsmError(format!(".cfi_def_cfa offset {} must be non-negative", offset)));
+                }
+                proc.cfa_register = *register;
+                proc.cfa_offset = *offset;
+                proc.push_event(
+                    current_offset,
+                    CfiOp::DefCfa {
+                        register: *register,
+                        offset: *offset as u64,
+                    },
+                );
+            }
+            Directive::CfiDefCfaOffset(offset) => {
+                if *offset < 0 {
+                    return Err(AsmError(format!(
+                        ".cfi_def_cfa_offset {} must be non-negative",
+                        offset
+                    )));
+                }
+                proc.cfa_offset = *offset;
+                proc.push_event(current_offset, CfiOp::DefCfaOffset(*offset as u64));
+            }
+            Directive::CfiDefCfaRegister(register) => {
+                proc.cfa_register = *register;
+                proc.push_event(current_offset, CfiOp::DefCfaRegister(*register));
+            }
+            Directive::CfiOffset { register, offset } => {
+                if *offset > 0 || offset.rem_euclid(8) != 0 {
+                    return Err(AsmError(format!(
+                        ".cfi_offset for x{} requires a negative 8-byte-aligned offset, got {}",
+                        register.num(),
+                        offset
+                    )));
+                }
+                proc.saved_gp_offsets.insert(register.num(), *offset);
+                proc.push_event(
+                    current_offset,
+                    CfiOp::Offset {
+                        register: *register,
+                        offset: (-*offset) as u64,
+                    },
+                );
+            }
+            Directive::CfiRestore(register) => {
+                proc.saved_gp_offsets.remove(&register.num());
+                proc.compact_unwind_forbidden = true;
+                proc.push_event(current_offset, CfiOp::Restore(*register));
+            }
+            Directive::CfiAdjustCfaOffset(delta) => {
+                let next_offset = proc
+                    .cfa_offset
+                    .checked_add(*delta)
+                    .ok_or_else(|| AsmError("CFA offset overflows i64".into()))?;
+                if next_offset < 0 {
+                    return Err(AsmError(format!(
+                        ".cfi_adjust_cfa_offset would make CFA offset negative ({})",
+                        next_offset
+                    )));
+                }
+                proc.cfa_offset = next_offset;
+                proc.compact_unwind_forbidden = true;
+                proc.push_event(current_offset, CfiOp::DefCfaOffset(next_offset as u64));
+            }
+            _ => unreachable!("non-CFI directive passed to apply_cfi_directive"),
+        }
+
+        Ok(())
+    }
+
+    fn finish_cfi_proc(&mut self) -> Result<(), AsmError> {
+        let proc = self
+            .active_cfi_proc
+            .take()
+            .ok_or_else(|| AsmError(".cfi_endproc requires an active .cfi_startproc".into()))?;
+
+        if proc.start_section != self.section {
+            return Err(AsmError(
+                ".cfi_endproc must be in the same section as .cfi_startproc".into(),
+            ));
+        }
+
+        let length = self
+            .current_offset()
+            .checked_sub(proc.start_offset)
+            .ok_or_else(|| AsmError("internal error: invalid CFI range length".into()))?;
+
+        let encoding = proc.compact_unwind_encoding()?;
+        self.compact_unwind_rows.push(CompactUnwindRow {
+            start_section: proc.start_section,
+            start_offset: proc.start_offset,
+            length: u32::try_from(length)
+                .map_err(|_| AsmError("compact unwind function range exceeds u32".into()))?,
+            encoding: encoding.unwrap_or(UNWIND_ARM64_MODE_DWARF),
+        });
+
+        if encoding.is_none() {
+            self.eh_frame_rows.push(proc.eh_frame_record(self.current_offset())?);
+        }
+        Ok(())
+    }
+
+    fn record_build_version(&mut self, build_version: &BuildVersionDirective) -> Result<(), AsmError> {
+        match &self.build_version {
+            Some(existing) if existing == build_version => Ok(()),
+            Some(existing) => Err(AsmError(format!(
+                "conflicting .build_version directives: already saw {:?}, then {:?}",
+                existing, build_version
+            ))),
+            None => {
+                self.build_version = Some(build_version.clone());
+                Ok(())
+            }
+        }
     }
 
     fn reserve_initialized_bytes(&mut self, amount: u64, context: &str) -> Result<(), AsmError> {
@@ -537,7 +921,9 @@ impl Assembler {
             match fixup.kind.clone() {
                 FixupKind::Branch26(template) => self.resolve_branch_or_reloc(fixup, template, 26, true)?,
                 FixupKind::Branch19(template) => self.resolve_branch_or_reloc(fixup, template, 19, false)?,
+                FixupKind::Branch14(template) => self.resolve_branch_or_reloc(fixup, template, 14, false)?,
                 FixupKind::Literal19(template) => self.resolve_literal_fixup(fixup, template)?,
+                FixupKind::Adr21(template) => self.resolve_adr_fixup(fixup, template)?,
                 FixupKind::Page21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true)?,
                 FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false)?,
                 FixupKind::Data64 => self.resolve_data64_fixup(fixup)?,
@@ -622,6 +1008,24 @@ impl Assembler {
             .ok_or_else(|| AsmError("ldr literal offset overflows i64".into()))?;
         let resolved = self.resolve_literal_inst(&template, delta)?;
         self.patch_section_data(fixup.section, fixup.offset, &resolved.encode().to_le_bytes(), "ldr literal fixup")?;
+        Ok(())
+    }
+
+    fn resolve_adr_fixup(&mut self, fixup: Fixup, template: Inst) -> Result<(), AsmError> {
+        let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, "adr target")?;
+        let Some((target_section, target_offset)) = self.labels.get(&symbol) else {
+            return Err(AsmError(format!(
+                "adr target '{}' requires an assembler-local label",
+                symbol
+            )));
+        };
+        self.ensure_same_section(fixup.section, *target_section, &symbol)?;
+        let delta = (*target_offset as i64)
+            .checked_sub(fixup.offset as i64)
+            .and_then(|value| value.checked_add(addend))
+            .ok_or_else(|| AsmError("adr offset overflows i64".into()))?;
+        let resolved = self.resolve_adr_inst(&template, delta)?;
+        self.patch_section_data(fixup.section, fixup.offset, &resolved.encode().to_le_bytes(), "adr fixup")?;
         Ok(())
     }
 
@@ -869,6 +1273,8 @@ impl Assembler {
             Inst::BCond { cond, .. } => Ok(Inst::BCond { cond: *cond, offset: checked }),
             Inst::Cbz { rt, sf, .. } => Ok(Inst::Cbz { rt: *rt, offset: checked, sf: *sf }),
             Inst::Cbnz { rt, sf, .. } => Ok(Inst::Cbnz { rt: *rt, offset: checked, sf: *sf }),
+            Inst::Tbz { rt, bit, sf, .. } => Ok(Inst::Tbz { rt: *rt, bit: *bit, offset: checked, sf: *sf }),
+            Inst::Tbnz { rt, bit, sf, .. } => Ok(Inst::Tbnz { rt: *rt, bit: *bit, offset: checked, sf: *sf }),
             _ => Err(AsmError("internal error: invalid branch fixup instruction".into())),
         }
     }
@@ -879,7 +1285,17 @@ impl Assembler {
             Inst::LdrLit64 { rt, .. } => Ok(Inst::LdrLit64 { rt: *rt, offset: checked }),
             Inst::LdrLit32 { rt, .. } => Ok(Inst::LdrLit32 { rt: *rt, offset: checked }),
             Inst::LdrswLit { rt, .. } => Ok(Inst::LdrswLit { rt: *rt, offset: checked }),
+            Inst::LdrFpLit64 { rt, .. } => Ok(Inst::LdrFpLit64 { rt: *rt, offset: checked }),
+            Inst::LdrFpLit32 { rt, .. } => Ok(Inst::LdrFpLit32 { rt: *rt, offset: checked }),
             _ => Err(AsmError("internal error: invalid literal fixup instruction".into())),
+        }
+    }
+
+    fn resolve_adr_inst(&self, inst: &Inst, offset: i64) -> Result<Inst, AsmError> {
+        let checked = check_pcrel_offset(offset, 21, "adr offset")?;
+        match inst {
+            Inst::Adr { rd, .. } => Ok(Inst::Adr { rd: *rd, imm: checked }),
+            _ => Err(AsmError("internal error: invalid adr fixup instruction".into())),
         }
     }
 
@@ -930,10 +1346,144 @@ impl Assembler {
         }
     }
 
+    fn metadata_flags(&self) -> u32 {
+        if self.subsections_via_symbols {
+            macho::MH_SUBSECTIONS_VIA_SYMBOLS
+        } else {
+            0
+        }
+    }
+
+    fn build_version_command(&self) -> Result<BuildVersion, AsmError> {
+        let Some(build_version) = &self.build_version else {
+            return Ok(BuildVersion::default());
+        };
+
+        let platform = match build_version.platform.as_str() {
+            "macos" => macho::PLATFORM_MACOS,
+            other => {
+                return Err(AsmError(format!(
+                    "unsupported .build_version platform '{}' (supported: macos)",
+                    other
+                )));
+            }
+        };
+
+        Ok(BuildVersion {
+            platform,
+            minos: macho::pack_version(
+                build_version.minos.major,
+                build_version.minos.minor,
+                build_version.minos.patch,
+            ),
+            sdk: build_version
+                .sdk
+                .map(|sdk| macho::pack_version(sdk.major, sdk.minor, sdk.patch))
+                .unwrap_or(0),
+        })
+    }
+
+    fn materialize_eh_frame_section(&mut self) -> Result<(), AsmError> {
+        if self.eh_frame_rows.is_empty() {
+            return Ok(());
+        }
+
+        let eh_frame_index = self.sections.len();
+        let eh_frame_symbol = format!("ltmp{}", eh_frame_index);
+        let mut section = Section::new("__TEXT", "__eh_frame", SectionKind::EhFrame);
+        section.align_pow2 = 3;
+        section.data.extend_from_slice(&[
+            0x10, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x01, 0x7a, 0x52, 0x00,
+            0x01, 0x78, 0x1e, 0x01,
+            0x10, 0x0c, 0x1f, 0x00,
+        ]);
+
+        self.pending_relocs.push(Vec::new());
+
+        let rows = self.eh_frame_rows.clone();
+        for row in &rows {
+            let fde_start = section.data.len() as u32;
+            let cie_pointer = fde_start + 4;
+            let pc_field_offset = fde_start + 8;
+
+            let mut fde = Vec::new();
+            fde.extend_from_slice(&cie_pointer.to_le_bytes());
+            fde.extend_from_slice(&(-(pc_field_offset as i64)).to_le_bytes());
+            fde.extend_from_slice(&row.length.to_le_bytes());
+            fde.push(0);
+            fde.extend_from_slice(&row.instructions);
+
+            let fde_length = u32::try_from(fde.len())
+                .map_err(|_| AsmError("eh_frame FDE exceeds u32".into()))?;
+            section.data.extend_from_slice(&fde_length.to_le_bytes());
+            section.data.extend_from_slice(&fde);
+
+            self.record_pending_reloc(
+                eh_frame_index,
+                pc_field_offset,
+                eh_frame_symbol.clone(),
+                3,
+                macho::ARM64_RELOC_SUBTRACTOR,
+                false,
+            );
+            self.record_pending_reloc(
+                eh_frame_index,
+                pc_field_offset,
+                row.function_symbol.clone(),
+                3,
+                macho::ARM64_RELOC_UNSIGNED,
+                false,
+            );
+        }
+
+        section.size = section.data.len() as u64;
+        self.sections.push(section);
+        Ok(())
+    }
+
+    fn materialize_compact_unwind_section(&mut self) {
+        if self.compact_unwind_rows.is_empty() {
+            return;
+        }
+
+        let mut section = Section::new("__LD", "__compact_unwind", SectionKind::CompactUnwind);
+        section.align_pow2 = 3;
+        for row in &self.compact_unwind_rows {
+            let reloc_offset = section.data.len() as u32;
+            section.data.extend_from_slice(&row.start_offset.to_le_bytes());
+            section.data.extend_from_slice(&row.length.to_le_bytes());
+            section.data.extend_from_slice(&row.encoding.to_le_bytes());
+            section.data.extend_from_slice(&0u64.to_le_bytes());
+            section.data.extend_from_slice(&0u64.to_le_bytes());
+            section.relocations.push(Relocation {
+                offset: reloc_offset,
+                symbol_idx: (row.start_section + 1) as u32,
+                pcrel: false,
+                length: 3,
+                extern_: false,
+                reloc_type: macho::ARM64_RELOC_UNSIGNED,
+            });
+        }
+        section.size = section.data.len() as u64;
+        self.sections.push(section);
+        self.pending_relocs.push(Vec::new());
+    }
+
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
-        let section_bases = self.section_bases.clone();
+        if self.active_cfi_proc.is_some() {
+            return Err(AsmError("unterminated .cfi_startproc before end of file".into()));
+        }
+
+        self.materialize_compact_unwind_section();
+        self.materialize_eh_frame_section()?;
+
+        let section_bases = self.section_base_addresses();
         let absolute_symbols = self.absolute_symbols.clone();
         let mut symbols: Vec<Symbol> = Vec::new();
+        let flags = self.metadata_flags();
+        let build_version = self.build_version_command()?;
 
         for name in absolute_symbols.keys() {
             if self.labels.contains_key(name) {
@@ -1150,7 +1700,12 @@ impl Assembler {
             }
         }
 
-        Ok(ObjectFile { sections: self.sections, symbols })
+        Ok(ObjectFile {
+            sections: self.sections,
+            symbols,
+            flags,
+            build_version,
+        })
     }
 
     fn resolve_absolute_symbols(&self) -> Result<BTreeMap<String, i64>, AsmError> {
@@ -1236,6 +1791,76 @@ impl Assembler {
     }
 }
 
+fn emit_advance_loc(buf: &mut Vec<u8>, delta: u64) -> Result<(), AsmError> {
+    match delta {
+        0 => {}
+        1..=0x3f => buf.push(0x40 | (delta as u8)),
+        0x40..=0xff => {
+            buf.push(0x02);
+            buf.push(delta as u8);
+        }
+        0x100..=0xffff => {
+            buf.push(0x03);
+            buf.extend_from_slice(&(delta as u16).to_le_bytes());
+        }
+        _ => {
+            let delta = u32::try_from(delta)
+                .map_err(|_| AsmError(format!("CFI advance {} exceeds u32", delta)))?;
+            buf.push(0x04);
+            buf.extend_from_slice(&delta.to_le_bytes());
+        }
+    }
+    Ok(())
+}
+
+fn emit_cfi_op(buf: &mut Vec<u8>, op: CfiOp) -> Result<(), AsmError> {
+    match op {
+        CfiOp::DefCfa { register, offset } => {
+            buf.push(0x0c);
+            encode_uleb128(buf, register.num() as u64);
+            encode_uleb128(buf, offset);
+        }
+        CfiOp::DefCfaRegister(register) => {
+            buf.push(0x0d);
+            encode_uleb128(buf, register.num() as u64);
+        }
+        CfiOp::DefCfaOffset(offset) => {
+            buf.push(0x0e);
+            encode_uleb128(buf, offset);
+        }
+        CfiOp::Offset { register, offset } => {
+            let scaled = offset / 8;
+            if scaled == 0 || scaled * 8 != offset {
+                return Err(AsmError(format!(
+                    "CFI offset {} for x{} is not representable with DWARF data alignment",
+                    offset,
+                    register.num()
+                )));
+            }
+            buf.push(0x80 | register.num());
+            encode_uleb128(buf, scaled);
+        }
+        CfiOp::Restore(register) => {
+            buf.push(0xc0 | register.num());
+        }
+    }
+    Ok(())
+}
+
+fn encode_uleb128(buf: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        buf.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
 fn align_value(value: u64, power: u32) -> u64 {
     let alignment = 1u64 << power;
     (value + alignment - 1) & !(alignment - 1)
@@ -1257,6 +1882,19 @@ fn check_branch_offset(offset: i64, bits: u8) -> Result<i32, AsmError> {
     let max = (1i64 << (bits - 1)) - 1;
     if scaled < min || scaled > max {
         return Err(AsmError(format!("branch offset {} is out of range for {}-bit immediate", offset, bits)));
+    }
+
+    Ok(offset as i32)
+}
+
+fn check_pcrel_offset(offset: i64, bits: u8, context: &str) -> Result<i32, AsmError> {
+    let min = -(1i64 << (bits - 1));
+    let max = (1i64 << (bits - 1)) - 1;
+    if offset < min || offset > max {
+        return Err(AsmError(format!(
+            "{} {} is out of range for {}-bit immediate",
+            context, offset, bits
+        )));
     }
 
     Ok(offset as i32)
@@ -1285,6 +1923,16 @@ mod tests {
 
     fn data_relocs(obj: &ObjectFile) -> &[Relocation] {
         &obj.section("__DATA", "__data").expect("missing __DATA,__data").relocations
+    }
+
+    fn compact_unwind_section(obj: &ObjectFile) -> &Section {
+        obj.section("__LD", "__compact_unwind")
+            .expect("missing __LD,__compact_unwind")
+    }
+
+    fn eh_frame_section(obj: &ObjectFile) -> &Section {
+        obj.section("__TEXT", "__eh_frame")
+            .expect("missing __TEXT,__eh_frame")
     }
 
     #[test]
@@ -1587,9 +2235,171 @@ mod tests {
 
     #[test]
     fn assemble_ignored_directive_does_not_switch_sections() {
-        let obj = assemble_source(".data\n.byte 1\n.cfi_startproc\n.byte 2\n").unwrap();
+        let obj = assemble_source(".data\n.byte 1\n.unknown_directive\n.byte 2\n").unwrap();
         assert_eq!(text_bytes(&obj), Vec::<u8>::new());
         assert_eq!(data_bytes(&obj), vec![1, 2]);
+    }
+
+    #[test]
+    fn assemble_frameless_cfi_emits_compact_unwind() {
+        let obj = assemble_source(
+            ".text\n\
+            frameless_target:\n\
+            .cfi_startproc\n\
+            sub sp, sp, #16\n\
+            .cfi_def_cfa_offset 16\n\
+            add sp, sp, #16\n\
+            ret\n\
+            .cfi_endproc\n"
+        )
+        .unwrap();
+        let compact = compact_unwind_section(&obj);
+        assert_eq!(compact.align_pow2, 3);
+        assert_eq!(compact.data.len(), 32);
+        assert_eq!(
+            compact.data,
+            [
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x0C, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x02,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ]
+        );
+        assert_eq!(
+            compact.relocations,
+            vec![Relocation {
+                offset: 0,
+                symbol_idx: 1,
+                pcrel: false,
+                length: 3,
+                extern_: false,
+                reloc_type: macho::ARM64_RELOC_UNSIGNED,
+            }]
+        );
+    }
+
+    #[test]
+    fn assemble_frame_cfi_emits_compact_unwind() {
+        let obj = assemble_source(
+            ".text\n\
+            frame_target:\n\
+            .cfi_startproc\n\
+            stp x22, x21, [sp, #-48]!\n\
+            stp x20, x19, [sp, #16]\n\
+            stp x29, x30, [sp, #32]\n\
+            add x29, sp, #32\n\
+            .cfi_def_cfa w29, 16\n\
+            .cfi_offset w30, -8\n\
+            .cfi_offset w29, -16\n\
+            .cfi_offset w19, -24\n\
+            .cfi_offset w20, -32\n\
+            .cfi_offset w21, -40\n\
+            .cfi_offset w22, -48\n\
+            ldp x29, x30, [sp, #32]\n\
+            ldp x20, x19, [sp, #16]\n\
+            ldp x22, x21, [sp], #48\n\
+            ret\n\
+            .cfi_endproc\n"
+        )
+        .unwrap();
+        let compact = compact_unwind_section(&obj);
+        assert_eq!(
+            compact.data,
+            [
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x20, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x04,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ]
+        );
+    }
+
+    #[test]
+    fn assemble_cfi_endproc_requires_active_proc() {
+        let err = assemble_source(".cfi_endproc\n").unwrap_err();
+        assert!(err.0.contains(".cfi_endproc requires an active .cfi_startproc"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_cfi_directive_requires_active_proc() {
+        let err = assemble_source(".cfi_def_cfa_offset 16\n").unwrap_err();
+        assert!(err.0.contains("CFI directives require an active .cfi_startproc"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_unterminated_cfi_proc_is_rejected() {
+        let err = assemble_source(".text\nunterminated_target:\n.cfi_startproc\nret\n").unwrap_err();
+        assert!(err.0.contains("unterminated .cfi_startproc"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_cfi_restore_falls_back_to_eh_frame() {
+        let obj = assemble_source(
+            ".text\n\
+            restore_target:\n\
+            .cfi_startproc\n\
+            ret\n\
+            .cfi_restore w29\n\
+            .cfi_endproc\n"
+        )
+        .unwrap();
+
+        let compact = compact_unwind_section(&obj);
+        let eh_frame = eh_frame_section(&obj);
+        assert_eq!(u32::from_le_bytes(compact.data[12..16].try_into().unwrap()), UNWIND_ARM64_MODE_DWARF);
+        assert!(!eh_frame.data.is_empty());
+    }
+
+    #[test]
+    fn assemble_unpaired_saved_register_falls_back_to_eh_frame() {
+        let obj = assemble_source(
+            ".text\n\
+            pair_target:\n\
+            .cfi_startproc\n\
+            sub sp, sp, #32\n\
+            stp x29, x30, [sp, #16]\n\
+            add x29, sp, #16\n\
+            .cfi_def_cfa w29, 16\n\
+            .cfi_offset w30, -8\n\
+            .cfi_offset w29, -16\n\
+            .cfi_offset w19, -24\n\
+            ret\n\
+            .cfi_endproc\n"
+        )
+        .unwrap();
+
+        let compact = compact_unwind_section(&obj);
+        let eh_frame = eh_frame_section(&obj);
+        assert_eq!(u32::from_le_bytes(compact.data[12..16].try_into().unwrap()), UNWIND_ARM64_MODE_DWARF);
+        assert!(eh_frame.relocations.len() >= 2);
+    }
+
+    #[test]
+    fn assemble_subsections_via_symbols_sets_object_flag() {
+        let obj = assemble_source(".text\nret\n.subsections_via_symbols\n").unwrap();
+        assert_eq!(obj.flags, macho::MH_SUBSECTIONS_VIA_SYMBOLS);
+    }
+
+    #[test]
+    fn assemble_build_version_sets_object_metadata() {
+        let obj = assemble_source(
+            ".text\nret\n.build_version macos, 11, 0 sdk_version 15, 5\n"
+        )
+        .unwrap();
+
+        assert_eq!(obj.build_version.platform, macho::PLATFORM_MACOS);
+        assert_eq!(obj.build_version.minos, macho::pack_version(11, 0, 0));
+        assert_eq!(obj.build_version.sdk, macho::pack_version(15, 5, 0));
+    }
+
+    #[test]
+    fn assemble_rejects_unsupported_build_version_platform() {
+        let err = assemble_source(".build_version ios, 11, 0\n").unwrap_err();
+        assert!(
+            err.0.contains("unsupported .build_version platform"),
+            "got: {}",
+            err.0
+        );
     }
 
     #[test]
@@ -1729,6 +2539,18 @@ mod tests {
     }
 
     #[test]
+    fn assemble_local_tbz_label() {
+        let obj = assemble_source(".text\ntbz x0, #5, done\nnop\ndone:\nret\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::Tbz { rt: X0, bit: 5, offset: 8, sf: true }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_adr_local_label() {
+        let obj = assemble_source(".text\nadr x0, target\nret\ntarget:\nret\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::Adr { rd: X0, imm: 8 }.encode().to_le_bytes());
+    }
+
+    #[test]
     fn assemble_ldr_literal_local_label() {
         let obj = assemble_source(".text\nldr x0, target\nret\n.p2align 3\ntarget:\n.quad 42\n").unwrap();
         assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrLit64 { rt: X0, offset: 8 }.encode().to_le_bytes());
@@ -1741,6 +2563,18 @@ mod tests {
     }
 
     #[test]
+    fn assemble_ldr_d_literal_local_label() {
+        let obj = assemble_source(".text\nldr d0, target\nret\n.p2align 3\ntarget:\n.quad 42\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrFpLit64 { rt: D0, offset: 8 }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_ldr_s_literal_local_label() {
+        let obj = assemble_source(".text\nldr s0, target\nret\ntarget:\n.word 42\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrFpLit32 { rt: S0, offset: 8 }.encode().to_le_bytes());
+    }
+
+    #[test]
     fn assemble_ldr_literal_requires_local_label() {
         let err = assemble_source(".text\nldr x0, _ext\n").unwrap_err();
         assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
@@ -1750,6 +2584,12 @@ mod tests {
     fn assemble_ldr_literal_requires_same_section() {
         let err = assemble_source(".text\nldr x0, target\n.data\ntarget: .quad 42\n").unwrap_err();
         assert!(err.0.contains("current section"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_adr_requires_local_label() {
+        let err = assemble_source(".text\nadr x0, _ext\n").unwrap_err();
+        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
     }
 
     #[test]
@@ -1781,6 +2621,12 @@ mod tests {
     }
 
     #[test]
+    fn assemble_branch14_requires_local_label() {
+        let err = assemble_source(".text\ntbnz x0, #33, _foo\n").unwrap_err();
+        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
+    }
+
+    #[test]
     fn assemble_branch_rejects_misaligned_local_target() {
         let err = assemble_source(".text\nb done\n.byte 0\ndone:\nret\n").unwrap_err();
         assert!(err.0.contains("not 4-byte aligned"), "got: {}", err.0);
@@ -1793,8 +2639,20 @@ mod tests {
     }
 
     #[test]
+    fn assemble_branch14_rejects_out_of_range_target() {
+        let err = assemble_source(".text\ntbz x0, #5, done\n.space 32768\ndone:\nret\n").unwrap_err();
+        assert!(err.0.contains("out of range"), "got: {}", err.0);
+    }
+
+    #[test]
     fn check_branch_offset_rejects_branch26_out_of_range() {
         let err = check_branch_offset(1i64 << 27, 26).unwrap_err();
+        assert!(err.0.contains("out of range"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn check_pcrel_offset_rejects_adr21_out_of_range() {
+        let err = check_pcrel_offset(1i64 << 20, 21, "adr offset").unwrap_err();
         assert!(err.0.contains("out of range"), "got: {}", err.0);
     }
 }

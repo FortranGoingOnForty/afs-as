@@ -12,7 +12,7 @@
 use std::io::Write;
 use std::process::Command;
 
-use afs_as::encode::{AddrExtend, Inst};
+use afs_as::encode::{AddrExtend, BarrierOpt, Inst, RegExtend, RegShift};
 use afs_as::reg::*;
 
 /// Assemble a single ARM64 instruction with Apple `as` and return its 4-byte encoding.
@@ -72,6 +72,13 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_add_reg()  { verify("add x5, x6, x7",  Inst::AddReg  { rd: X5,  rn: X6,  rm: X7,  sf: true }); }
 #[test] fn sys_sub_reg()  { verify("sub x10, x11, x12", Inst::SubReg { rd: X10, rn: X11, rm: X12, sf: true }); }
 #[test] fn sys_add_w()    { verify("add w3, w4, w5",  Inst::AddReg  { rd: W3, rn: W4, rm: W5, sf: false }); }
+#[test] fn sys_add_shift_reg() { verify("add x0, x1, x2, lsl #3", Inst::AddShiftReg { rd: X0, rn: X1, rm: X2, shift: RegShift::Lsl, amount: 3, sf: true }); }
+#[test] fn sys_sub_shift_reg() { verify("sub w3, w4, w5, asr #7", Inst::SubShiftReg { rd: W3, rn: W4, rm: W5, shift: RegShift::Asr, amount: 7, sf: false }); }
+#[test] fn sys_cmp_shift_reg() { verify("cmp x6, x7, lsr #4", Inst::SubsShiftReg { rd: XZR, rn: X6, rm: X7, shift: RegShift::Lsr, amount: 4, sf: true }); }
+#[test] fn sys_add_ext_reg() { verify("add x0, x0, w1, sxtw #3", Inst::AddExtReg { rd: X0, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 3, sf: true }); }
+#[test] fn sys_add_ext_reg_sp_base() { verify("add x11, sp, w12, sxtw #2", Inst::AddExtReg { rd: X11, rn: SP, rm: W12, extend: RegExtend::Sxtw, amount: 2, sf: true }); }
+#[test] fn sys_sub_ext_reg() { verify("sub x2, x3, w4, uxtw #2", Inst::SubExtReg { rd: X2, rn: X3, rm: W4, extend: RegExtend::Uxtw, amount: 2, sf: true }); }
+#[test] fn sys_cmp_ext_reg() { verify("cmp x0, w1, sxtw", Inst::SubsExtReg { rd: XZR, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 0, sf: true }); }
 #[test] fn sys_mul()      { verify("mul x0, x1, x2",  Inst::Mul     { rd: X0, rn: X1, rm: X2, sf: true }); }
 #[test] fn sys_sdiv()     { verify("sdiv x3, x4, x5", Inst::Sdiv    { rd: X3, rn: X4, rm: X5, sf: true }); }
 #[test] fn sys_udiv()     { verify("udiv x3, x4, x5", Inst::Udiv    { rd: X3, rn: X4, rm: X5, sf: true }); }
@@ -107,6 +114,8 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_b_lt()     { verify("b.lt #32",      Inst::BCond { cond: Cond::LT, offset: 32 }); }
 #[test] fn sys_cbz()      { verify("cbz x5, #16",   Inst::Cbz  { rt: X5, offset: 16, sf: true }); }
 #[test] fn sys_cbnz()     { verify("cbnz x10, #24", Inst::Cbnz { rt: X10, offset: 24, sf: true }); }
+#[test] fn sys_tbz()      { verify("tbz x0, #5, #8", Inst::Tbz { rt: X0, bit: 5, offset: 8, sf: true }); }
+#[test] fn sys_tbnz()     { verify("tbnz x1, #33, #12", Inst::Tbnz { rt: X1, bit: 33, offset: 12, sf: true }); }
 #[test] fn sys_ret()      { verify("ret",           Inst::Ret  { rn: X30 }); }
 #[test] fn sys_br()       { verify("br x8",         Inst::Br   { rn: X8 }); }
 #[test] fn sys_blr()      { verify("blr x9",        Inst::Blr  { rn: X9 }); }
@@ -130,6 +139,17 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_ldrb_reg() { verify("ldrb w0, [x1, x2]", Inst::LdrbReg { rt: W0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }); }
 #[test] fn sys_ldrsw_reg() { verify("ldrsw x6, [x7, w8, sxtw #2]", Inst::LdrswReg { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Sxtw, shift: true }); }
 #[test] fn sys_ldrsw_lit() { verify("ldrsw x1, #8", Inst::LdrswLit { rt: X1, offset: 8 }); }
+#[test] fn sys_ldr_d() { verify("ldr d0, [x1]", Inst::LdrFpImm64 { rt: D0, rn: X1, offset: 0 }); }
+#[test] fn sys_str_d_off() { verify("str d2, [x3, #16]", Inst::StrFpImm64 { rt: D2, rn: X3, offset: 16 }); }
+#[test] fn sys_ldr_s_reg() { verify("ldr s4, [x5, x6]", Inst::LdrFpReg32 { rt: S4, rn: X5, rm: X6, extend: AddrExtend::Lsl, shift: false }); }
+#[test] fn sys_str_s_reg_uxtw() { verify("str s7, [x8, w9, uxtw #2]", Inst::StrFpReg32 { rt: S7, rn: X8, rm: W9, extend: AddrExtend::Uxtw, shift: true }); }
+#[test] fn sys_ldr_d_lit() { verify("ldr d10, #8", Inst::LdrFpLit64 { rt: D10, offset: 8 }); }
+#[test] fn sys_ldr_d_post() { verify("ldr d0, [sp], #8", Inst::LdrFpPost64 { rt: D0, rn: SP, offset: 8 }); }
+#[test] fn sys_str_s_pre() { verify("str s3, [sp, #-8]!", Inst::StrFpPre32 { rt: S3, rn: SP, offset: -8 }); }
+
+// ---- Address generation ----
+
+#[test] fn sys_adr()      { verify("adr x0, #8", Inst::Adr { rd: X0, imm: 8 }); }
 
 // ---- Load/Store pair ----
 
@@ -137,6 +157,12 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_ldp_post() { verify("ldp x29, x30, [sp], #32",  Inst::LdpPost64 { rt1: X29, rt2: X30, rn: SP, offset: 32 }); }
 #[test] fn sys_stp_off()  { verify("stp x19, x20, [sp, #32]",  Inst::StpOff64 { rt1: X19, rt2: X20, rn: SP, offset: 32 }); }
 #[test] fn sys_ldp_off()  { verify("ldp x21, x22, [sp, #48]",  Inst::LdpOff64 { rt1: X21, rt2: X22, rn: SP, offset: 48 }); }
+#[test] fn sys_ldp_d_pre() { verify("ldp d8, d9, [sp, #-16]!", Inst::LdpFpPre64 { rt1: D8, rt2: D9, rn: SP, offset: -16 }); }
+#[test] fn sys_stp_d_post() { verify("stp d10, d11, [sp], #16", Inst::StpFpPost64 { rt1: D10, rt2: D11, rn: SP, offset: 16 }); }
+#[test] fn sys_ldp_d_off() { verify("ldp d12, d13, [sp, #32]", Inst::LdpFpOff64 { rt1: D12, rt2: D13, rn: SP, offset: 32 }); }
+#[test] fn sys_stp_s_post() { verify("stp s0, s1, [sp], #8", Inst::StpFpPost32 { rt1: S0, rt2: S1, rn: SP, offset: 8 }); }
+#[test] fn sys_ldp_s_pre() { verify("ldp s2, s3, [sp, #-8]!", Inst::LdpFpPre32 { rt1: S2, rt2: S3, rn: SP, offset: -8 }); }
+#[test] fn sys_ldp_s_off() { verify("ldp s4, s5, [sp, #16]", Inst::LdpFpOff32 { rt1: S4, rt2: S5, rn: SP, offset: 16 }); }
 
 // ---- FP arithmetic ----
 
@@ -162,4 +188,12 @@ fn verify(asm: &str, inst: Inst) {
 
 #[test] fn sys_svc()      { verify("svc #0x80",         Inst::Svc { imm16: 0x80 }); }
 #[test] fn sys_nop()      { verify("nop",               Inst::Nop); }
+#[test] fn sys_yield()    { verify("yield",             Inst::Yield); }
+#[test] fn sys_wfe()      { verify("wfe",               Inst::Wfe); }
+#[test] fn sys_wfi()      { verify("wfi",               Inst::Wfi); }
+#[test] fn sys_sev()      { verify("sev",               Inst::Sev); }
+#[test] fn sys_sevl()     { verify("sevl",              Inst::Sevl); }
+#[test] fn sys_isb()      { verify("isb",               Inst::Isb { option: BarrierOpt::Sy }); }
+#[test] fn sys_dmb_ish()  { verify("dmb ish",           Inst::Dmb { option: BarrierOpt::Ish }); }
+#[test] fn sys_dsb_ishst(){ verify("dsb ishst",         Inst::Dsb { option: BarrierOpt::Ishst }); }
 #[test] fn sys_brk()      { verify("brk #42",           Inst::Brk { imm16: 42 }); }

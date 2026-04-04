@@ -81,6 +81,10 @@ pub fn object_load_commands(path: &Path) -> String {
     tool_output("otool", &["-l", path.to_str().expect("object path")])
 }
 
+pub fn object_header(path: &Path) -> String {
+    tool_output("otool", &["-hv", path.to_str().expect("object path")])
+}
+
 pub fn object_symbols(path: &Path) -> String {
     tool_output("nm", &["-a", path.to_str().expect("object path")])
 }

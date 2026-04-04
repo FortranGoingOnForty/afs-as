@@ -24,6 +24,77 @@ impl AddrExtend {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegShift {
+    Lsl,
+    Lsr,
+    Asr,
+}
+
+impl RegShift {
+    fn enc(self) -> u32 {
+        match self {
+            RegShift::Lsl => 0b00,
+            RegShift::Lsr => 0b01,
+            RegShift::Asr => 0b10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegExtend {
+    Uxtw,
+    Uxtx,
+    Sxtw,
+    Sxtx,
+}
+
+impl RegExtend {
+    fn enc(self) -> u32 {
+        match self {
+            RegExtend::Uxtw => 0b010,
+            RegExtend::Uxtx => 0b011,
+            RegExtend::Sxtw => 0b110,
+            RegExtend::Sxtx => 0b111,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BarrierOpt {
+    Oshld,
+    Oshst,
+    Osh,
+    Nshld,
+    Nshst,
+    Nsh,
+    Ishld,
+    Ishst,
+    Ish,
+    Ld,
+    St,
+    Sy,
+}
+
+impl BarrierOpt {
+    fn enc(self) -> u32 {
+        match self {
+            BarrierOpt::Oshld => 0b0001,
+            BarrierOpt::Oshst => 0b0010,
+            BarrierOpt::Osh => 0b0011,
+            BarrierOpt::Nshld => 0b0101,
+            BarrierOpt::Nshst => 0b0110,
+            BarrierOpt::Nsh => 0b0111,
+            BarrierOpt::Ishld => 0b1001,
+            BarrierOpt::Ishst => 0b1010,
+            BarrierOpt::Ish => 0b1011,
+            BarrierOpt::Ld => 0b1101,
+            BarrierOpt::St => 0b1110,
+            BarrierOpt::Sy => 0b1111,
+        }
+    }
+}
+
 /// An ARM64 instruction that can be encoded to its 4-byte binary form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inst {
@@ -31,12 +102,28 @@ pub enum Inst {
 
     /// ADD Xd, Xn, Xm  (sf=true for 64-bit, false for 32-bit)
     AddReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
+    /// ADD Xd, Xn, Xm, <shift> #amount
+    AddShiftReg { rd: GpReg, rn: GpReg, rm: GpReg, shift: RegShift, amount: u8, sf: bool },
+    /// ADD Xd, Xn, Rm, <extend> {#amount}
+    AddExtReg { rd: GpReg, rn: GpReg, rm: GpReg, extend: RegExtend, amount: u8, sf: bool },
     /// SUB Xd, Xn, Xm
     SubReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
+    /// SUB Xd, Xn, Xm, <shift> #amount
+    SubShiftReg { rd: GpReg, rn: GpReg, rm: GpReg, shift: RegShift, amount: u8, sf: bool },
+    /// SUB Xd, Xn, Rm, <extend> {#amount}
+    SubExtReg { rd: GpReg, rn: GpReg, rm: GpReg, extend: RegExtend, amount: u8, sf: bool },
     /// ADDS Xd, Xn, Xm  (sets flags)
     AddsReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
+    /// ADDS Xd, Xn, Xm, <shift> #amount  (sets flags)
+    AddsShiftReg { rd: GpReg, rn: GpReg, rm: GpReg, shift: RegShift, amount: u8, sf: bool },
+    /// ADDS Xd, Xn, Rm, <extend> {#amount}  (sets flags)
+    AddsExtReg { rd: GpReg, rn: GpReg, rm: GpReg, extend: RegExtend, amount: u8, sf: bool },
     /// SUBS Xd, Xn, Xm  (sets flags)
     SubsReg { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
+    /// SUBS Xd, Xn, Xm, <shift> #amount  (sets flags)
+    SubsShiftReg { rd: GpReg, rn: GpReg, rm: GpReg, shift: RegShift, amount: u8, sf: bool },
+    /// SUBS Xd, Xn, Rm, <extend> {#amount}  (sets flags)
+    SubsExtReg { rd: GpReg, rn: GpReg, rm: GpReg, extend: RegExtend, amount: u8, sf: bool },
     /// MUL Xd, Xn, Xm  (alias for MADD Xd, Xn, Xm, XZR)
     Mul { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// SDIV Xd, Xn, Xm
@@ -98,6 +185,10 @@ pub enum Inst {
     Cbz { rt: GpReg, offset: i32, sf: bool },
     /// CBNZ Xt, #offset
     Cbnz { rt: GpReg, offset: i32, sf: bool },
+    /// TBZ Xt, #bit, #offset
+    Tbz { rt: GpReg, bit: u8, offset: i32, sf: bool },
+    /// TBNZ Xt, #bit, #offset
+    Tbnz { rt: GpReg, bit: u8, offset: i32, sf: bool },
     /// RET {Xn}
     Ret { rn: GpReg },
     /// BR Xn  (indirect branch)
@@ -109,6 +200,8 @@ pub enum Inst {
 
     // ---- Address generation ----
 
+    /// ADR Xd, #imm  (PC-relative, ±1MB range)
+    Adr { rd: GpReg, imm: i32 },
     /// ADRP Xd, #imm  (page-relative, 4KB pages, ±4GB range)
     Adrp { rd: GpReg, imm: i32 },
 
@@ -143,12 +236,33 @@ pub enum Inst {
     /// LDRSW Xt, [Xn, Rm{, extend}]
     LdrswReg { rt: GpReg, rn: GpReg, rm: GpReg, extend: AddrExtend, shift: bool },
 
+    /// LDR Dt, [Xn, #offset]
+    LdrFpImm64 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// LDR St, [Xn, #offset]
+    LdrFpImm32 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// STR Dt, [Xn, #offset]
+    StrFpImm64 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// STR St, [Xn, #offset]
+    StrFpImm32 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// LDR Dt, [Xn, Rm{, extend}]
+    LdrFpReg64 { rt: FpReg, rn: GpReg, rm: GpReg, extend: AddrExtend, shift: bool },
+    /// LDR St, [Xn, Rm{, extend}]
+    LdrFpReg32 { rt: FpReg, rn: GpReg, rm: GpReg, extend: AddrExtend, shift: bool },
+    /// STR Dt, [Xn, Rm{, extend}]
+    StrFpReg64 { rt: FpReg, rn: GpReg, rm: GpReg, extend: AddrExtend, shift: bool },
+    /// STR St, [Xn, Rm{, extend}]
+    StrFpReg32 { rt: FpReg, rn: GpReg, rm: GpReg, extend: AddrExtend, shift: bool },
+
     /// LDR Xt, label
     LdrLit64 { rt: GpReg, offset: i32 },
     /// LDR Wt, label
     LdrLit32 { rt: GpReg, offset: i32 },
     /// LDRSW Xt, label
     LdrswLit { rt: GpReg, offset: i32 },
+    /// LDR Dt, label
+    LdrFpLit64 { rt: FpReg, offset: i32 },
+    /// LDR St, label
+    LdrFpLit32 { rt: FpReg, offset: i32 },
 
     // ---- Load/Store (pre-index) ----
 
@@ -156,6 +270,14 @@ pub enum Inst {
     LdrPre64 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STR Xt, [Xn, #offset]!  (pre-index, 64-bit)
     StrPre64 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDR Dt, [Xn, #offset]!  (pre-index, double)
+    LdrFpPre64 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STR Dt, [Xn, #offset]!  (pre-index, double)
+    StrFpPre64 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// LDR St, [Xn, #offset]!  (pre-index, single)
+    LdrFpPre32 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STR St, [Xn, #offset]!  (pre-index, single)
+    StrFpPre32 { rt: FpReg, rn: GpReg, offset: i16 },
 
     // ---- Load/Store (post-index) ----
 
@@ -163,6 +285,14 @@ pub enum Inst {
     LdrPost64 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STR Xt, [Xn], #offset  (post-index, 64-bit)
     StrPost64 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDR Dt, [Xn], #offset  (post-index, double)
+    LdrFpPost64 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STR Dt, [Xn], #offset  (post-index, double)
+    StrFpPost64 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// LDR St, [Xn], #offset  (post-index, single)
+    LdrFpPost32 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STR St, [Xn], #offset  (post-index, single)
+    StrFpPost32 { rt: FpReg, rn: GpReg, offset: i16 },
 
     // ---- Load/Store pair ----
 
@@ -178,6 +308,30 @@ pub enum Inst {
     LdpPre64 { rt1: GpReg, rt2: GpReg, rn: GpReg, offset: i16 },
     /// LDP Xt1, Xt2, [Xn], #offset  (post-index, 64-bit)
     LdpPost64 { rt1: GpReg, rt2: GpReg, rn: GpReg, offset: i16 },
+    /// STP Dt1, Dt2, [Xn, #offset]  (signed offset, double)
+    StpFpOff64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP Dt1, Dt2, [Xn, #offset]  (signed offset, double)
+    LdpFpOff64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP Dt1, Dt2, [Xn, #offset]!  (pre-index, double)
+    StpFpPre64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP Dt1, Dt2, [Xn], #offset  (post-index, double)
+    StpFpPost64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP Dt1, Dt2, [Xn, #offset]!  (pre-index, double)
+    LdpFpPre64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP Dt1, Dt2, [Xn], #offset  (post-index, double)
+    LdpFpPost64 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP St1, St2, [Xn, #offset]  (signed offset, single)
+    StpFpOff32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP St1, St2, [Xn, #offset]  (signed offset, single)
+    LdpFpOff32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP St1, St2, [Xn, #offset]!  (pre-index, single)
+    StpFpPre32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// STP St1, St2, [Xn], #offset  (post-index, single)
+    StpFpPost32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP St1, St2, [Xn, #offset]!  (pre-index, single)
+    LdpFpPre32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
+    /// LDP St1, St2, [Xn], #offset  (post-index, single)
+    LdpFpPost32 { rt1: FpReg, rt2: FpReg, rn: GpReg, offset: i16 },
 
     // ---- Floating point arithmetic ----
 
@@ -235,6 +389,22 @@ pub enum Inst {
     Svc { imm16: u16 },
     /// NOP
     Nop,
+    /// YIELD
+    Yield,
+    /// WFE
+    Wfe,
+    /// WFI
+    Wfi,
+    /// SEV
+    Sev,
+    /// SEVL
+    Sevl,
+    /// DMB <option>
+    Dmb { option: BarrierOpt },
+    /// DSB <option>
+    Dsb { option: BarrierOpt },
+    /// ISB {<option>}
+    Isb { option: BarrierOpt },
     /// BRK #imm16
     Brk { imm16: u16 },
 }
@@ -246,12 +416,28 @@ impl Inst {
             // ---- Data processing (register) ----
             Inst::AddReg { rd, rn, rm, sf } =>
                 dp_reg(*sf, 0b00, 0b01011, 0b00, *rm, 0, *rn, *rd),
+            Inst::AddShiftReg { rd, rn, rm, shift, amount, sf } =>
+                dp_reg(*sf, 0b00, 0b01011, shift.enc(), *rm, *amount as u32, *rn, *rd),
+            Inst::AddExtReg { rd, rn, rm, extend, amount, sf } =>
+                dp_ext(*sf, 0b00, *rm, *extend, *amount, *rn, *rd),
             Inst::SubReg { rd, rn, rm, sf } =>
                 dp_reg(*sf, 0b10, 0b01011, 0b00, *rm, 0, *rn, *rd),
+            Inst::SubShiftReg { rd, rn, rm, shift, amount, sf } =>
+                dp_reg(*sf, 0b10, 0b01011, shift.enc(), *rm, *amount as u32, *rn, *rd),
+            Inst::SubExtReg { rd, rn, rm, extend, amount, sf } =>
+                dp_ext(*sf, 0b10, *rm, *extend, *amount, *rn, *rd),
             Inst::AddsReg { rd, rn, rm, sf } =>
                 dp_reg(*sf, 0b01, 0b01011, 0b00, *rm, 0, *rn, *rd),
+            Inst::AddsShiftReg { rd, rn, rm, shift, amount, sf } =>
+                dp_reg(*sf, 0b01, 0b01011, shift.enc(), *rm, *amount as u32, *rn, *rd),
+            Inst::AddsExtReg { rd, rn, rm, extend, amount, sf } =>
+                dp_ext(*sf, 0b01, *rm, *extend, *amount, *rn, *rd),
             Inst::SubsReg { rd, rn, rm, sf } =>
                 dp_reg(*sf, 0b11, 0b01011, 0b00, *rm, 0, *rn, *rd),
+            Inst::SubsShiftReg { rd, rn, rm, shift, amount, sf } =>
+                dp_reg(*sf, 0b11, 0b01011, shift.enc(), *rm, *amount as u32, *rn, *rd),
+            Inst::SubsExtReg { rd, rn, rm, extend, amount, sf } =>
+                dp_ext(*sf, 0b11, *rm, *extend, *amount, *rn, *rd),
 
             // MUL: alias for MADD Xd, Xn, Xm, XZR
             // sf|00|11011|000|Rm|0|Ra(11111)|Rn|Rd
@@ -334,12 +520,29 @@ impl Inst {
                 let imm19 = ((*offset >> 2) as u32) & 0x7FFFF;
                 s | (0b011010_1 << 24) | (imm19 << 5) | rt.enc()
             }
+            Inst::Tbz { rt, bit, offset, sf: _ } => {
+                let b5 = ((*bit >> 5) as u32) & 0x1;
+                let b40 = (*bit as u32) & 0x1F;
+                let imm14 = ((*offset >> 2) as u32) & 0x3FFF;
+                (b5 << 31) | (0b011011 << 25) | (b40 << 19) | (imm14 << 5) | rt.enc()
+            }
+            Inst::Tbnz { rt, bit, offset, sf: _ } => {
+                let b5 = ((*bit >> 5) as u32) & 0x1;
+                let b40 = (*bit as u32) & 0x1F;
+                let imm14 = ((*offset >> 2) as u32) & 0x3FFF;
+                (b5 << 31) | (0b011011 << 25) | (1 << 24) | (b40 << 19) | (imm14 << 5) | rt.enc()
+            }
             Inst::Ret { rn } => 0xD65F0000 | (rn.enc() << 5),
             Inst::Br { rn } => 0xD61F0000 | (rn.enc() << 5),
             Inst::Blr { rn } => 0xD63F0000 | (rn.enc() << 5),
             Inst::Csinc { rd, rn, rm, cond, sf } => csel(*sf, 0b01, *rm, *cond, *rn, *rd),
 
             // ---- Address generation ----
+            Inst::Adr { rd, imm } => {
+                let immlo = (*imm as u32) & 0x3;
+                let immhi = ((*imm as u32) >> 2) & 0x7FFFF;
+                (immlo << 29) | (0b10000 << 24) | (immhi << 5) | rd.enc()
+            }
             Inst::Adrp { rd, imm } => {
                 let page = (*imm >> 12) as u32;
                 let immlo = page & 0x3;
@@ -391,15 +594,42 @@ impl Inst {
             Inst::LdrswReg { rt, rn, rm, extend, shift } =>
                 ldst_reg(0b10, 0b10, *rm, *extend, *shift, *rn, *rt),
 
+            Inst::LdrFpImm64 { rt, rn, offset } =>
+                ldst_uimm_fp(0b11, 0b01, 3, *offset, *rn, *rt),
+            Inst::LdrFpImm32 { rt, rn, offset } =>
+                ldst_uimm_fp(0b10, 0b01, 2, *offset, *rn, *rt),
+            Inst::StrFpImm64 { rt, rn, offset } =>
+                ldst_uimm_fp(0b11, 0b00, 3, *offset, *rn, *rt),
+            Inst::StrFpImm32 { rt, rn, offset } =>
+                ldst_uimm_fp(0b10, 0b00, 2, *offset, *rn, *rt),
+            Inst::LdrFpReg64 { rt, rn, rm, extend, shift } =>
+                ldst_reg_fp(0b11, 0b01, *rm, *extend, *shift, *rn, *rt),
+            Inst::LdrFpReg32 { rt, rn, rm, extend, shift } =>
+                ldst_reg_fp(0b10, 0b01, *rm, *extend, *shift, *rn, *rt),
+            Inst::StrFpReg64 { rt, rn, rm, extend, shift } =>
+                ldst_reg_fp(0b11, 0b00, *rm, *extend, *shift, *rn, *rt),
+            Inst::StrFpReg32 { rt, rn, rm, extend, shift } =>
+                ldst_reg_fp(0b10, 0b00, *rm, *extend, *shift, *rn, *rt),
+
             Inst::LdrLit64 { rt, offset } => ldr_lit(0b01, *offset, *rt),
             Inst::LdrLit32 { rt, offset } => ldr_lit(0b00, *offset, *rt),
             Inst::LdrswLit { rt, offset } => ldr_lit(0b10, *offset, *rt),
+            Inst::LdrFpLit64 { rt, offset } => ldr_lit_fp(0b01, *offset, *rt),
+            Inst::LdrFpLit32 { rt, offset } => ldr_lit_fp(0b00, *offset, *rt),
 
             // ---- Load/Store (pre/post-index) ----
             Inst::LdrPre64 { rt, rn, offset } => ldst_idx(0b11, 0b01, *offset, 0b11, *rn, *rt),
             Inst::StrPre64 { rt, rn, offset } => ldst_idx(0b11, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrPost64 { rt, rn, offset } => ldst_idx(0b11, 0b01, *offset, 0b01, *rn, *rt),
             Inst::StrPost64 { rt, rn, offset } => ldst_idx(0b11, 0b00, *offset, 0b01, *rn, *rt),
+            Inst::LdrFpPre64 { rt, rn, offset } => ldst_idx_fp(0b11, 0b01, *offset, 0b11, *rn, *rt),
+            Inst::StrFpPre64 { rt, rn, offset } => ldst_idx_fp(0b11, 0b00, *offset, 0b11, *rn, *rt),
+            Inst::LdrFpPre32 { rt, rn, offset } => ldst_idx_fp(0b10, 0b01, *offset, 0b11, *rn, *rt),
+            Inst::StrFpPre32 { rt, rn, offset } => ldst_idx_fp(0b10, 0b00, *offset, 0b11, *rn, *rt),
+            Inst::LdrFpPost64 { rt, rn, offset } => ldst_idx_fp(0b11, 0b01, *offset, 0b01, *rn, *rt),
+            Inst::StrFpPost64 { rt, rn, offset } => ldst_idx_fp(0b11, 0b00, *offset, 0b01, *rn, *rt),
+            Inst::LdrFpPost32 { rt, rn, offset } => ldst_idx_fp(0b10, 0b01, *offset, 0b01, *rn, *rt),
+            Inst::StrFpPost32 { rt, rn, offset } => ldst_idx_fp(0b10, 0b00, *offset, 0b01, *rn, *rt),
 
             // ---- Load/Store pair ----
             Inst::StpOff64 { rt1, rt2, rn, offset } =>
@@ -414,6 +644,30 @@ impl Inst {
                 ldp_stp(0b10, 0b011, 1, *offset, *rt2, *rn, *rt1),
             Inst::LdpPost64 { rt1, rt2, rn, offset } =>
                 ldp_stp(0b10, 0b001, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpOff64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b010, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpOff64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b010, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPre64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b011, 0, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPost64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b001, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPre64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b011, 1, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPost64 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b01, 0b001, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpOff32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b010, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpOff32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b010, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPre32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b011, 0, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPost32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b001, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPre32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b011, 1, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPost32 { rt1, rt2, rn, offset } =>
+                ldp_stp_fp(0b00, 0b001, 1, *offset, *rt2, *rn, *rt1),
 
             // ---- FP arithmetic ----
             Inst::FaddD { rd, rn, rm } => fp_arith(0b01, 0b0010, *rm, *rn, *rd),
@@ -458,7 +712,15 @@ impl Inst {
             Inst::Svc { imm16 } => {
                 (0b11010100_000 << 21) | ((*imm16 as u32) << 5) | 0b000_01
             }
-            Inst::Nop => 0xD503201F,
+            Inst::Nop => hint(0),
+            Inst::Yield => hint(1),
+            Inst::Wfe => hint(2),
+            Inst::Wfi => hint(3),
+            Inst::Sev => hint(4),
+            Inst::Sevl => hint(5),
+            Inst::Dmb { option } => barrier(0xD50330BF, *option),
+            Inst::Dsb { option } => barrier(0xD503309F, *option),
+            Inst::Isb { option } => barrier(0xD50330DF, *option),
             Inst::Brk { imm16 } => {
                 (0b11010100_001 << 21) | ((*imm16 as u32) << 5)
             }
@@ -482,6 +744,12 @@ fn logic_reg(sf: bool, opc: u32, n: bool, rm: GpReg, rn: GpReg, rd: GpReg) -> u3
 fn dp_imm(sf: bool, op: u32, imm12: u16, shift: bool, rn: GpReg, rd: GpReg) -> u32 {
     ((sf as u32) << 31) | (op << 29) | (0b100010 << 23) | ((shift as u32) << 22)
         | ((imm12 as u32) << 10) | (rn.enc() << 5) | rd.enc()
+}
+
+fn dp_ext(sf: bool, op: u32, rm: GpReg, extend: RegExtend, amount: u8, rn: GpReg, rd: GpReg) -> u32 {
+    ((sf as u32) << 31) | (op << 29) | (0b01011 << 24) | (1 << 21)
+        | (rm.enc() << 16) | (extend.enc() << 13) | ((amount as u32) << 10)
+        | (rn.enc() << 5) | rd.enc()
 }
 
 fn mov_wide(sf: bool, opc: u32, imm16: u16, shift: u8, rd: GpReg) -> u32 {
@@ -508,15 +776,33 @@ fn ldst_idx(size: u32, opc: u32, offset: i16, idx: u32, rn: GpReg, rt: GpReg) ->
         | (imm9 << 12) | (idx << 10) | (rn.enc() << 5) | rt.enc()
 }
 
+fn ldst_uimm_fp(size: u32, opc: u32, scale: u8, offset: u16, rn: GpReg, rt: FpReg) -> u32 {
+    let uoff = ((offset as u32) >> scale) & 0xFFF;
+    (size << 30) | (0b111_1_01 << 24) | (opc << 22)
+        | (uoff << 10) | (rn.enc() << 5) | rt.enc()
+}
+
 fn ldst_reg(size: u32, opc: u32, rm: GpReg, extend: AddrExtend, shift: bool, rn: GpReg, rt: GpReg) -> u32 {
     (size << 30) | (0b111 << 27) | (opc << 22) | (1 << 21) | (rm.enc() << 16)
         | (extend.enc() << 13) | ((shift as u32) << 12) | (0b10 << 10)
         | (rn.enc() << 5) | rt.enc()
 }
 
+fn ldst_reg_fp(size: u32, opc: u32, rm: GpReg, extend: AddrExtend, shift: bool, rn: GpReg, rt: FpReg) -> u32 {
+    ldst_reg(size, opc, rm, extend, shift, rn, GpReg::new(rt.num())) | (1 << 26)
+}
+
 fn ldr_lit(opc: u32, offset: i32, rt: GpReg) -> u32 {
     let imm19 = ((offset >> 2) as u32) & 0x7FFFF;
     (opc << 30) | (0b011 << 27) | (imm19 << 5) | rt.enc()
+}
+
+fn ldr_lit_fp(opc: u32, offset: i32, rt: FpReg) -> u32 {
+    ldr_lit(opc, offset, GpReg::new(rt.num())) | (1 << 26)
+}
+
+fn ldst_idx_fp(size: u32, opc: u32, offset: i16, idx: u32, rn: GpReg, rt: FpReg) -> u32 {
+    ldst_idx(size, opc, offset, idx, rn, GpReg::new(rt.num())) | (1 << 26)
 }
 
 /// Load/store pair.
@@ -526,6 +812,21 @@ fn ldp_stp(opc: u32, mode: u32, l: u32, offset: i16, rt2: GpReg, rn: GpReg, rt1:
     let imm7 = ((offset / 8) as u32) & 0x7F;
     (opc << 30) | (0b101 << 27) | (mode << 23) | (l << 22)
         | (imm7 << 15) | (rt2.enc() << 10) | (rn.enc() << 5) | rt1.enc()
+}
+
+fn ldp_stp_fp(opc: u32, mode: u32, l: u32, offset: i16, rt2: FpReg, rn: GpReg, rt1: FpReg) -> u32 {
+    let scale = if opc == 0b00 { 2 } else { 3 };
+    let imm7 = ((offset >> scale) as u32) & 0x7F;
+    (opc << 30) | (0b101 << 27) | (1 << 26) | (mode << 23) | (l << 22)
+        | (imm7 << 15) | (rt2.enc() << 10) | (rn.enc() << 5) | rt1.enc()
+}
+
+fn hint(imm: u32) -> u32 {
+    0xD503201F | (imm << 5)
+}
+
+fn barrier(base: u32, option: BarrierOpt) -> u32 {
+    base | (option.enc() << 8)
 }
 
 /// FP one-source (FNEG, FABS, FSQRT).
@@ -573,6 +874,12 @@ mod tests {
     #[test] fn sub_x3_x4_x5()   { assert_eq!(Inst::SubReg  { rd: X3, rn: X4, rm: X5, sf: true  }.encode(), 0xCB050083); }
     #[test] fn add_w0_w1_w2()   { assert_eq!(Inst::AddReg  { rd: W0, rn: W1, rm: W2, sf: false }.encode(), 0x0B020020); }
     #[test] fn sub_w3_w4_w5()   { assert_eq!(Inst::SubReg  { rd: W3, rn: W4, rm: W5, sf: false }.encode(), 0x4B050083); }
+    #[test] fn add_x0_x1_x2_lsl3() { assert_eq!(Inst::AddShiftReg { rd: X0, rn: X1, rm: X2, shift: RegShift::Lsl, amount: 3, sf: true }.encode(), 0x8B020C20); }
+    #[test] fn add_x0_x0_w1_sxtw() { assert_eq!(Inst::AddExtReg { rd: X0, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 0, sf: true }.encode(), 0x8B21C000); }
+    #[test] fn add_x0_x0_w1_sxtw3() { assert_eq!(Inst::AddExtReg { rd: X0, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 3, sf: true }.encode(), 0x8B21CC00); }
+    #[test] fn sub_w3_w4_w5_asr7() { assert_eq!(Inst::SubShiftReg { rd: W3, rn: W4, rm: W5, shift: RegShift::Asr, amount: 7, sf: false }.encode(), 0x4B851C83); }
+    #[test] fn sub_x2_x3_w4_uxtw2() { assert_eq!(Inst::SubExtReg { rd: X2, rn: X3, rm: W4, extend: RegExtend::Uxtw, amount: 2, sf: true }.encode(), 0xCB244862); }
+    #[test] fn cmp_x6_x7_lsr4() { assert_eq!(Inst::SubsShiftReg { rd: XZR, rn: X6, rm: X7, shift: RegShift::Lsr, amount: 4, sf: true }.encode(), 0xEB4710DF); }
     #[test] fn mul_x6_x7_x8()   { assert_eq!(Inst::Mul     { rd: X6, rn: X7, rm: X8, sf: true  }.encode(), 0x9B087CE6); }
     #[test] fn sdiv_x9_x10_x11(){ assert_eq!(Inst::Sdiv    { rd: X9, rn: X10, rm: X11, sf: true }.encode(), 0x9ACB0D49); }
     #[test] fn udiv_x12_x13_x14(){ assert_eq!(Inst::Udiv   { rd: X12, rn: X13, rm: X14, sf: true }.encode(), 0x9ACE09AC); }
@@ -624,6 +931,8 @@ mod tests {
     #[test] fn b_ge_plus16()    { assert_eq!(Inst::BCond { cond: Cond::GE, offset: 16 }.encode(), 0x5400008A); }
     #[test] fn cbz_x0_plus8()   { assert_eq!(Inst::Cbz  { rt: X0, offset: 8,  sf: true }.encode(), 0xB4000040); }
     #[test] fn cbnz_x1_plus12() { assert_eq!(Inst::Cbnz { rt: X1, offset: 12, sf: true }.encode(), 0xB5000061); }
+    #[test] fn tbz_x0_bit5_plus8() { assert_eq!(Inst::Tbz { rt: X0, bit: 5, offset: 8, sf: true }.encode(), 0x36280040); }
+    #[test] fn tbnz_x1_bit33_plus12() { assert_eq!(Inst::Tbnz { rt: X1, bit: 33, offset: 12, sf: true }.encode(), 0xB7080061); }
     #[test] fn ret_x30()        { assert_eq!(Inst::Ret { rn: X30 }.encode(), 0xD65F03C0); }
     #[test] fn br_x16()         { assert_eq!(Inst::Br  { rn: X16 }.encode(), 0xD61F0200); }
     #[test] fn blr_x17()        { assert_eq!(Inst::Blr { rn: X17 }.encode(), 0xD63F0220); }
@@ -631,6 +940,7 @@ mod tests {
 
     // ---- Address generation ----
 
+    #[test] fn adr_x0_8() { assert_eq!(Inst::Adr { rd: X0, imm: 8 }.encode(), 0x10000040); }
     #[test] fn adrp_x0_0() { assert_eq!(Inst::Adrp { rd: X0, imm: 0 }.encode(), 0x90000000); }
 
     // ---- Load/Store (unsigned offset) ----
@@ -651,6 +961,15 @@ mod tests {
     #[test] fn ldrb_w0_x1_x2()  { assert_eq!(Inst::LdrbReg  { rt: W0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }.encode(), 0x38626820); }
     #[test] fn ldrh_w3_x4_w5_uxtw1() { assert_eq!(Inst::LdrhReg { rt: W3, rn: X4, rm: W5, extend: AddrExtend::Uxtw, shift: true }.encode(), 0x78655883); }
     #[test] fn ldrsw_x6_x7_w8_sxtw2() { assert_eq!(Inst::LdrswReg { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Sxtw, shift: true }.encode(), 0xB8A8D8E6); }
+    #[test] fn ldr_d0_x1()      { assert_eq!(Inst::LdrFpImm64 { rt: D0, rn: X1, offset: 0 }.encode(), 0xFD400020); }
+    #[test] fn str_d2_x3_16()   { assert_eq!(Inst::StrFpImm64 { rt: D2, rn: X3, offset: 16 }.encode(), 0xFD000862); }
+    #[test] fn ldr_s4_x5_x6()   { assert_eq!(Inst::LdrFpReg32 { rt: S4, rn: X5, rm: X6, extend: AddrExtend::Lsl, shift: false }.encode(), 0xBC6668A4); }
+    #[test] fn str_s7_x8_w9_uxtw2() { assert_eq!(Inst::StrFpReg32 { rt: S7, rn: X8, rm: W9, extend: AddrExtend::Uxtw, shift: true }.encode(), 0xBC295907); }
+    #[test] fn ldr_d10_lit_8()  { assert_eq!(Inst::LdrFpLit64 { rt: D10, offset: 8 }.encode(), 0x5C00004A); }
+    #[test] fn ldr_d0_sp_post_8() { assert_eq!(Inst::LdrFpPost64 { rt: D0, rn: SP, offset: 8 }.encode(), 0xFC4087E0); }
+    #[test] fn str_d1_sp_pre_m16() { assert_eq!(Inst::StrFpPre64 { rt: D1, rn: SP, offset: -16 }.encode(), 0xFC1F0FE1); }
+    #[test] fn ldr_s2_sp_post_4() { assert_eq!(Inst::LdrFpPost32 { rt: S2, rn: SP, offset: 4 }.encode(), 0xBC4047E2); }
+    #[test] fn str_s3_sp_pre_m8() { assert_eq!(Inst::StrFpPre32 { rt: S3, rn: SP, offset: -8 }.encode(), 0xBC1F8FE3); }
     #[test] fn ldr_lit64_x0_plus8() { assert_eq!(Inst::LdrLit64 { rt: X0, offset: 8 }.encode(), 0x58000040); }
     #[test] fn ldr_lit32_w0_plus12() { assert_eq!(Inst::LdrLit32 { rt: W0, offset: 12 }.encode(), 0x18000060); }
     #[test] fn ldrsw_lit_x1_plus8() { assert_eq!(Inst::LdrswLit { rt: X1, offset: 8 }.encode(), 0x98000041); }
@@ -665,6 +984,12 @@ mod tests {
     #[test] fn ldp_x19_x20_sp_pre_m32() { assert_eq!(Inst::LdpPre64  { rt1: X19, rt2: X20, rn: SP, offset: -32 }.encode(), 0xA9FE53F3); }
     #[test] fn stp_x19_x20_sp_16()      { assert_eq!(Inst::StpOff64  { rt1: X19, rt2: X20, rn: SP, offset: 16  }.encode(), 0xA90153F3); }
     #[test] fn ldp_x19_x20_sp_16()      { assert_eq!(Inst::LdpOff64  { rt1: X19, rt2: X20, rn: SP, offset: 16  }.encode(), 0xA94153F3); }
+    #[test] fn ldp_d8_d9_sp_pre_m16()   { assert_eq!(Inst::LdpFpPre64 { rt1: D8, rt2: D9, rn: SP, offset: -16 }.encode(), 0x6DFF27E8); }
+    #[test] fn stp_d10_d11_sp_post_16() { assert_eq!(Inst::StpFpPost64 { rt1: D10, rt2: D11, rn: SP, offset: 16 }.encode(), 0x6C812FEA); }
+    #[test] fn ldp_d12_d13_sp_32()      { assert_eq!(Inst::LdpFpOff64 { rt1: D12, rt2: D13, rn: SP, offset: 32 }.encode(), 0x6D4237EC); }
+    #[test] fn stp_s0_s1_sp_post_8()    { assert_eq!(Inst::StpFpPost32 { rt1: S0, rt2: S1, rn: SP, offset: 8 }.encode(), 0x2C8107E0); }
+    #[test] fn ldp_s2_s3_sp_pre_m8()    { assert_eq!(Inst::LdpFpPre32 { rt1: S2, rt2: S3, rn: SP, offset: -8 }.encode(), 0x2DFF0FE2); }
+    #[test] fn ldp_s4_s5_sp_16()        { assert_eq!(Inst::LdpFpOff32 { rt1: S4, rt2: S5, rn: SP, offset: 16 }.encode(), 0x2D4217E4); }
 
     // ---- Load/Store (pre/post-index) ----
 
@@ -703,5 +1028,13 @@ mod tests {
 
     #[test] fn svc_0x80() { assert_eq!(Inst::Svc { imm16: 0x80 }.encode(), 0xD4001001); }
     #[test] fn nop()      { assert_eq!(Inst::Nop.encode(),                  0xD503201F); }
+    #[test] fn yield_()   { assert_eq!(Inst::Yield.encode(),                0xD503203F); }
+    #[test] fn wfe_()     { assert_eq!(Inst::Wfe.encode(),                  0xD503205F); }
+    #[test] fn wfi_()     { assert_eq!(Inst::Wfi.encode(),                  0xD503207F); }
+    #[test] fn sev_()     { assert_eq!(Inst::Sev.encode(),                  0xD503209F); }
+    #[test] fn sevl_()    { assert_eq!(Inst::Sevl.encode(),                 0xD50320BF); }
+    #[test] fn dmb_ish()  { assert_eq!(Inst::Dmb { option: BarrierOpt::Ish }.encode(),   0xD5033BBF); }
+    #[test] fn dsb_ishst(){ assert_eq!(Inst::Dsb { option: BarrierOpt::Ishst }.encode(), 0xD5033A9F); }
+    #[test] fn isb_sy()   { assert_eq!(Inst::Isb { option: BarrierOpt::Sy }.encode(),    0xD5033FDF); }
     #[test] fn brk_1()    { assert_eq!(Inst::Brk { imm16: 1 }.encode(),    0xD4200020); }
 }

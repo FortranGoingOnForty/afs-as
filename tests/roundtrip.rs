@@ -88,6 +88,13 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_add_reg()    { roundtrip(".text\nadd x0, x1, x2\n"); }
 #[test] fn rt_sub_reg()    { roundtrip(".text\nsub x10, x11, x12\n"); }
 #[test] fn rt_add_w()      { roundtrip(".text\nadd w3, w4, w5\n"); }
+#[test] fn rt_add_shift_reg() { roundtrip(".text\nadd x0, x1, x2, lsl #3\n"); }
+#[test] fn rt_sub_shift_reg() { roundtrip(".text\nsub w3, w4, w5, asr #7\n"); }
+#[test] fn rt_cmp_shift_reg() { roundtrip(".text\ncmp x6, x7, lsr #4\n"); }
+#[test] fn rt_add_ext_reg() { roundtrip(".text\nadd x0, x0, w1, sxtw #3\n"); }
+#[test] fn rt_add_ext_reg_sp_base() { roundtrip(".text\nadd x11, sp, w12, sxtw #2\n"); }
+#[test] fn rt_sub_ext_reg() { roundtrip(".text\nsub x2, x3, w4, uxtw #2\n"); }
+#[test] fn rt_cmp_ext_reg() { roundtrip(".text\ncmp x0, w1, sxtw\n"); }
 #[test] fn rt_add_imm()    { roundtrip(".text\nadd x0, x1, #100\n"); }
 #[test] fn rt_sub_imm()    { roundtrip(".text\nsub x3, x4, #200\n"); }
 #[test] fn rt_mul()        { roundtrip(".text\nmul x0, x1, x2\n"); }
@@ -120,9 +127,12 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_b_le()       { roundtrip(".text\nb.le #20\n"); }
 #[test] fn rt_cbz()        { roundtrip(".text\ncbz x5, #16\n"); }
 #[test] fn rt_cbnz()       { roundtrip(".text\ncbnz x10, #24\n"); }
+#[test] fn rt_tbz()        { roundtrip(".text\ntbz x0, #5, #8\n"); }
+#[test] fn rt_tbnz()       { roundtrip(".text\ntbnz x1, #33, #12\n"); }
 #[test] fn rt_ret()        { roundtrip(".text\nret\n"); }
 #[test] fn rt_br()         { roundtrip(".text\nbr x8\n"); }
 #[test] fn rt_blr()        { roundtrip(".text\nblr x9\n"); }
+#[test] fn rt_adr()        { roundtrip(".text\nadr x0, #8\n"); }
 #[test] fn rt_ldr64()      { roundtrip(".text\nldr x0, [x1, #24]\n"); }
 #[test] fn rt_str64()      { roundtrip(".text\nstr x2, [x3, #32]\n"); }
 #[test] fn rt_ldr32()      { roundtrip(".text\nldr w4, [x5, #12]\n"); }
@@ -139,12 +149,25 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_ldrb_reg()   { roundtrip(".text\nldrb w0, [x1, x2]\n"); }
 #[test] fn rt_ldrsw_reg()  { roundtrip(".text\nldrsw x6, [x7, w8, sxtw #2]\n"); }
 #[test] fn rt_ldrsw_lit()  { roundtrip(".text\nldrsw x1, #8\n"); }
+#[test] fn rt_ldr_d()      { roundtrip(".text\nldr d0, [x1]\n"); }
+#[test] fn rt_str_d_off()  { roundtrip(".text\nstr d2, [x3, #16]\n"); }
+#[test] fn rt_ldr_s_reg()  { roundtrip(".text\nldr s4, [x5, x6]\n"); }
+#[test] fn rt_str_s_reg_uxtw() { roundtrip(".text\nstr s7, [x8, w9, uxtw #2]\n"); }
+#[test] fn rt_ldr_d_lit()  { roundtrip(".text\nldr d10, #8\n"); }
+#[test] fn rt_ldr_d_post() { roundtrip(".text\nldr d0, [sp], #8\n"); }
+#[test] fn rt_str_s_pre()  { roundtrip(".text\nstr s3, [sp, #-8]!\n"); }
 #[test] fn rt_stp_pre()    { roundtrip(".text\nstp x29, x30, [sp, #-16]!\n"); }
 #[test] fn rt_stp_post()   { roundtrip(".text\nstp x29, x30, [sp], #16\n"); }
 #[test] fn rt_ldp_pre()    { roundtrip(".text\nldp x29, x30, [sp, #-16]!\n"); }
 #[test] fn rt_ldp_post()   { roundtrip(".text\nldp x29, x30, [sp], #16\n"); }
 #[test] fn rt_stp_off()    { roundtrip(".text\nstp x19, x20, [sp, #16]\n"); }
 #[test] fn rt_ldp_off()    { roundtrip(".text\nldp x21, x22, [sp, #48]\n"); }
+#[test] fn rt_ldp_d_pre()  { roundtrip(".text\nldp d8, d9, [sp, #-16]!\n"); }
+#[test] fn rt_stp_d_post() { roundtrip(".text\nstp d10, d11, [sp], #16\n"); }
+#[test] fn rt_ldp_d_off()  { roundtrip(".text\nldp d12, d13, [sp, #32]\n"); }
+#[test] fn rt_stp_s_post() { roundtrip(".text\nstp s0, s1, [sp], #8\n"); }
+#[test] fn rt_ldp_s_pre()  { roundtrip(".text\nldp s2, s3, [sp, #-8]!\n"); }
+#[test] fn rt_ldp_s_off()  { roundtrip(".text\nldp s4, s5, [sp, #16]\n"); }
 #[test] fn rt_fadd_d()     { roundtrip(".text\nfadd d0, d1, d2\n"); }
 #[test] fn rt_fsub_d()     { roundtrip(".text\nfsub d3, d4, d5\n"); }
 #[test] fn rt_fmul_d()     { roundtrip(".text\nfmul d6, d7, d8\n"); }
@@ -161,6 +184,14 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_fmov_from()  { roundtrip(".text\nfmov x5, d6\n"); }
 #[test] fn rt_svc()        { roundtrip(".text\nsvc #0x80\n"); }
 #[test] fn rt_nop()        { roundtrip(".text\nnop\n"); }
+#[test] fn rt_yield()      { roundtrip(".text\nyield\n"); }
+#[test] fn rt_wfe()        { roundtrip(".text\nwfe\n"); }
+#[test] fn rt_wfi()        { roundtrip(".text\nwfi\n"); }
+#[test] fn rt_sev()        { roundtrip(".text\nsev\n"); }
+#[test] fn rt_sevl()       { roundtrip(".text\nsevl\n"); }
+#[test] fn rt_isb()        { roundtrip(".text\nisb\n"); }
+#[test] fn rt_dmb_ish()    { roundtrip(".text\ndmb ish\n"); }
+#[test] fn rt_dsb_ishst()  { roundtrip(".text\ndsb ishst\n"); }
 #[test] fn rt_brk()        { roundtrip(".text\nbrk #42\n"); }
 
 // ---- Test gap coverage ----

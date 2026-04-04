@@ -12,8 +12,7 @@ const MH_MAGIC_64: u32 = 0xFEEDFACF;
 const CPU_TYPE_ARM64: u32 = 0x0100000C;
 const CPU_SUBTYPE_ARM64_ALL: u32 = 0x00000000;
 const MH_OBJECT: u32 = 1;
-#[allow(dead_code)]
-const MH_SUBSECTIONS_VIA_SYMBOLS: u32 = 0x2000;
+pub const MH_SUBSECTIONS_VIA_SYMBOLS: u32 = 0x2000;
 
 const LC_SEGMENT_64: u32 = 0x19;
 const LC_SYMTAB: u32 = 0x02;
@@ -23,10 +22,15 @@ const LC_BUILD_VERSION: u32 = 0x32;
 const S_REGULAR: u32 = 0x0;
 const S_ZEROFILL: u32 = 0x1;
 const S_CSTRING_LITERALS: u32 = 0x2;
+const S_COALESCED: u32 = 0x0B;
+const S_ATTR_DEBUG: u32 = 0x02000000;
+const S_ATTR_LIVE_SUPPORT: u32 = 0x08000000;
+const S_ATTR_STRIP_STATIC_SYMS: u32 = 0x20000000;
+const S_ATTR_NO_TOC: u32 = 0x40000000;
 const S_ATTR_PURE_INSTRUCTIONS: u32 = 0x80000000;
 const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x00000400;
 
-const PLATFORM_MACOS: u32 = 1;
+pub const PLATFORM_MACOS: u32 = 1;
 
 // nlist_64 type bits
 const N_UNDF: u8 = 0x00;
@@ -54,6 +58,23 @@ const DYSYMTAB_CMD_SIZE: u32 = 80;
 const BUILD_VERSION_CMD_SIZE: u32 = 24;
 const NLIST_SIZE: u32 = 16;
 const RELOC_SIZE: u32 = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildVersion {
+    pub platform: u32,
+    pub minos: u32,
+    pub sdk: u32,
+}
+
+impl Default for BuildVersion {
+    fn default() -> Self {
+        Self {
+            platform: PLATFORM_MACOS,
+            minos: pack_version(15, 0, 0),
+            sdk: 0,
+        }
+    }
+}
 
 /// A symbol in the object file.
 #[derive(Debug, Clone)]
@@ -89,6 +110,8 @@ pub enum SectionKind {
     Data,
     CStringLiterals,
     ConstData,
+    CompactUnwind,
+    EhFrame,
     ZeroFill,
 }
 
@@ -99,6 +122,8 @@ impl SectionKind {
             Self::Text if size == 0 => S_ATTR_PURE_INSTRUCTIONS,
             Self::Text => S_ATTR_PURE_INSTRUCTIONS,
             Self::CStringLiterals => S_CSTRING_LITERALS,
+            Self::CompactUnwind => S_REGULAR | S_ATTR_DEBUG,
+            Self::EhFrame => S_COALESCED | S_ATTR_NO_TOC | S_ATTR_STRIP_STATIC_SYMS | S_ATTR_LIVE_SUPPORT,
             Self::ZeroFill => S_ZEROFILL,
             Self::Data | Self::ConstData => S_REGULAR,
         }
@@ -150,6 +175,8 @@ impl Section {
 pub struct ObjectFile {
     pub sections: Vec<Section>,
     pub symbols: Vec<Symbol>,
+    pub flags: u32,
+    pub build_version: BuildVersion,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -165,6 +192,8 @@ impl ObjectFile {
         Self {
             sections: vec![Section::text()],
             symbols: Vec::new(),
+            flags: 0,
+            build_version: BuildVersion::default(),
         }
     }
 
@@ -302,7 +331,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     write_u32(w, MH_OBJECT)?;
     write_u32(w, ncmds)?;
     write_u32(w, sizeofcmds)?;
-    write_u32(w, 0)?; // flags
+    write_u32(w, obj.flags)?; // flags
     write_u32(w, 0)?; // reserved
 
     // ---- LC_SEGMENT_64 ----
@@ -336,9 +365,9 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- LC_BUILD_VERSION ----
     write_u32(w, LC_BUILD_VERSION)?;
     write_u32(w, BUILD_VERSION_CMD_SIZE)?;
-    write_u32(w, PLATFORM_MACOS)?;
-    write_u32(w, pack_version(15, 0, 0))?; // minos 15.0.0
-    write_u32(w, 0)?;               // sdk (0 = n/a)
+    write_u32(w, obj.build_version.platform)?;
+    write_u32(w, obj.build_version.minos)?;
+    write_u32(w, obj.build_version.sdk)?;
     write_u32(w, 0)?;               // ntools
 
     // ---- LC_SYMTAB ----
@@ -484,7 +513,7 @@ fn align_value(value: u64, power: u32) -> u64 {
     (value + alignment - 1) & !(alignment - 1)
 }
 
-fn pack_version(major: u32, minor: u32, patch: u32) -> u32 {
+pub fn pack_version(major: u32, minor: u32, patch: u32) -> u32 {
     (major << 16) | (minor << 8) | patch
 }
 
@@ -786,6 +815,55 @@ mod tests {
     fn version_packing() {
         assert_eq!(pack_version(15, 0, 0), 0x000F0000);
         assert_eq!(pack_version(14, 5, 1), 0x000E0501);
+    }
+
+    #[test]
+    fn mach_header_uses_object_flags() {
+        let mut obj = ObjectFile::new();
+        obj.flags = MH_SUBSECTIONS_VIA_SYMBOLS;
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let flags = u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]);
+        assert_eq!(flags, MH_SUBSECTIONS_VIA_SYMBOLS);
+    }
+
+    #[test]
+    fn build_version_command_uses_object_metadata() {
+        let mut obj = ObjectFile::new();
+        obj.build_version = BuildVersion {
+            platform: PLATFORM_MACOS,
+            minos: pack_version(11, 0, 0),
+            sdk: pack_version(15, 5, 0),
+        };
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let build_cmd_offset = HEADER_SIZE as usize + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize;
+        let platform = u32::from_le_bytes([
+            buf[build_cmd_offset + 8],
+            buf[build_cmd_offset + 9],
+            buf[build_cmd_offset + 10],
+            buf[build_cmd_offset + 11],
+        ]);
+        let minos = u32::from_le_bytes([
+            buf[build_cmd_offset + 12],
+            buf[build_cmd_offset + 13],
+            buf[build_cmd_offset + 14],
+            buf[build_cmd_offset + 15],
+        ]);
+        let sdk = u32::from_le_bytes([
+            buf[build_cmd_offset + 16],
+            buf[build_cmd_offset + 17],
+            buf[build_cmd_offset + 18],
+            buf[build_cmd_offset + 19],
+        ]);
+
+        assert_eq!(platform, PLATFORM_MACOS);
+        assert_eq!(minos, pack_version(11, 0, 0));
+        assert_eq!(sdk, pack_version(15, 5, 0));
     }
 
     #[test]

@@ -55,6 +55,60 @@ fn corpus_addressing_surface_matches_text_bytes() {
 }
 
 #[test]
+fn corpus_fp_load_store_surface_matches_text_bytes() {
+    let paths = assemble_fixture("fp_load_store_surface.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
+fn corpus_fp_pair_surface_matches_text_bytes() {
+    let paths = assemble_fixture("fp_pair_surface.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
+fn corpus_system_hints_matches_text_bytes() {
+    let paths = assemble_fixture("system_hints.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
+fn corpus_branch_address_surface_matches_text_bytes() {
+    let paths = assemble_fixture("branch_address_surface.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
+fn corpus_shifted_addsub_matches_text_bytes() {
+    let paths = assemble_fixture("shifted_addsub.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
+fn corpus_extended_addsub_matches_text_bytes() {
+    let paths = assemble_fixture("extended_addsub.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
 fn corpus_external_call_matches_relocations_and_symbols() {
     let paths = assemble_fixture("external_call.s");
 
@@ -202,6 +256,100 @@ fn corpus_alignment_directives_match_text_data_and_section_alignment() {
     assert_eq!(ours_text, ref_text);
     assert_eq!(ours_data, ref_data);
     assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+}
+
+#[test]
+fn corpus_metadata_directives_match_header_and_load_commands() {
+    let paths = assemble_fixture("metadata_directives.s");
+
+    let ours_header = common::object_header(&paths.obj);
+    let ref_header = common::object_header(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+
+    assert!(
+        ours_header.contains("SUBSECTIONS_VIA_SYMBOLS"),
+        "missing subsections flag:\n{}",
+        ours_header
+    );
+    assert!(ours_load.contains("minos 11.0"), "missing minos:\n{}", ours_load);
+    assert!(ours_load.contains("sdk 15.5"), "missing sdk:\n{}", ours_load);
+
+    assert_eq!(normalize_tool_output(&ours_header), normalize_tool_output(&ref_header));
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+}
+
+#[test]
+fn corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations() {
+    let paths = assemble_fixture("cfi_surface.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+
+    assert!(ours_load.contains("sectname __compact_unwind"), "missing compact unwind section:\n{}", ours_load);
+    assert!(ours_relocs.contains("__compact_unwind"), "missing compact unwind relocations:\n{}", ours_relocs);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+}
+
+#[test]
+fn corpus_cfi_nostack_matches_load_commands_and_relocations() {
+    let paths = assemble_fixture("cfi_nostack.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+}
+
+#[test]
+fn corpus_cfi_saved_pairs_matches_load_commands_and_relocations() {
+    let paths = assemble_fixture("cfi_saved_pairs.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+}
+
+#[test]
+fn corpus_cfi_dwarf_fallback_matches_load_commands_relocations_and_eh_frame() {
+    let paths = assemble_fixture("cfi_dwarf_fallback.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+    let ours_eh_frame = common::object_section_bytes(&paths.obj, "__TEXT", "__eh_frame");
+    let ref_eh_frame = common::object_section_bytes(&paths.ref_obj, "__TEXT", "__eh_frame");
+
+    assert!(ours_load.contains("sectname __eh_frame"), "missing __eh_frame section:\n{}", ours_load);
+    assert!(ours_relocs.contains("__TEXT,__eh_frame"), "missing eh_frame relocations:\n{}", ours_relocs);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(ours_eh_frame, ref_eh_frame);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
 }
 
 fn normalize_tool_output(text: &str) -> String {
