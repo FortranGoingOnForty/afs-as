@@ -60,6 +60,41 @@ impl RegExtend {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BarrierOpt {
+    Oshld,
+    Oshst,
+    Osh,
+    Nshld,
+    Nshst,
+    Nsh,
+    Ishld,
+    Ishst,
+    Ish,
+    Ld,
+    St,
+    Sy,
+}
+
+impl BarrierOpt {
+    fn enc(self) -> u32 {
+        match self {
+            BarrierOpt::Oshld => 0b0001,
+            BarrierOpt::Oshst => 0b0010,
+            BarrierOpt::Osh => 0b0011,
+            BarrierOpt::Nshld => 0b0101,
+            BarrierOpt::Nshst => 0b0110,
+            BarrierOpt::Nsh => 0b0111,
+            BarrierOpt::Ishld => 0b1001,
+            BarrierOpt::Ishst => 0b1010,
+            BarrierOpt::Ish => 0b1011,
+            BarrierOpt::Ld => 0b1101,
+            BarrierOpt::St => 0b1110,
+            BarrierOpt::Sy => 0b1111,
+        }
+    }
+}
+
 /// An ARM64 instruction that can be encoded to its 4-byte binary form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inst {
@@ -354,6 +389,22 @@ pub enum Inst {
     Svc { imm16: u16 },
     /// NOP
     Nop,
+    /// YIELD
+    Yield,
+    /// WFE
+    Wfe,
+    /// WFI
+    Wfi,
+    /// SEV
+    Sev,
+    /// SEVL
+    Sevl,
+    /// DMB <option>
+    Dmb { option: BarrierOpt },
+    /// DSB <option>
+    Dsb { option: BarrierOpt },
+    /// ISB {<option>}
+    Isb { option: BarrierOpt },
     /// BRK #imm16
     Brk { imm16: u16 },
 }
@@ -661,7 +712,15 @@ impl Inst {
             Inst::Svc { imm16 } => {
                 (0b11010100_000 << 21) | ((*imm16 as u32) << 5) | 0b000_01
             }
-            Inst::Nop => 0xD503201F,
+            Inst::Nop => hint(0),
+            Inst::Yield => hint(1),
+            Inst::Wfe => hint(2),
+            Inst::Wfi => hint(3),
+            Inst::Sev => hint(4),
+            Inst::Sevl => hint(5),
+            Inst::Dmb { option } => barrier(0xD50330BF, *option),
+            Inst::Dsb { option } => barrier(0xD503309F, *option),
+            Inst::Isb { option } => barrier(0xD50330DF, *option),
             Inst::Brk { imm16 } => {
                 (0b11010100_001 << 21) | ((*imm16 as u32) << 5)
             }
@@ -760,6 +819,14 @@ fn ldp_stp_fp(opc: u32, mode: u32, l: u32, offset: i16, rt2: FpReg, rn: GpReg, r
     let imm7 = ((offset >> scale) as u32) & 0x7F;
     (opc << 30) | (0b101 << 27) | (1 << 26) | (mode << 23) | (l << 22)
         | (imm7 << 15) | (rt2.enc() << 10) | (rn.enc() << 5) | rt1.enc()
+}
+
+fn hint(imm: u32) -> u32 {
+    0xD503201F | (imm << 5)
+}
+
+fn barrier(base: u32, option: BarrierOpt) -> u32 {
+    base | (option.enc() << 8)
 }
 
 /// FP one-source (FNEG, FABS, FSQRT).
@@ -961,5 +1028,13 @@ mod tests {
 
     #[test] fn svc_0x80() { assert_eq!(Inst::Svc { imm16: 0x80 }.encode(), 0xD4001001); }
     #[test] fn nop()      { assert_eq!(Inst::Nop.encode(),                  0xD503201F); }
+    #[test] fn yield_()   { assert_eq!(Inst::Yield.encode(),                0xD503203F); }
+    #[test] fn wfe_()     { assert_eq!(Inst::Wfe.encode(),                  0xD503205F); }
+    #[test] fn wfi_()     { assert_eq!(Inst::Wfi.encode(),                  0xD503207F); }
+    #[test] fn sev_()     { assert_eq!(Inst::Sev.encode(),                  0xD503209F); }
+    #[test] fn sevl_()    { assert_eq!(Inst::Sevl.encode(),                 0xD50320BF); }
+    #[test] fn dmb_ish()  { assert_eq!(Inst::Dmb { option: BarrierOpt::Ish }.encode(),   0xD5033BBF); }
+    #[test] fn dsb_ishst(){ assert_eq!(Inst::Dsb { option: BarrierOpt::Ishst }.encode(), 0xD5033A9F); }
+    #[test] fn isb_sy()   { assert_eq!(Inst::Isb { option: BarrierOpt::Sy }.encode(),    0xD5033FDF); }
     #[test] fn brk_1()    { assert_eq!(Inst::Brk { imm16: 1 }.encode(),    0xD4200020); }
 }

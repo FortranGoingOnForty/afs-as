@@ -4,7 +4,7 @@
 //! labels, and directives. Resolves instruction aliases (cmp, mov, tst, etc.)
 //! to their canonical forms.
 
-use crate::encode::{AddrExtend, Inst, RegExtend, RegShift};
+use crate::encode::{AddrExtend, BarrierOpt, Inst, RegExtend, RegShift};
 use crate::expr::{self, Expr};
 use crate::lex::{Tok, Token, Lexer, LexError};
 use crate::reg::*;
@@ -730,6 +730,21 @@ impl<'a> Parser<'a> {
                 Ok(Inst::Svc { imm16: imm })
             }
             "nop" => Ok(Inst::Nop),
+            "yield" => Ok(Inst::Yield),
+            "wfe" => Ok(Inst::Wfe),
+            "wfi" => Ok(Inst::Wfi),
+            "sev" => Ok(Inst::Sev),
+            "sevl" => Ok(Inst::Sevl),
+            "dmb" => Ok(Inst::Dmb { option: self.parse_barrier_option("dmb option")? }),
+            "dsb" => Ok(Inst::Dsb { option: self.parse_barrier_option("dsb option")? }),
+            "isb" => {
+                let option = if self.at_end_of_stmt() {
+                    BarrierOpt::Sy
+                } else {
+                    self.parse_barrier_option("isb option")?
+                };
+                Ok(Inst::Isb { option })
+            }
             "brk" => {
                 let imm = self.parse_immediate_const_expr("brk immediate")? as u16;
                 Ok(Inst::Brk { imm16: imm })
@@ -1686,6 +1701,25 @@ impl<'a> Parser<'a> {
             let rd = parse_gp_reg_name(&lower).ok_or_else(|| self.err(format!("bad GP reg '{}'", name)))?;
             let (rn, _) = self.parse_fp_reg_with_size()?;
             Ok(Inst::FmovFromD { rd, rn })
+        }
+    }
+
+    fn parse_barrier_option(&mut self, context: &str) -> Result<BarrierOpt, ParseError> {
+        let name = self.expect_ident()?.to_lowercase();
+        match name.as_str() {
+            "oshld" => Ok(BarrierOpt::Oshld),
+            "oshst" => Ok(BarrierOpt::Oshst),
+            "osh" => Ok(BarrierOpt::Osh),
+            "nshld" => Ok(BarrierOpt::Nshld),
+            "nshst" => Ok(BarrierOpt::Nshst),
+            "nsh" => Ok(BarrierOpt::Nsh),
+            "ishld" => Ok(BarrierOpt::Ishld),
+            "ishst" => Ok(BarrierOpt::Ishst),
+            "ish" => Ok(BarrierOpt::Ish),
+            "ld" => Ok(BarrierOpt::Ld),
+            "st" => Ok(BarrierOpt::St),
+            "sy" => Ok(BarrierOpt::Sy),
+            _ => Err(self.err(format!("unknown {} '{}'", context, name))),
         }
     }
 
@@ -2705,6 +2739,47 @@ mod tests {
     #[test]
     fn parse_nop_() {
         assert_eq!(parse_inst("nop"), Inst::Nop);
+    }
+
+    #[test]
+    fn parse_yield_() {
+        assert_eq!(parse_inst("yield"), Inst::Yield);
+    }
+
+    #[test]
+    fn parse_wfe_() {
+        assert_eq!(parse_inst("wfe"), Inst::Wfe);
+    }
+
+    #[test]
+    fn parse_sevl_() {
+        assert_eq!(parse_inst("sevl"), Inst::Sevl);
+    }
+
+    #[test]
+    fn parse_dmb_ish() {
+        assert_eq!(parse_inst("dmb ish"), Inst::Dmb { option: BarrierOpt::Ish });
+    }
+
+    #[test]
+    fn parse_dsb_ishst() {
+        assert_eq!(parse_inst("dsb ishst"), Inst::Dsb { option: BarrierOpt::Ishst });
+    }
+
+    #[test]
+    fn parse_isb_default_sy() {
+        assert_eq!(parse_inst("isb"), Inst::Isb { option: BarrierOpt::Sy });
+    }
+
+    #[test]
+    fn parse_isb_sy() {
+        assert_eq!(parse_inst("isb sy"), Inst::Isb { option: BarrierOpt::Sy });
+    }
+
+    #[test]
+    fn error_unknown_barrier_option() {
+        let err = parse_err("dmb bogus");
+        assert!(err.contains("unknown dmb option"), "got: {}", err);
     }
 
     #[test]
