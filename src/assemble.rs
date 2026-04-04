@@ -165,7 +165,9 @@ enum FixupKind {
     Literal19(Inst),
     Adr21(Inst),
     Page21,
+    GotLoadPage21,
     PageOff12,
+    GotLoadPageOff12,
     Data64,
 }
 
@@ -470,7 +472,9 @@ impl Assembler {
                         expr: Expr::Symbol(label_ref.symbol.clone()),
                         kind: match label_ref.kind {
                             RelocKind::Page21 => FixupKind::Page21,
+                            RelocKind::GotLoadPage21 => FixupKind::GotLoadPage21,
                             RelocKind::PageOff12 => FixupKind::PageOff12,
+                            RelocKind::GotLoadPageOff12 => FixupKind::GotLoadPageOff12,
                             RelocKind::Branch26 => FixupKind::Branch26(inst.clone()),
                             RelocKind::Branch19 => FixupKind::Branch19(inst.clone()),
                             RelocKind::Branch14 => FixupKind::Branch14(inst.clone()),
@@ -974,7 +978,9 @@ impl Assembler {
                 FixupKind::Literal19(template) => self.resolve_literal_fixup(fixup, template)?,
                 FixupKind::Adr21(template) => self.resolve_adr_fixup(fixup, template)?,
                 FixupKind::Page21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true)?,
+                FixupKind::GotLoadPage21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGE21, true)?,
                 FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false)?,
+                FixupKind::GotLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGEOFF12, false)?,
                 FixupKind::Data64 => self.resolve_data64_fixup(fixup)?,
             }
         }
@@ -2685,6 +2691,32 @@ mod tests {
             .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
             .collect();
         assert_eq!(reloc_syms, vec!["_foo", "_foo"]);
+    }
+
+    #[test]
+    fn assemble_got_load_reloc_uses_got_types() {
+        let obj = assemble_source(
+            ".global _caller\n.text\n_caller:\nadrp x0, _puts@GOTPAGE\nldr x0, [x0, _puts@GOTPAGEOFF]\nret\n"
+        ).unwrap();
+
+        let puts = obj.symbols.iter().find(|sym| sym.name == "_puts").unwrap();
+        assert!(puts.undefined);
+        assert!(puts.global);
+
+        let relocs = text_relocs(&obj);
+        let reloc_types: Vec<_> = relocs.iter().map(|rel| rel.reloc_type).collect();
+        assert_eq!(
+            reloc_types,
+            vec![
+                crate::macho::ARM64_RELOC_GOT_LOAD_PAGE21,
+                crate::macho::ARM64_RELOC_GOT_LOAD_PAGEOFF12,
+            ]
+        );
+        let reloc_syms: Vec<_> = relocs
+            .iter()
+            .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
+            .collect();
+        assert_eq!(reloc_syms, vec!["_puts", "_puts"]);
     }
 
     #[test]

@@ -50,6 +50,8 @@ pub const ARM64_RELOC_SUBTRACTOR: u32 = 1;
 pub const ARM64_RELOC_BRANCH26: u32 = 2;
 pub const ARM64_RELOC_PAGE21: u32 = 3;
 pub const ARM64_RELOC_PAGEOFF12: u32 = 4;
+pub const ARM64_RELOC_GOT_LOAD_PAGE21: u32 = 5;
+pub const ARM64_RELOC_GOT_LOAD_PAGEOFF12: u32 = 6;
 
 // Struct sizes
 const HEADER_SIZE: u32 = 32;

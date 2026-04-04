@@ -34,8 +34,12 @@ pub struct LabelRef {
 pub enum RelocKind {
     /// ADRP — page-relative (ARM64_RELOC_PAGE21)
     Page21,
+    /// ADRP — page-relative to GOT slot page (ARM64_RELOC_GOT_LOAD_PAGE21)
+    GotLoadPage21,
     /// ADD/LDR — page offset (ARM64_RELOC_PAGEOFF12)
     PageOff12,
+    /// LDR — page offset to GOT slot (ARM64_RELOC_GOT_LOAD_PAGEOFF12)
+    GotLoadPageOff12,
     /// B/BL — branch (ARM64_RELOC_BRANCH26)
     Branch26,
     /// B.cond / CBZ / CBNZ — assembler-resolved 19-bit branch immediate
@@ -703,6 +707,32 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_symbol_reloc_modifier(
+        &mut self,
+        default: Option<RelocKind>,
+        allowed: &[(&str, RelocKind)],
+        context: &str,
+    ) -> Result<RelocKind, ParseError> {
+        if !self.eat(&Tok::At) {
+            return default.ok_or_else(|| {
+                self.err(format!("{} requires a relocation modifier", context))
+            });
+        }
+
+        let modifier = self.expect_ident()?;
+        let upper = modifier.to_ascii_uppercase();
+        for (name, kind) in allowed {
+            if upper == *name {
+                return Ok(*kind);
+            }
+        }
+
+        Err(self.err(format!(
+            "unsupported relocation modifier '@{}' for {}",
+            modifier, context
+        )))
+    }
+
     fn starts_non_register_symbol_reference(&self) -> bool {
         if self.numeric_label_ref_at(self.pos).is_some() {
             return true;
@@ -990,16 +1020,11 @@ impl<'a> Parser<'a> {
         // Check for label@PAGEOFF (identifier or numeric local reference followed by @).
         if self.starts_non_register_symbol_reference() {
             let label = self.parse_label_reference()?;
-            let kind = if self.eat(&Tok::At) {
-                let modifier = self.expect_ident()?;
-                match modifier.to_uppercase().as_str() {
-                    "PAGEOFF" => RelocKind::PageOff12,
-                    "PAGE" => RelocKind::Page21,
-                    _ => RelocKind::PageOff12,
-                }
-            } else {
-                RelocKind::PageOff12
-            };
+            let kind = self.parse_symbol_reloc_modifier(
+                Some(RelocKind::PageOff12),
+                &[("PAGEOFF", RelocKind::PageOff12)],
+                "add/sub symbol operand",
+            )?;
             let inst = Inst::AddImm { rd, rn, imm12: 0, shift: false, sf };
             return Ok(Stmt::InstructionWithReloc(inst, LabelRef { symbol: label, kind }));
         }
@@ -1423,16 +1448,14 @@ impl<'a> Parser<'a> {
             Ok(Stmt::Instruction(Inst::Adrp { rd, imm }))
         } else {
             let label = self.parse_label_reference()?;
-            let kind = if self.eat(&Tok::At) {
-                let modifier = self.expect_ident()?;
-                match modifier.to_uppercase().as_str() {
-                    "PAGE" => RelocKind::Page21,
-                    "PAGEOFF" => RelocKind::PageOff12,
-                    _ => RelocKind::Page21,
-                }
-            } else {
-                RelocKind::Page21
-            };
+            let kind = self.parse_symbol_reloc_modifier(
+                Some(RelocKind::Page21),
+                &[
+                    ("PAGE", RelocKind::Page21),
+                    ("GOTPAGE", RelocKind::GotLoadPage21),
+                ],
+                "adrp symbol operand",
+            )?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Adrp { rd, imm: 0 },
                 LabelRef { symbol: label, kind },
@@ -1507,6 +1530,31 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
+        if self.starts_non_register_symbol_reference() {
+            let label = self.parse_label_reference()?;
+            let allowed = if is_load {
+                &[
+                    ("PAGEOFF", RelocKind::PageOff12),
+                    ("GOTPAGEOFF", RelocKind::GotLoadPageOff12),
+                ][..]
+            } else {
+                &[("PAGEOFF", RelocKind::PageOff12)][..]
+            };
+            let kind = self.parse_symbol_reloc_modifier(None, allowed, "memory symbol operand")?;
+            self.expect(&Tok::RBracket)?;
+            let inst = if sf {
+                if is_load { Inst::LdrImm64 { rt, rn, offset: 0 } }
+                else { Inst::StrImm64 { rt, rn, offset: 0 } }
+            } else {
+                if is_load { Inst::LdrImm32 { rt, rn, offset: 0 } }
+                else { Inst::StrImm32 { rt, rn, offset: 0 } }
+            };
+            return Ok(Stmt::InstructionWithReloc(
+                inst,
+                LabelRef { symbol: label, kind },
+            ));
+        }
+
         if self.starts_register_like_operand() {
             let (rm, extend, shift) = self.parse_reg_offset_operand(if sf { 3 } else { 2 })?;
             self.expect(&Tok::RBracket)?;
@@ -3590,6 +3638,48 @@ _main:
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn parse_adrp_gotpage() {
+        assert_eq!(
+            parse_stmts("adrp x8, _ext_global@GOTPAGE"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::Adrp { rd: X8, imm: 0 },
+                LabelRef { symbol: "_ext_global".into(), kind: RelocKind::GotLoadPage21 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_ldr_gotpageoff_memory_operand() {
+        assert_eq!(
+            parse_stmts("ldr x8, [x8, _ext_global@GOTPAGEOFF]"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::LdrImm64 { rt: X8, rn: X8, offset: 0 },
+                LabelRef {
+                    symbol: "_ext_global".into(),
+                    kind: RelocKind::GotLoadPageOff12,
+                },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_ldr_pageoff_memory_operand() {
+        assert_eq!(
+            parse_stmts("ldr x0, [x1, value@PAGEOFF]"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::LdrImm64 { rt: X0, rn: X1, offset: 0 },
+                LabelRef { symbol: "value".into(), kind: RelocKind::PageOff12 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_adrp_rejects_unsupported_modifier() {
+        let err = parse_err("adrp x0, _foo@GOTPAGEOFF");
+        assert!(err.contains("unsupported relocation modifier"), "got: {}", err);
     }
 
     #[test]
