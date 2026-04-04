@@ -20,6 +20,11 @@ fn corpus_hello_world_matches_text_bytes_and_runs() {
         common::object_text_bytes(&paths.obj),
         common::object_text_bytes(&paths.ref_obj)
     );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
 
     common::link_with_system(&paths.obj, &paths.bin, "_main");
     let (code, stdout, stderr) = common::run_binary(&paths.bin);
@@ -88,6 +93,36 @@ fn corpus_branch_address_surface_matches_text_bytes() {
         common::object_text_bytes(&paths.obj),
         common::object_text_bytes(&paths.ref_obj)
     );
+}
+
+#[test]
+fn corpus_numeric_local_labels_match_raw_object() {
+    let paths = assemble_fixture("numeric_local_labels.s");
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_branch_address_surface_matches_raw_object() {
+    let paths = assemble_fixture("branch_address_surface.s");
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_fp_load_store_surface_matches_raw_object() {
+    let paths = assemble_fixture("fp_load_store_surface.s");
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
 }
 
 #[test]
