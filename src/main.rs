@@ -1,3 +1,5 @@
+use std::fs;
+use std::io::{self, BufWriter, Read, Write};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -6,10 +8,22 @@ const USAGE: &str = "\
 afs-as: ARM64 assembler for macOS
 
 usage: afs-as <input.s> [-o <output.o>]
+       afs-as - -o <output.o>
+       afs-as - -o -
        afs-as --help
        afs-as --version
 
-Only a single input file is supported.";
+options:
+  -o <path>    write object to path, or '-' for stdout
+  --           stop option parsing
+
+exit status:
+  0            success
+  1            parse or assembly failure
+  2            command-line usage error
+
+Only a single input file is supported.
+Input '-' requires an explicit -o <output.o> or -o -.";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
@@ -41,7 +55,7 @@ fn run() -> Result<(), (i32, String)> {
             Ok(())
         }
         Ok(Command::Assemble { input, output }) => {
-            afs_as::assemble::assemble_file(&input, &output)
+            assemble_cli(&input, &output)
                 .map_err(|err| (1, err.to_string()))
         }
         Err(message) => Err((2, format!("afs-as: {}\n\n{}", message, USAGE))),
@@ -51,19 +65,29 @@ fn run() -> Result<(), (i32, String)> {
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
     let mut input: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
-    let mut args = args.peekable();
+    let mut parsing_options = true;
 
+    let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--help" | "-h" => return Ok(Command::Help),
-            "--version" | "-V" => return Ok(Command::Version),
-            "-o" => {
+            "--" if parsing_options => {
+                parsing_options = false;
+            }
+            "--help" | "-h" if parsing_options => return Ok(Command::Help),
+            "--version" | "-V" if parsing_options => return Ok(Command::Version),
+            "-o" if parsing_options => {
                 let Some(path) = args.next() else {
                     return Err("option '-o' requires an output path".into());
                 };
                 output = Some(PathBuf::from(path));
             }
-            _ if arg.starts_with('-') => {
+            "-" => {
+                if input.is_some() {
+                    return Err("multiple input files are not supported (extra input '-')".into());
+                }
+                input = Some(PathBuf::from(arg));
+            }
+            _ if parsing_options && arg.starts_with('-') => {
                 return Err(format!("unrecognized option '{}'", arg));
             }
             _ => {
@@ -82,12 +106,63 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
         return Err("missing input file".into());
     };
 
-    let output = output.unwrap_or_else(|| default_output_path(&input));
+    let output = match output {
+        Some(output) => output,
+        None if is_stdio_path(&input) => {
+            return Err("input '-' requires explicit -o <output.o> or -o -".into());
+        }
+        None => default_output_path(&input),
+    };
     Ok(Command::Assemble { input, output })
 }
 
 fn default_output_path(input: &Path) -> PathBuf {
     input.with_extension("o")
+}
+
+fn is_stdio_path(path: &Path) -> bool {
+    path == Path::new("-")
+}
+
+fn assemble_cli(input: &Path, output: &Path) -> Result<(), afs_as::assemble::AsmError> {
+    let stdin_display = Path::new("<stdin>");
+    let stdout_display = Path::new("<stdout>");
+    let input_display = if is_stdio_path(input) { stdin_display } else { input };
+
+    let src = if is_stdio_path(input) {
+        let mut src = String::new();
+        io::stdin()
+            .read_to_string(&mut src)
+            .map_err(|err| afs_as::assemble::AsmError::new(format!("{}", err)).with_path(input_display))?;
+        src
+    } else {
+        fs::read_to_string(input)
+            .map_err(|err| afs_as::assemble::AsmError::new(format!("{}", err)).with_path(input))?
+    };
+
+    let obj = afs_as::assemble::assemble_source(&src)
+        .map_err(|err| err.with_source_context(input_display, &src))?;
+
+    if is_stdio_path(output) {
+        let stdout = io::stdout();
+        let mut writer = BufWriter::new(stdout.lock());
+        afs_as::macho::write_macho(&obj, &mut writer)
+            .map_err(|err| afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(stdout_display))?;
+        writer
+            .flush()
+            .map_err(|err| afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(stdout_display))?;
+    } else {
+        let file = fs::File::create(output)
+            .map_err(|err| afs_as::assemble::AsmError::new(format!("{}", err)).with_path(output))?;
+        let mut writer = BufWriter::new(file);
+        afs_as::macho::write_macho(&obj, &mut writer)
+            .map_err(|err| afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(output))?;
+        writer
+            .flush()
+            .map_err(|err| afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(output))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -155,6 +230,36 @@ mod tests {
         assert_eq!(
             parse(["a.s", "b.s"]),
             Err("multiple input files are not supported (extra input 'b.s')".into())
+        );
+    }
+
+    #[test]
+    fn parse_stdin_requires_explicit_output() {
+        assert_eq!(
+            parse(["-"]),
+            Err("input '-' requires explicit -o <output.o> or -o -".into())
+        );
+    }
+
+    #[test]
+    fn parse_accepts_stdin_and_stdout_paths() {
+        assert_eq!(
+            parse(["-", "-o", "-"]),
+            Ok(Command::Assemble {
+                input: PathBuf::from("-"),
+                output: PathBuf::from("-"),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_double_dash_stops_option_parsing() {
+        assert_eq!(
+            parse(["--", "--version.s"]),
+            Ok(Command::Assemble {
+                input: PathBuf::from("--version.s"),
+                output: PathBuf::from("--version.o"),
+            })
         );
     }
 
