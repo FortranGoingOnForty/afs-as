@@ -153,6 +153,7 @@ Major covered families include:
 - conditional select family:
   - `csel`, `csinc`, `csinv`, `csneg`
   - `cset`, `csetm`, `cinc`, `cinv`, `cneg`
+  - `ccmp`, `ccmn`
 - branch and control flow:
   - `b`, `bl`, `b.cond`
   - `cbz`, `cbnz`, `tbz`, `tbnz`

@@ -1054,6 +1054,8 @@ impl<'a> Parser<'a> {
             "csinc" => self.parse_csinc(),
             "csinv" => self.parse_csinv(),
             "csneg" => self.parse_csneg(),
+            "ccmp" => self.parse_ccmp(),
+            "ccmn" => self.parse_ccmn(),
             "cset" => self.parse_cset(),
             "csetm" => self.parse_csetm(),
             "cinc" => self.parse_cinc(),
@@ -1824,6 +1826,55 @@ impl<'a> Parser<'a> {
 
     fn parse_csneg(&mut self) -> Result<Inst, ParseError> {
         self.parse_cond_select("csneg")
+    }
+
+    fn parse_cond_compare_imm(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let imm5 = self.parse_immediate_const_expr("conditional compare immediate")?;
+        if !(0..=31).contains(&imm5) {
+            return Err(self.err(format!(
+                "conditional compare immediate must be in 0..=31, got {}",
+                imm5
+            )));
+        }
+        self.expect(&Tok::Comma)?;
+        let nzcv = self.parse_immediate_const_expr("conditional compare nzcv")?;
+        if !(0..=15).contains(&nzcv) {
+            return Err(self.err(format!(
+                "conditional compare nzcv must be in 0..=15, got {}",
+                nzcv
+            )));
+        }
+        self.expect(&Tok::Comma)?;
+        let cond_name = self.expect_ident()?;
+        let cond = parse_condition(&cond_name)
+            .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
+        Ok(match mnemonic {
+            "ccmp" => Inst::CcmpImm {
+                rn,
+                imm5: imm5 as u8,
+                nzcv: nzcv as u8,
+                cond,
+                sf,
+            },
+            "ccmn" => Inst::CcmnImm {
+                rn,
+                imm5: imm5 as u8,
+                nzcv: nzcv as u8,
+                cond,
+                sf,
+            },
+            _ => unreachable!("unsupported conditional compare mnemonic"),
+        })
+    }
+
+    fn parse_ccmp(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_compare_imm("ccmp")
+    }
+
+    fn parse_ccmn(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_compare_imm("ccmn")
     }
 
     fn parse_cset(&mut self) -> Result<Inst, ParseError> {
@@ -4188,6 +4239,34 @@ mod tests {
                 rn: X3,
                 rm: X4,
                 cond: Cond::NE,
+                sf: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ccmp() {
+        assert_eq!(
+            parse_inst("ccmp w0, #3, #4, ne"),
+            Inst::CcmpImm {
+                rn: W0,
+                imm5: 3,
+                nzcv: 4,
+                cond: Cond::NE,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ccmn() {
+        assert_eq!(
+            parse_inst("ccmn x3, #9, #1, ge"),
+            Inst::CcmnImm {
+                rn: X3,
+                imm5: 9,
+                nzcv: 1,
+                cond: Cond::GE,
                 sf: true
             }
         );

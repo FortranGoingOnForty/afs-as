@@ -262,6 +262,22 @@ pub enum Inst {
         cond: Cond,
         sf: bool,
     },
+    /// CCMP Xn, #imm5, #nzcv, cond
+    CcmpImm {
+        rn: GpReg,
+        imm5: u8,
+        nzcv: u8,
+        cond: Cond,
+        sf: bool,
+    },
+    /// CCMN Xn, #imm5, #nzcv, cond
+    CcmnImm {
+        rn: GpReg,
+        imm5: u8,
+        nzcv: u8,
+        cond: Cond,
+        sf: bool,
+    },
 
     // ---- Logic (register) ----
     /// AND Xd, Xn, Xm
@@ -1273,6 +1289,20 @@ impl Inst {
                 cond,
                 sf,
             } => csel(*sf, 0b11, *rm, *cond, *rn, *rd),
+            Inst::CcmpImm {
+                rn,
+                imm5,
+                nzcv,
+                cond,
+                sf,
+            } => ccmp_imm(*sf, true, *rn, *imm5, *nzcv, *cond),
+            Inst::CcmnImm {
+                rn,
+                imm5,
+                nzcv,
+                cond,
+                sf,
+            } => ccmp_imm(*sf, false, *rn, *imm5, *nzcv, *cond),
 
             // ---- Address generation ----
             Inst::Adr { rd, imm } => {
@@ -1822,6 +1852,19 @@ fn csel(sf: bool, variant: u32, rm: GpReg, cond: Cond, rn: GpReg, rd: GpReg) -> 
         | ((variant & 0x1) << 10)
         | (rn.enc() << 5)
         | rd.enc()
+}
+
+fn ccmp_imm(sf: bool, is_cmp: bool, rn: GpReg, imm5: u8, nzcv: u8, cond: Cond) -> u32 {
+    let base = match (sf, is_cmp) {
+        (false, true) => 0x7A400800,
+        (false, false) => 0x3A400800,
+        (true, true) => 0xFA400800,
+        (true, false) => 0xBA400800,
+    };
+    base | (((imm5 as u32) & 0x1F) << 16)
+        | ((cond.enc() & 0xF) << 12)
+        | ((rn.enc() & 0x1F) << 5)
+        | ((nzcv as u32) & 0xF)
 }
 
 fn ldst_idx(size: u32, opc: u32, offset: i16, idx: u32, rn: GpReg, rt: GpReg) -> u32 {
@@ -2689,6 +2732,62 @@ mod tests {
             }
             .encode(),
             0x1A81C000
+        );
+    }
+    #[test]
+    fn ccmp_w0_3_4_ne() {
+        assert_eq!(
+            Inst::CcmpImm {
+                rn: W0,
+                imm5: 3,
+                nzcv: 4,
+                cond: Cond::NE,
+                sf: false
+            }
+            .encode(),
+            0x7A431804
+        );
+    }
+    #[test]
+    fn ccmp_w1_10_0_lt() {
+        assert_eq!(
+            Inst::CcmpImm {
+                rn: W1,
+                imm5: 10,
+                nzcv: 0,
+                cond: Cond::LT,
+                sf: false
+            }
+            .encode(),
+            0x7A4AB820
+        );
+    }
+    #[test]
+    fn ccmp_x2_5_7_eq() {
+        assert_eq!(
+            Inst::CcmpImm {
+                rn: X2,
+                imm5: 5,
+                nzcv: 7,
+                cond: Cond::EQ,
+                sf: true
+            }
+            .encode(),
+            0xFA450847
+        );
+    }
+    #[test]
+    fn ccmn_w3_9_1_ge() {
+        assert_eq!(
+            Inst::CcmnImm {
+                rn: W3,
+                imm5: 9,
+                nzcv: 1,
+                cond: Cond::GE,
+                sf: false
+            }
+            .encode(),
+            0x3A49A861
         );
     }
     #[test]
