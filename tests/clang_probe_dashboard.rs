@@ -212,6 +212,18 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "atomic_fetchadd_narrow",
+        source: "atomic_fetchadd_narrow.c",
+        driver: "extern unsigned char add8(unsigned char);\nextern unsigned short add16(unsigned short);\nint main(void) {\n    return (add8(4u) != 0u)\n        || (add8(3u) != 4u)\n        || (add16(400u) != 0u)\n        || (add16(300u) != 400u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
+        name: "atomic_cas_narrow",
+        source: "atomic_cas_narrow.c",
+        driver: "extern unsigned char cas8(unsigned char, unsigned char);\nextern unsigned short cas16(unsigned short, unsigned short);\nint main(void) {\n    return (cas8(0u, 7u) != 0u)\n        || (cas8(0u, 11u) != 7u)\n        || (cas16(0u, 700u) != 0u)\n        || (cas16(0u, 300u) != 700u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "atomic_exchange_cas",
         source: "atomic_exchange_cas.c",
         driver: "extern int swap_acqrel(int);\nextern long swap64_acqrel(long);\nextern int cas_acqrel(int, int);\nextern long cas64_acqrel(long, long);\nint main(void) {\n    return (swap_acqrel(4) != 0)\n        || (swap_acqrel(7) != 4)\n        || (cas_acqrel(7, 9) != 7)\n        || (cas_acqrel(0, 11) != 9)\n        || (swap64_acqrel(10) != 0)\n        || (swap64_acqrel(15) != 10)\n        || (cas64_acqrel(15, 21) != 15)\n        || (cas64_acqrel(0, 31) != 21);\n}\n",
@@ -224,9 +236,21 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "atomic_bitops_narrow",
+        source: "atomic_bitops_narrow.c",
+        driver: "extern unsigned char or8(unsigned char);\nextern unsigned char xor8(unsigned char);\nextern unsigned char and8(unsigned char);\nextern unsigned short or16(unsigned short);\nextern unsigned short xor16(unsigned short);\nextern unsigned short and16(unsigned short);\nint main(void) {\n    return (or8(3u) != 0u)\n        || (xor8(1u) != 3u)\n        || (and8(1u) != 2u)\n        || (or16(0x30u) != 0u)\n        || (xor16(0x10u) != 0x30u)\n        || (and16(0x10u) != 0x20u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "atomic_maxmin",
         source: "atomic_maxmin.c",
         driver: "extern int fetch_max_builtin(int);\nextern int fetch_min_builtin(int);\nint main(void) {\n    return (fetch_max_builtin(4) != 0)\n        || (fetch_max_builtin(2) != 4)\n        || (fetch_min_builtin(3) != 4)\n        || (fetch_min_builtin(5) != 3);\n}\n",
+        support: None,
+    },
+    ProbeCase {
+        name: "atomic_maxmin_narrow",
+        source: "atomic_maxmin_narrow.c",
+        driver: "extern unsigned char max8(unsigned char);\nextern unsigned char min8(unsigned char);\nextern unsigned short max16(unsigned short);\nextern unsigned short min16(unsigned short);\nint main(void) {\n    return (max8(7u) != 0u)\n        || (min8(3u) != 7u)\n        || (max16(700u) != 0u)\n        || (min16(300u) != 700u);\n}\n",
         support: None,
     },
     ProbeCase {
