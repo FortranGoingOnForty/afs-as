@@ -396,6 +396,7 @@ impl Inst {
 
 // ---- Encoding helpers ----
 
+#[allow(clippy::too_many_arguments)]
 fn dp_reg(sf: bool, opc: u32, fixed: u32, shift: u32, rm: GpReg, imm6: u32, rn: GpReg, rd: GpReg) -> u32 {
     ((sf as u32) << 31) | (opc << 29) | (fixed << 24) | (shift << 22)
         | (rm.enc() << 16) | (imm6 << 10) | (rn.enc() << 5) | rd.enc()
