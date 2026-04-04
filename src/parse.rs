@@ -54,8 +54,8 @@ pub enum Directive {
     WeakReference(String),
     WeakDefinition(String),
     Set(String, Expr),
-    Align(u32),
-    P2Align(u32),
+    Align { power: u32, fill: Option<u8>, max_skip: Option<u64> },
+    P2Align { power: u32, fill: Option<u8>, max_skip: Option<u64> },
     Byte(Vec<Expr>),
     Short(Vec<Expr>),
     Word(Vec<Expr>),
@@ -279,12 +279,12 @@ impl<'a> Parser<'a> {
                 Directive::Set(sym, expr)
             }
             ".align" => {
-                let n = self.parse_const_expr("alignment expression")? as u32;
-                Directive::Align(n)
+                let (power, fill, max_skip) = self.parse_alignment_directive_args()?;
+                Directive::Align { power, fill, max_skip }
             }
             ".p2align" => {
-                let n = self.parse_const_expr("alignment expression")? as u32;
-                Directive::P2Align(n)
+                let (power, fill, max_skip) = self.parse_alignment_directive_args()?;
+                Directive::P2Align { power, fill, max_skip }
             }
             ".byte" => {
                 Directive::Byte(self.parse_expr_list()?)
@@ -393,6 +393,23 @@ impl<'a> Parser<'a> {
             vals.push(self.parse_expr()?);
         }
         Ok(vals)
+    }
+
+    fn parse_alignment_directive_args(&mut self) -> Result<(u32, Option<u8>, Option<u64>), ParseError> {
+        let power = self.parse_const_expr("alignment expression")? as u32;
+        let mut fill = None;
+        let mut max_skip = None;
+
+        if self.eat(&Tok::Comma) {
+            if !self.at_end_of_stmt() && self.peek() != &Tok::Comma {
+                fill = Some(self.parse_const_expr("alignment fill expression")? as u8);
+            }
+            if self.eat(&Tok::Comma) {
+                max_skip = Some(self.parse_const_expr("alignment max-skip expression")? as u64);
+            }
+        }
+
+        Ok((power, fill, max_skip))
     }
 
     fn parse_const_expr(&mut self, context: &str) -> Result<i64, ParseError> {
@@ -1593,13 +1610,53 @@ mod tests {
     #[test]
     fn parse_align_directive() {
         let stmts = parse_stmts(".p2align 4");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::P2Align(4))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::P2Align {
+                power: 4,
+                fill: None,
+                max_skip: None,
+            })]
+        );
     }
 
     #[test]
     fn parse_align_directive_expression() {
         let stmts = parse_stmts(".align 1 + 1");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Align(2))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Align {
+                power: 2,
+                fill: None,
+                max_skip: None,
+            })]
+        );
+    }
+
+    #[test]
+    fn parse_align_directive_with_fill_and_max_skip() {
+        let stmts = parse_stmts(".p2align 4, 0xAA, 2");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::P2Align {
+                power: 4,
+                fill: Some(0xAA),
+                max_skip: Some(2),
+            })]
+        );
+    }
+
+    #[test]
+    fn parse_align_directive_with_omitted_fill() {
+        let stmts = parse_stmts(".align 4,,2");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Align {
+                power: 4,
+                fill: None,
+                max_skip: Some(2),
+            })]
+        );
     }
 
     #[test]

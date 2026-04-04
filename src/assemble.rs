@@ -303,13 +303,9 @@ impl Assembler {
                 let attrs = self.symbol_attrs_mut(name);
                 attrs.weak_def = true;
             }
-            Directive::Align(n) | Directive::P2Align(n) => {
-                if *n > 30 {
-                    return Err(AsmError(format!("alignment power {} too large (max 30)", n)));
-                }
-                let section = &mut self.sections[self.section];
-                section.align_pow2 = section.align_pow2.max(*n);
-                section.size = align_value(section.size, *n);
+            Directive::Align { power, max_skip, .. }
+            | Directive::P2Align { power, max_skip, .. } => {
+                self.collect_alignment(*power, *max_skip)?;
             }
             Directive::Byte(vals) => self.reserve_initialized_bytes(vals.len() as u64, ".byte")?,
             Directive::Short(vals) => self.reserve_initialized_bytes((vals.len() as u64) * 2, ".short")?,
@@ -352,15 +348,9 @@ impl Assembler {
             | Directive::PrivateExtern(_)
             | Directive::WeakReference(_)
             | Directive::WeakDefinition(_) => {}
-            Directive::Align(n) | Directive::P2Align(n) => {
-                if *n > 30 {
-                    return Err(AsmError(format!("alignment power {} too large (max 30)", n)));
-                }
-                let section = &mut self.sections[self.section];
-                section.align_pow2 = section.align_pow2.max(*n);
-                let current = self.current_offset();
-                let aligned = align_value(current, *n);
-                self.emit_space(aligned - current)?;
+            Directive::Align { power, fill, max_skip }
+            | Directive::P2Align { power, fill, max_skip } => {
+                self.emit_alignment(*power, *fill, *max_skip)?;
             }
             Directive::Byte(vals) => {
                 for expr in vals {
@@ -457,6 +447,89 @@ impl Assembler {
         for _ in 0..repeat {
             self.emit_initialized_bytes(&pattern[..byte_count], ".fill")?;
         }
+        Ok(())
+    }
+
+    fn collect_alignment(&mut self, power: u32, max_skip: Option<u64>) -> Result<(), AsmError> {
+        if power > 30 {
+            return Err(AsmError(format!("alignment power {} too large (max 30)", power)));
+        }
+
+        let current = self.current_offset();
+        let aligned = align_value(current, power);
+        let padding = aligned - current;
+        let section = &mut self.sections[self.section];
+        section.align_pow2 = section.align_pow2.max(power);
+        if max_skip.is_some_and(|limit| padding > limit) {
+            return Ok(());
+        }
+        section.size = aligned;
+        Ok(())
+    }
+
+    fn emit_alignment(
+        &mut self,
+        power: u32,
+        fill: Option<u8>,
+        max_skip: Option<u64>,
+    ) -> Result<(), AsmError> {
+        if power > 30 {
+            return Err(AsmError(format!("alignment power {} too large (max 30)", power)));
+        }
+
+        {
+            let section = &mut self.sections[self.section];
+            section.align_pow2 = section.align_pow2.max(power);
+        }
+
+        let current = self.current_offset();
+        let aligned = align_value(current, power);
+        let padding = aligned - current;
+        if max_skip.is_some_and(|limit| padding > limit) {
+            return Ok(());
+        }
+
+        self.emit_alignment_padding(padding, fill)
+    }
+
+    fn emit_alignment_padding(&mut self, padding: u64, fill: Option<u8>) -> Result<(), AsmError> {
+        if padding == 0 {
+            return Ok(());
+        }
+        if self.sections[self.section].kind == SectionKind::ZeroFill {
+            return self.emit_space(padding);
+        }
+
+        if let Some(fill) = fill {
+            return self.emit_repeated_byte(fill, padding, "alignment padding");
+        }
+
+        if self.sections[self.section].kind != SectionKind::Text {
+            return self.emit_space(padding);
+        }
+
+        let zero_prefix = ((4 - (self.current_offset() % 4)) % 4).min(padding);
+        self.emit_space(zero_prefix)?;
+
+        let remaining = padding - zero_prefix;
+        let nop = Inst::Nop.encode().to_le_bytes();
+        for _ in 0..(remaining / 4) {
+            self.emit_initialized_bytes(&nop, ".p2align")?;
+        }
+        self.emit_space(remaining % 4)
+    }
+
+    fn emit_repeated_byte(&mut self, byte: u8, amount: u64, context: &str) -> Result<(), AsmError> {
+        if amount == 0 {
+            return Ok(());
+        }
+        if byte == 0 {
+            return self.emit_space(amount);
+        }
+        self.reserve_initialized_bytes(amount, context)?;
+        let section = &mut self.sections[self.section];
+        let new_len = section.data.len() + amount as usize;
+        section.data.resize(new_len, byte);
         Ok(())
     }
 
@@ -1194,6 +1267,37 @@ mod tests {
     fn assemble_with_alignment() {
         let obj = assemble_source(".text\n.p2align 2\nnop\n").unwrap();
         assert_eq!(obj.text_section().align_pow2, 2);
+    }
+
+    #[test]
+    fn assemble_text_alignment_uses_zero_then_nop_padding() {
+        let obj = assemble_source(".text\n.byte 1\n.p2align 3\n.byte 2\n").unwrap();
+        assert_eq!(
+            text_bytes(&obj),
+            vec![0x01, 0x00, 0x00, 0x00, 0x1f, 0x20, 0x03, 0xd5, 0x02]
+        );
+    }
+
+    #[test]
+    fn assemble_alignment_with_fill_byte_repeats_fill() {
+        let obj = assemble_source(".text\n.byte 1\n.p2align 3, 0xAA\n.byte 2\n").unwrap();
+        assert_eq!(
+            text_bytes(&obj),
+            vec![0x01, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x02]
+        );
+    }
+
+    #[test]
+    fn assemble_alignment_max_skip_can_suppress_padding() {
+        let obj = assemble_source(".text\n.byte 1\n.p2align 4, 0xAA, 2\n.byte 2\n").unwrap();
+        assert_eq!(text_bytes(&obj), vec![0x01, 0x02]);
+        assert_eq!(obj.text_section().align_pow2, 4);
+    }
+
+    #[test]
+    fn assemble_data_alignment_defaults_to_zero_fill() {
+        let obj = assemble_source(".data\n.byte 1\n.align 3\n.byte 2\n").unwrap();
+        assert_eq!(data_bytes(&obj), vec![0x01, 0, 0, 0, 0, 0, 0, 0, 0x02]);
     }
 
     #[test]
