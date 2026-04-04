@@ -150,6 +150,25 @@ fn corpus_storage_directives_match_bytes_sections_and_symbols() {
     assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
 }
 
+#[test]
+fn corpus_alignment_directives_match_text_data_and_section_alignment() {
+    let paths = assemble_fixture("alignment_directives.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_data = common::object_section_bytes(&paths.obj, "__DATA", "__data");
+    let ref_data = common::object_section_bytes(&paths.ref_obj, "__DATA", "__data");
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+
+    assert!(ours_load.contains("align 2^5 (32)"), "missing text alignment:\n{}", ours_load);
+    assert!(ours_load.contains("align 2^3 (8)"), "missing data alignment:\n{}", ours_load);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(ours_data, ref_data);
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+}
+
 fn normalize_tool_output(text: &str) -> String {
     text.lines()
         .filter(|line| !line.trim_end().ends_with(".o:"))
