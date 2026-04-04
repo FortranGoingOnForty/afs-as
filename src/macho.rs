@@ -22,6 +22,7 @@ const LC_BUILD_VERSION: u32 = 0x32;
 const S_REGULAR: u32 = 0x0;
 const S_ZEROFILL: u32 = 0x1;
 const S_CSTRING_LITERALS: u32 = 0x2;
+const S_ATTR_DEBUG: u32 = 0x02000000;
 const S_ATTR_PURE_INSTRUCTIONS: u32 = 0x80000000;
 const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x00000400;
 
@@ -105,6 +106,7 @@ pub enum SectionKind {
     Data,
     CStringLiterals,
     ConstData,
+    CompactUnwind,
     ZeroFill,
 }
 
@@ -115,6 +117,7 @@ impl SectionKind {
             Self::Text if size == 0 => S_ATTR_PURE_INSTRUCTIONS,
             Self::Text => S_ATTR_PURE_INSTRUCTIONS,
             Self::CStringLiterals => S_CSTRING_LITERALS,
+            Self::CompactUnwind => S_REGULAR | S_ATTR_DEBUG,
             Self::ZeroFill => S_ZEROFILL,
             Self::Data | Self::ConstData => S_REGULAR,
         }

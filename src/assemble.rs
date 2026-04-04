@@ -15,6 +15,7 @@ use crate::encode::Inst;
 use crate::expr::{self, ClassifiedExpr, Expr, SymbolValue};
 use crate::macho::{self, BuildVersion, ObjectFile, Relocation, Section, SectionKind, Symbol};
 use crate::parse::{self, BuildVersionDirective, Directive, RelocKind, Stmt};
+use crate::reg::{GpReg, SP};
 
 /// Assemble a source file to a Mach-O object file.
 pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
@@ -124,7 +125,8 @@ struct Assembler {
     pending_relocs: Vec<Vec<PendingReloc>>,
     subsections_via_symbols: bool,
     build_version: Option<BuildVersionDirective>,
-    cfi_proc_active: bool,
+    active_cfi_proc: Option<CfiProcState>,
+    compact_unwind_rows: Vec<CompactUnwindRow>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -170,6 +172,148 @@ struct PendingReloc {
     pcrel: bool,
 }
 
+#[derive(Debug, Clone)]
+struct CfiProcState {
+    start_section: usize,
+    start_offset: u64,
+    cfa_register: GpReg,
+    cfa_offset: i64,
+    saved_gp_offsets: BTreeMap<u8, i64>,
+    unsupported: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CompactUnwindRow {
+    start_section: usize,
+    start_offset: u64,
+    length: u32,
+    encoding: u32,
+}
+
+const UNWIND_ARM64_MODE_FRAMELESS: u32 = 0x02000000;
+const UNWIND_ARM64_MODE_FRAME: u32 = 0x04000000;
+const UNWIND_ARM64_FRAME_X19_X20_PAIR: u32 = 0x00000001;
+const UNWIND_ARM64_FRAME_X21_X22_PAIR: u32 = 0x00000002;
+const UNWIND_ARM64_FRAME_X23_X24_PAIR: u32 = 0x00000004;
+const UNWIND_ARM64_FRAME_X25_X26_PAIR: u32 = 0x00000008;
+const UNWIND_ARM64_FRAME_X27_X28_PAIR: u32 = 0x00000010;
+
+impl CfiProcState {
+    fn new(start_section: usize, start_offset: u64) -> Self {
+        Self {
+            start_section,
+            start_offset,
+            cfa_register: SP,
+            cfa_offset: 0,
+            saved_gp_offsets: BTreeMap::new(),
+            unsupported: None,
+        }
+    }
+
+    fn note_unsupported(&mut self, directive: &'static str) {
+        self.unsupported.get_or_insert(directive);
+    }
+
+    fn compact_unwind_encoding(&self) -> Result<u32, AsmError> {
+        if let Some(directive) = self.unsupported {
+            return Err(AsmError(format!(
+                "compact unwind emission does not yet support {}",
+                directive
+            )));
+        }
+
+        if self.cfa_register == SP {
+            if !self.saved_gp_offsets.is_empty() {
+                return Err(AsmError(
+                    "compact unwind emission does not yet support frameless saved registers".into(),
+                ));
+            }
+            if self.cfa_offset < 0 {
+                return Err(AsmError("compact unwind stack size must be non-negative".into()));
+            }
+            let stack_size = self.cfa_offset as u64;
+            if !stack_size.is_multiple_of(16) {
+                return Err(AsmError(format!(
+                    "compact unwind frameless stack size {} must be a multiple of 16",
+                    stack_size
+                )));
+            }
+            let scaled = stack_size / 16;
+            if scaled > 0xFFF {
+                return Err(AsmError(format!(
+                    "compact unwind frameless stack size {} is too large",
+                    stack_size
+                )));
+            }
+            return Ok(UNWIND_ARM64_MODE_FRAMELESS | ((scaled as u32) << 12));
+        }
+
+        if self.cfa_register.num() != 29 {
+            return Err(AsmError(format!(
+                "compact unwind emission does not yet support CFA register x{}",
+                self.cfa_register.num()
+            )));
+        }
+        if self.cfa_offset != 16 {
+            return Err(AsmError(format!(
+                "compact unwind emission only supports frame-based CFA offset 16, got {}",
+                self.cfa_offset
+            )));
+        }
+        if self.saved_gp_offsets.get(&29) != Some(&-16) || self.saved_gp_offsets.get(&30) != Some(&-8) {
+            return Err(AsmError(
+                "compact unwind frame mode requires saved x29/x30 at CFA-16/CFA-8".into(),
+            ));
+        }
+
+        let mut encoding = UNWIND_ARM64_MODE_FRAME;
+        let mut next_offset = -24;
+        for (low, high, bit) in [
+            (19u8, 20u8, UNWIND_ARM64_FRAME_X19_X20_PAIR),
+            (21u8, 22u8, UNWIND_ARM64_FRAME_X21_X22_PAIR),
+            (23u8, 24u8, UNWIND_ARM64_FRAME_X23_X24_PAIR),
+            (25u8, 26u8, UNWIND_ARM64_FRAME_X25_X26_PAIR),
+            (27u8, 28u8, UNWIND_ARM64_FRAME_X27_X28_PAIR),
+        ] {
+            match (
+                self.saved_gp_offsets.get(&low),
+                self.saved_gp_offsets.get(&high),
+            ) {
+                (None, None) => {}
+                (Some(&low_offset), Some(&high_offset))
+                    if low_offset == next_offset && high_offset == next_offset - 8 =>
+                {
+                    encoding |= bit;
+                    next_offset -= 16;
+                }
+                (Some(_), Some(_)) => {
+                    return Err(AsmError(format!(
+                        "compact unwind frame mode requires x{} and x{} to be saved contiguously below x29/x30",
+                        low, high
+                    )));
+                }
+                _ => {
+                    return Err(AsmError(format!(
+                        "compact unwind frame mode requires x{} and x{} to be saved as a pair",
+                        low, high
+                    )));
+                }
+            }
+        }
+
+        for reg in self.saved_gp_offsets.keys() {
+            if !matches!(*reg, 19..=30) {
+                return Err(AsmError(format!(
+                    "compact unwind frame mode does not support saved x{}",
+                    reg
+                )));
+            }
+        }
+
+        Ok(encoding)
+    }
+}
+
 impl Assembler {
     fn new() -> Self {
         Self {
@@ -185,7 +329,8 @@ impl Assembler {
             pending_relocs: vec![Vec::new()],
             subsections_via_symbols: false,
             build_version: None,
-            cfi_proc_active: false,
+            active_cfi_proc: None,
+            compact_unwind_rows: Vec::new(),
         }
     }
 
@@ -208,7 +353,8 @@ impl Assembler {
         self.fixups.clear();
         self.pending_relocs.clear();
         self.pending_relocs.resize_with(self.sections.len(), Vec::new);
-        self.cfi_proc_active = false;
+        self.active_cfi_proc = None;
+        self.compact_unwind_rows.clear();
     }
 
     fn prepare_expression_state(&mut self, _stmts: &[Stmt]) -> Result<(), AsmError> {
@@ -413,27 +559,17 @@ impl Assembler {
                 self.emit_zerofill(segment, section, *size, *align_pow2)?;
             }
             Directive::CfiStartProc => {
-                if self.cfi_proc_active {
-                    return Err(AsmError("nested .cfi_startproc directives are not supported".into()));
-                }
-                self.cfi_proc_active = true;
+                self.start_cfi_proc()?;
             }
             Directive::CfiEndProc => {
-                if !self.cfi_proc_active {
-                    return Err(AsmError(".cfi_endproc requires an active .cfi_startproc".into()));
-                }
-                self.cfi_proc_active = false;
+                self.finish_cfi_proc()?;
             }
             Directive::CfiDefCfa { .. }
             | Directive::CfiDefCfaOffset(_)
             | Directive::CfiDefCfaRegister(_)
             | Directive::CfiOffset { .. }
             | Directive::CfiRestore(_)
-            | Directive::CfiAdjustCfaOffset(_) => {
-                if !self.cfi_proc_active {
-                    return Err(AsmError("CFI directives require an active .cfi_startproc".into()));
-                }
-            }
+            | Directive::CfiAdjustCfaOffset(_) => self.apply_cfi_directive(dir)?,
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
@@ -445,6 +581,71 @@ impl Assembler {
             }
             Directive::Ignored(_) => {}
         }
+        Ok(())
+    }
+
+    fn start_cfi_proc(&mut self) -> Result<(), AsmError> {
+        if self.active_cfi_proc.is_some() {
+            return Err(AsmError("nested .cfi_startproc directives are not supported".into()));
+        }
+        if self.sections[self.section].kind != SectionKind::Text {
+            return Err(AsmError(
+                ".cfi_startproc is only supported in __TEXT,__text".into(),
+            ));
+        }
+        self.active_cfi_proc = Some(CfiProcState::new(self.section, self.current_offset()));
+        Ok(())
+    }
+
+    fn apply_cfi_directive(&mut self, dir: &Directive) -> Result<(), AsmError> {
+        let proc = self
+            .active_cfi_proc
+            .as_mut()
+            .ok_or_else(|| AsmError("CFI directives require an active .cfi_startproc".into()))?;
+
+        match dir {
+            Directive::CfiDefCfa { register, offset } => {
+                proc.cfa_register = *register;
+                proc.cfa_offset = *offset;
+            }
+            Directive::CfiDefCfaOffset(offset) => proc.cfa_offset = *offset,
+            Directive::CfiDefCfaRegister(register) => proc.cfa_register = *register,
+            Directive::CfiOffset { register, offset } => {
+                proc.saved_gp_offsets.insert(register.num(), *offset);
+            }
+            Directive::CfiRestore(_) => proc.note_unsupported(".cfi_restore"),
+            Directive::CfiAdjustCfaOffset(_) => proc.note_unsupported(".cfi_adjust_cfa_offset"),
+            _ => unreachable!("non-CFI directive passed to apply_cfi_directive"),
+        }
+
+        Ok(())
+    }
+
+    fn finish_cfi_proc(&mut self) -> Result<(), AsmError> {
+        let proc = self
+            .active_cfi_proc
+            .take()
+            .ok_or_else(|| AsmError(".cfi_endproc requires an active .cfi_startproc".into()))?;
+
+        if proc.start_section != self.section {
+            return Err(AsmError(
+                ".cfi_endproc must be in the same section as .cfi_startproc".into(),
+            ));
+        }
+
+        let length = self
+            .current_offset()
+            .checked_sub(proc.start_offset)
+            .ok_or_else(|| AsmError("internal error: invalid CFI range length".into()))?;
+        let length = u32::try_from(length)
+            .map_err(|_| AsmError("compact unwind function range exceeds u32".into()))?;
+
+        self.compact_unwind_rows.push(CompactUnwindRow {
+            start_section: proc.start_section,
+            start_offset: proc.start_offset,
+            length,
+            encoding: proc.compact_unwind_encoding()?,
+        });
         Ok(())
     }
 
@@ -1066,16 +1267,45 @@ impl Assembler {
         })
     }
 
+    fn materialize_compact_unwind_section(&mut self) {
+        if self.compact_unwind_rows.is_empty() {
+            return;
+        }
+
+        let mut section = Section::new("__LD", "__compact_unwind", SectionKind::CompactUnwind);
+        section.align_pow2 = 3;
+        for row in &self.compact_unwind_rows {
+            let reloc_offset = section.data.len() as u32;
+            section.data.extend_from_slice(&row.start_offset.to_le_bytes());
+            section.data.extend_from_slice(&row.length.to_le_bytes());
+            section.data.extend_from_slice(&row.encoding.to_le_bytes());
+            section.data.extend_from_slice(&0u64.to_le_bytes());
+            section.data.extend_from_slice(&0u64.to_le_bytes());
+            section.relocations.push(Relocation {
+                offset: reloc_offset,
+                symbol_idx: (row.start_section + 1) as u32,
+                pcrel: false,
+                length: 3,
+                extern_: false,
+                reloc_type: macho::ARM64_RELOC_UNSIGNED,
+            });
+        }
+        section.size = section.data.len() as u64;
+        self.sections.push(section);
+    }
+
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
-        let section_bases = self.section_bases.clone();
+        if self.active_cfi_proc.is_some() {
+            return Err(AsmError("unterminated .cfi_startproc before end of file".into()));
+        }
+
+        self.materialize_compact_unwind_section();
+
+        let section_bases = self.section_base_addresses();
         let absolute_symbols = self.absolute_symbols.clone();
         let mut symbols: Vec<Symbol> = Vec::new();
         let flags = self.metadata_flags();
         let build_version = self.build_version_command()?;
-
-        if self.cfi_proc_active {
-            return Err(AsmError("unterminated .cfi_startproc before end of file".into()));
-        }
 
         for name in absolute_symbols.keys() {
             if self.labels.contains_key(name) {
@@ -1447,6 +1677,11 @@ mod tests {
         &obj.section("__DATA", "__data").expect("missing __DATA,__data").relocations
     }
 
+    fn compact_unwind_section(obj: &ObjectFile) -> &Section {
+        obj.section("__LD", "__compact_unwind")
+            .expect("missing __LD,__compact_unwind")
+    }
+
     #[test]
     fn assemble_nop() {
         let obj = assemble_source(".text\nnop\n").unwrap();
@@ -1753,19 +1988,75 @@ mod tests {
     }
 
     #[test]
-    fn assemble_cfi_directives_are_accepted_inside_proc() {
+    fn assemble_frameless_cfi_emits_compact_unwind() {
         let obj = assemble_source(
             ".text\n\
             .cfi_startproc\n\
-            sub sp, sp, #32\n\
-            .cfi_def_cfa w29, 16\n\
-            .cfi_offset w30, -8\n\
-            .cfi_restore w29\n\
-            .cfi_adjust_cfa_offset 16\n\
+            sub sp, sp, #16\n\
+            .cfi_def_cfa_offset 16\n\
+            add sp, sp, #16\n\
+            ret\n\
             .cfi_endproc\n"
         )
         .unwrap();
-        assert_eq!(text_bytes(&obj).len(), 4);
+        let compact = compact_unwind_section(&obj);
+        assert_eq!(compact.align_pow2, 3);
+        assert_eq!(compact.data.len(), 32);
+        assert_eq!(
+            compact.data,
+            [
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x0C, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x02,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ]
+        );
+        assert_eq!(
+            compact.relocations,
+            vec![Relocation {
+                offset: 0,
+                symbol_idx: 1,
+                pcrel: false,
+                length: 3,
+                extern_: false,
+                reloc_type: macho::ARM64_RELOC_UNSIGNED,
+            }]
+        );
+    }
+
+    #[test]
+    fn assemble_frame_cfi_emits_compact_unwind() {
+        let obj = assemble_source(
+            ".text\n\
+            .cfi_startproc\n\
+            stp x22, x21, [sp, #-48]!\n\
+            stp x20, x19, [sp, #16]\n\
+            stp x29, x30, [sp, #32]\n\
+            add x29, sp, #32\n\
+            .cfi_def_cfa w29, 16\n\
+            .cfi_offset w30, -8\n\
+            .cfi_offset w29, -16\n\
+            .cfi_offset w19, -24\n\
+            .cfi_offset w20, -32\n\
+            .cfi_offset w21, -40\n\
+            .cfi_offset w22, -48\n\
+            ldp x29, x30, [sp, #32]\n\
+            ldp x20, x19, [sp, #16]\n\
+            ldp x22, x21, [sp], #48\n\
+            ret\n\
+            .cfi_endproc\n"
+        )
+        .unwrap();
+        let compact = compact_unwind_section(&obj);
+        assert_eq!(
+            compact.data,
+            [
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x20, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x04,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ]
+        );
     }
 
     #[test]
@@ -1784,6 +2075,38 @@ mod tests {
     fn assemble_unterminated_cfi_proc_is_rejected() {
         let err = assemble_source(".cfi_startproc\nret\n").unwrap_err();
         assert!(err.0.contains("unterminated .cfi_startproc"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_cfi_restore_is_explicitly_unsupported_for_unwind() {
+        let err = assemble_source(
+            ".text\n\
+            .cfi_startproc\n\
+            ret\n\
+            .cfi_restore w29\n\
+            .cfi_endproc\n"
+        )
+        .unwrap_err();
+        assert!(err.0.contains("does not yet support .cfi_restore"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_unpaired_saved_register_is_explicitly_unsupported() {
+        let err = assemble_source(
+            ".text\n\
+            .cfi_startproc\n\
+            sub sp, sp, #32\n\
+            stp x29, x30, [sp, #16]\n\
+            add x29, sp, #16\n\
+            .cfi_def_cfa w29, 16\n\
+            .cfi_offset w30, -8\n\
+            .cfi_offset w29, -16\n\
+            .cfi_offset w19, -24\n\
+            ret\n\
+            .cfi_endproc\n"
+        )
+        .unwrap_err();
+        assert!(err.0.contains("x19 and x20"), "got: {}", err.0);
     }
 
     #[test]
