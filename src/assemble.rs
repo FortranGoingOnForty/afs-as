@@ -1063,6 +1063,12 @@ impl Assembler {
         &mut self,
         build_version: &BuildVersionDirective,
     ) -> Result<(), AsmError> {
+        if !build_version.platform.eq_ignore_ascii_case("macos") {
+            return Err(AsmError(format!(
+                "unsupported .build_version platform '{}' (supported: macos)",
+                build_version.platform
+            )));
+        }
         match &self.build_version {
             Some(existing) if existing == build_version => Ok(()),
             Some(existing) => Err(AsmError(format!(
