@@ -77,6 +77,14 @@ pub enum Directive {
         size: u64,
         align_pow2: u32,
     },
+    CfiStartProc,
+    CfiEndProc,
+    CfiDefCfa { register: GpReg, offset: i64 },
+    CfiDefCfaOffset(i64),
+    CfiDefCfaRegister(GpReg),
+    CfiOffset { register: GpReg, offset: i64 },
+    CfiRestore(GpReg),
+    CfiAdjustCfaOffset(i64),
     Section(String, String),
     SubsectionsViaSymbols,
     BuildVersion(BuildVersionDirective),
@@ -411,6 +419,30 @@ impl<'a> Parser<'a> {
                 };
                 Directive::Zerofill { segment, section, symbol, size, align_pow2 }
             }
+            ".cfi_startproc" => Directive::CfiStartProc,
+            ".cfi_endproc" => Directive::CfiEndProc,
+            ".cfi_def_cfa" => {
+                let register = self.parse_cfi_register()?;
+                self.expect(&Tok::Comma)?;
+                let offset = self.parse_const_expr("CFA offset")?;
+                Directive::CfiDefCfa { register, offset }
+            }
+            ".cfi_def_cfa_offset" => {
+                Directive::CfiDefCfaOffset(self.parse_const_expr("CFA offset")?)
+            }
+            ".cfi_def_cfa_register" => {
+                Directive::CfiDefCfaRegister(self.parse_cfi_register()?)
+            }
+            ".cfi_offset" => {
+                let register = self.parse_cfi_register()?;
+                self.expect(&Tok::Comma)?;
+                let offset = self.parse_const_expr("CFI offset")?;
+                Directive::CfiOffset { register, offset }
+            }
+            ".cfi_restore" => Directive::CfiRestore(self.parse_cfi_register()?),
+            ".cfi_adjust_cfa_offset" => {
+                Directive::CfiAdjustCfaOffset(self.parse_const_expr("CFA adjustment")?)
+            }
             ".section" => {
                 let seg = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
@@ -445,6 +477,12 @@ impl<'a> Parser<'a> {
                 }
                 Directive::BuildVersion(BuildVersionDirective { platform, minos, sdk })
             }
+            _ if name.starts_with(".cfi_") => {
+                return Err(self.err(format!(
+                    "unsupported CFI directive '{}' (supported: .cfi_startproc, .cfi_endproc, .cfi_def_cfa, .cfi_def_cfa_offset, .cfi_def_cfa_register, .cfi_offset, .cfi_restore, .cfi_adjust_cfa_offset)",
+                    name
+                )));
+            }
             _ => {
                 // Unknown directive — skip to end of line.
                 while !self.at_end_of_stmt() { self.advance(); }
@@ -477,6 +515,14 @@ impl<'a> Parser<'a> {
         }
 
         Ok((power, fill, max_skip))
+    }
+
+    fn parse_cfi_register(&mut self) -> Result<GpReg, ParseError> {
+        let (register, _, kind) = self.parse_gp_reg_with_size_kind()?;
+        if matches!(kind, GpRegKind::Zr) {
+            return Err(self.err("CFI directives do not accept the zero register".into()));
+        }
+        Ok(register)
     }
 
     fn parse_version_triple(&mut self, context: &str) -> Result<VersionTriple, ParseError> {
@@ -3087,8 +3133,8 @@ mod tests {
 
     #[test]
     fn parse_unknown_directive_is_ignored() {
-        let stmts = parse_stmts(".cfi_startproc");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Ignored(".cfi_startproc".into()))]);
+        let stmts = parse_stmts(".unknown_directive");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Ignored(".unknown_directive".into()))]);
     }
 
     #[test]
@@ -3102,6 +3148,42 @@ mod tests {
                 sdk: Some(VersionTriple { major: 15, minor: 5, patch: 0 }),
             }))]
         );
+    }
+
+    #[test]
+    fn parse_cfi_startproc() {
+        let stmts = parse_stmts(".cfi_startproc");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::CfiStartProc)]);
+    }
+
+    #[test]
+    fn parse_cfi_def_cfa() {
+        let stmts = parse_stmts(".cfi_def_cfa w29, 16");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::CfiDefCfa {
+                register: W29,
+                offset: 16,
+            })]
+        );
+    }
+
+    #[test]
+    fn parse_cfi_offset() {
+        let stmts = parse_stmts(".cfi_offset w30, -8");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::CfiOffset {
+                register: W30,
+                offset: -8,
+            })]
+        );
+    }
+
+    #[test]
+    fn parse_unsupported_cfi_directive_errors() {
+        let err = parse(".cfi_escape 0x1").unwrap_err();
+        assert!(err.msg.contains("unsupported CFI directive"), "got: {}", err.msg);
     }
 
     #[test]

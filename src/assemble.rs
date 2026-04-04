@@ -124,6 +124,7 @@ struct Assembler {
     pending_relocs: Vec<Vec<PendingReloc>>,
     subsections_via_symbols: bool,
     build_version: Option<BuildVersionDirective>,
+    cfi_proc_active: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -184,6 +185,7 @@ impl Assembler {
             pending_relocs: vec![Vec::new()],
             subsections_via_symbols: false,
             build_version: None,
+            cfi_proc_active: false,
         }
     }
 
@@ -206,6 +208,7 @@ impl Assembler {
         self.fixups.clear();
         self.pending_relocs.clear();
         self.pending_relocs.resize_with(self.sections.len(), Vec::new);
+        self.cfi_proc_active = false;
     }
 
     fn prepare_expression_state(&mut self, _stmts: &[Stmt]) -> Result<(), AsmError> {
@@ -328,6 +331,14 @@ impl Assembler {
             Directive::Zerofill { segment, section, symbol, size, align_pow2 } => {
                 self.reserve_zerofill(segment, section, symbol.as_deref(), *size, *align_pow2)?;
             }
+            Directive::CfiStartProc
+            | Directive::CfiEndProc
+            | Directive::CfiDefCfa { .. }
+            | Directive::CfiDefCfaOffset(_)
+            | Directive::CfiDefCfaRegister(_)
+            | Directive::CfiOffset { .. }
+            | Directive::CfiRestore(_)
+            | Directive::CfiAdjustCfaOffset(_) => {}
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
@@ -400,6 +411,28 @@ impl Assembler {
             }
             Directive::Zerofill { segment, section, size, align_pow2, .. } => {
                 self.emit_zerofill(segment, section, *size, *align_pow2)?;
+            }
+            Directive::CfiStartProc => {
+                if self.cfi_proc_active {
+                    return Err(AsmError("nested .cfi_startproc directives are not supported".into()));
+                }
+                self.cfi_proc_active = true;
+            }
+            Directive::CfiEndProc => {
+                if !self.cfi_proc_active {
+                    return Err(AsmError(".cfi_endproc requires an active .cfi_startproc".into()));
+                }
+                self.cfi_proc_active = false;
+            }
+            Directive::CfiDefCfa { .. }
+            | Directive::CfiDefCfaOffset(_)
+            | Directive::CfiDefCfaRegister(_)
+            | Directive::CfiOffset { .. }
+            | Directive::CfiRestore(_)
+            | Directive::CfiAdjustCfaOffset(_) => {
+                if !self.cfi_proc_active {
+                    return Err(AsmError("CFI directives require an active .cfi_startproc".into()));
+                }
             }
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
@@ -1039,6 +1072,10 @@ impl Assembler {
         let mut symbols: Vec<Symbol> = Vec::new();
         let flags = self.metadata_flags();
         let build_version = self.build_version_command()?;
+
+        if self.cfi_proc_active {
+            return Err(AsmError("unterminated .cfi_startproc before end of file".into()));
+        }
 
         for name in absolute_symbols.keys() {
             if self.labels.contains_key(name) {
@@ -1710,9 +1747,43 @@ mod tests {
 
     #[test]
     fn assemble_ignored_directive_does_not_switch_sections() {
-        let obj = assemble_source(".data\n.byte 1\n.cfi_startproc\n.byte 2\n").unwrap();
+        let obj = assemble_source(".data\n.byte 1\n.unknown_directive\n.byte 2\n").unwrap();
         assert_eq!(text_bytes(&obj), Vec::<u8>::new());
         assert_eq!(data_bytes(&obj), vec![1, 2]);
+    }
+
+    #[test]
+    fn assemble_cfi_directives_are_accepted_inside_proc() {
+        let obj = assemble_source(
+            ".text\n\
+            .cfi_startproc\n\
+            sub sp, sp, #32\n\
+            .cfi_def_cfa w29, 16\n\
+            .cfi_offset w30, -8\n\
+            .cfi_restore w29\n\
+            .cfi_adjust_cfa_offset 16\n\
+            .cfi_endproc\n"
+        )
+        .unwrap();
+        assert_eq!(text_bytes(&obj).len(), 4);
+    }
+
+    #[test]
+    fn assemble_cfi_endproc_requires_active_proc() {
+        let err = assemble_source(".cfi_endproc\n").unwrap_err();
+        assert!(err.0.contains(".cfi_endproc requires an active .cfi_startproc"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_cfi_directive_requires_active_proc() {
+        let err = assemble_source(".cfi_def_cfa_offset 16\n").unwrap_err();
+        assert!(err.0.contains("CFI directives require an active .cfi_startproc"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_unterminated_cfi_proc_is_rejected() {
+        let err = assemble_source(".cfi_startproc\nret\n").unwrap_err();
+        assert!(err.0.contains("unterminated .cfi_startproc"), "got: {}", err.0);
     }
 
     #[test]
