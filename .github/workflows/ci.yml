@@ -6,25 +6,72 @@ on:
   pull_request:
     branches: [trunk]
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  test:
+  build:
+    name: Build
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --workspace
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+  clippy:
+    name: Clippy
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Build
-        run: cargo build --workspace
+  test-unit:
+    name: "Tests: unit"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --lib
 
-      - name: Unit tests
-        run: cargo test --lib
+  test-differential-harness:
+    name: "Tests: differential harness"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test differential_harness
 
-      - name: Integration tests (validate against system as)
-        run: cargo test --test verify_against_system_as
+  test-corpus:
+    name: "Tests: corpus compatibility"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test corpus_compat
 
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+  test-roundtrip:
+    name: "Tests: round-trip"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test roundtrip
+
+  test-system:
+    name: "Tests: system assembler parity"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test verify_against_system_as
+
+  test-e2e:
+    name: "Tests: end-to-end"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test hello_world
