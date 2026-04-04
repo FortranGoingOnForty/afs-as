@@ -1291,6 +1291,23 @@ impl Assembler {
     ) -> Result<(), AsmError> {
         let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, "branch target")?;
         if let Some((target_section, target_offset)) = self.labels.get(&symbol) {
+            if self.should_emit_local_branch_reloc(
+                &symbol,
+                fixup.section,
+                *target_section,
+                addend,
+                bits,
+            ) {
+                self.record_pending_reloc(
+                    fixup.section,
+                    fixup.offset,
+                    symbol,
+                    2,
+                    crate::macho::ARM64_RELOC_BRANCH26,
+                    true,
+                );
+                return Ok(());
+            }
             self.ensure_same_section(fixup.section, *target_section, &symbol)?;
             let delta = (*target_offset as i64)
                 .checked_sub(fixup.offset as i64)
@@ -1325,6 +1342,22 @@ impl Assembler {
             true,
         );
         Ok(())
+    }
+
+    fn should_emit_local_branch_reloc(
+        &self,
+        symbol: &str,
+        source_section: usize,
+        target_section: usize,
+        addend: i64,
+        bits: u8,
+    ) -> bool {
+        bits == 26
+            && addend == 0
+            && self.subsections_via_symbols
+            && source_section == target_section
+            && self.sections[target_section].kind == SectionKind::Text
+            && !is_assembler_local_symbol(symbol)
     }
 
     fn resolve_page_fixup(
@@ -3700,6 +3733,28 @@ mod tests {
             .symbols
             .iter()
             .any(|sym| sym.name == "_exit" && sym.undefined));
+    }
+
+    #[test]
+    fn assemble_local_bl_with_subsections_creates_branch_relocation() {
+        let obj = assemble_source(
+            ".text\n\
+             .subsections_via_symbols\n\
+             .globl _entry\n\
+             _entry:\n\
+             bl _helper\n\
+             ret\n\
+             .p2align 2\n\
+             _helper:\n\
+             ret\n",
+        )
+        .unwrap();
+        let text_relocs = text_relocs(&obj);
+        assert_eq!(text_relocs.len(), 1);
+        assert_eq!(text_relocs[0].reloc_type, crate::macho::ARM64_RELOC_BRANCH26);
+        let helper = &obj.symbols[text_relocs[0].symbol_idx as usize];
+        assert_eq!(helper.name, "_helper");
+        assert!(!helper.undefined);
     }
 
     #[test]
