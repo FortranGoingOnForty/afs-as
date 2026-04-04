@@ -267,6 +267,7 @@ impl Assembler {
             Directive::Set(name, expr) => {
                 self.absolute_defs.insert(name.clone(), expr.clone());
             }
+            Directive::Extern(_) => {}
             Directive::Global(name) => {
                 self.symbol_attrs_mut(name).global = true;
             }
@@ -293,6 +294,7 @@ impl Assembler {
                 section.size = align_value(section.size, *n);
             }
             Directive::Byte(vals) => self.reserve_initialized_bytes(vals.len() as u64, ".byte")?,
+            Directive::Short(vals) => self.reserve_initialized_bytes((vals.len() as u64) * 2, ".short")?,
             Directive::Word(vals) => self.reserve_initialized_bytes((vals.len() as u64) * 4, ".word")?,
             Directive::Quad(vals) => self.reserve_initialized_bytes((vals.len() as u64) * 8, ".quad")?,
             Directive::Ascii(bytes) | Directive::Asciz(bytes) => {
@@ -303,6 +305,12 @@ impl Assembler {
                     return Err(AsmError(format!(".space size {} too large (max 64MB)", n)));
                 }
                 self.sections[self.section].size += *n;
+            }
+            Directive::Fill { repeat, size, .. } => {
+                let total = (*repeat)
+                    .checked_mul((*size).into())
+                    .ok_or_else(|| AsmError(".fill size overflows u64".into()))?;
+                self.reserve_initialized_bytes(total, ".fill")?;
             }
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
@@ -317,6 +325,7 @@ impl Assembler {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
             Directive::Set(_ , _)
+            | Directive::Extern(_)
             | Directive::Global(_)
             | Directive::PrivateExtern(_)
             | Directive::WeakReference(_)
@@ -337,6 +346,12 @@ impl Assembler {
                     self.emit_initialized_bytes(&[(value as u8)], ".byte")?;
                 }
             }
+            Directive::Short(vals) => {
+                for expr in vals {
+                    let value = self.require_absolute_expr(expr, ".short expression")?;
+                    self.emit_initialized_bytes(&(value as u16).to_le_bytes(), ".short")?;
+                }
+            }
             Directive::Word(vals) => {
                 for expr in vals {
                     let value = self.require_absolute_expr(expr, ".word expression")?;
@@ -355,6 +370,9 @@ impl Assembler {
                     return Err(AsmError(format!(".space size {} too large (max 64MB)", n)));
                 }
                 self.emit_space(*n)?;
+            }
+            Directive::Fill { repeat, size, value } => {
+                self.emit_fill(*repeat, *size, *value)?;
             }
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
@@ -392,6 +410,28 @@ impl Assembler {
         let new_len = section.data.len() + amount as usize;
         section.data.resize(new_len, 0);
         section.size += amount;
+        Ok(())
+    }
+
+    fn emit_fill(&mut self, repeat: u64, size: u8, value: u64) -> Result<(), AsmError> {
+        let byte_count: usize = size.into();
+        let total = repeat
+            .checked_mul(byte_count as u64)
+            .ok_or_else(|| AsmError(".fill size overflows u64".into()))?;
+        if total > 1024 * 1024 * 64 {
+            return Err(AsmError(format!(".fill size {} too large (max 64MB)", total)));
+        }
+        if byte_count == 0 {
+            return Ok(());
+        }
+        if byte_count > 8 {
+            return Err(AsmError(format!(".fill element size {} too large (max 8)", size)));
+        }
+
+        let pattern = value.to_le_bytes();
+        for _ in 0..repeat {
+            self.emit_initialized_bytes(&pattern[..byte_count], ".fill")?;
+        }
         Ok(())
     }
 
@@ -986,6 +1026,12 @@ mod tests {
     }
 
     #[test]
+    fn assemble_data_directive_short() {
+        let obj = assemble_source(".data\n.short 0x1234, 2\n").unwrap();
+        assert_eq!(data_bytes(&obj), vec![0x34, 0x12, 0x02, 0x00]);
+    }
+
+    #[test]
     fn assemble_data_directive_word() {
         let obj = assemble_source(".data\n.word 42\n").unwrap();
         assert_eq!(data_bytes(&obj), 42u32.to_le_bytes().to_vec());
@@ -1002,6 +1048,32 @@ mod tests {
         let obj = assemble_source(".data\n.space 16\n").unwrap();
         assert_eq!(data_bytes(&obj).len(), 16);
         assert!(data_bytes(&obj).iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn assemble_zero_aliases_space() {
+        let obj = assemble_source(".data\n.zero 3\n").unwrap();
+        assert_eq!(data_bytes(&obj), vec![0, 0, 0]);
+    }
+
+    #[test]
+    fn assemble_fill_repeats_truncated_little_endian_pattern() {
+        let obj = assemble_source(".data\n.fill 2, 2, 0x3344\n").unwrap();
+        assert_eq!(data_bytes(&obj), vec![0x44, 0x33, 0x44, 0x33]);
+    }
+
+    #[test]
+    fn assemble_cstring_switches_to_cstring_section() {
+        let obj = assemble_source(".cstring\nmsg: .asciz \"hello\"\n").unwrap();
+        let cstring = obj.section("__TEXT", "__cstring").unwrap();
+        assert_eq!(cstring.data, b"hello\0");
+        assert_eq!(obj.symbols.iter().find(|sym| sym.name == "msg").unwrap().value, 0);
+    }
+
+    #[test]
+    fn assemble_extern_declaration_does_not_emit_symbol_by_itself() {
+        let obj = assemble_source(".extern _puts\n.text\nret\n").unwrap();
+        assert!(!obj.symbols.iter().any(|sym| sym.name == "_puts"));
     }
 
     #[test]

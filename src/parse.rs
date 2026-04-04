@@ -47,6 +47,7 @@ pub enum RelocKind {
 pub enum Directive {
     Text,
     Data,
+    Extern(String),
     Global(String),
     PrivateExtern(String),
     WeakReference(String),
@@ -55,11 +56,13 @@ pub enum Directive {
     Align(u32),
     P2Align(u32),
     Byte(Vec<Expr>),
+    Short(Vec<Expr>),
     Word(Vec<Expr>),
     Quad(Vec<Expr>),
     Ascii(Vec<u8>),
     Asciz(Vec<u8>),
     Space(u64),
+    Fill { repeat: u64, size: u8, value: u64 },
     Section(String, String),
     SubsectionsViaSymbols,
     BuildVersion { platform: String, version: String },
@@ -224,6 +227,11 @@ impl<'a> Parser<'a> {
         let dir = match name {
             ".text" => Directive::Text,
             ".data" => Directive::Data,
+            ".cstring" => Directive::Section("__TEXT".into(), "__cstring".into()),
+            ".extern" => {
+                let sym = self.expect_ident()?;
+                Directive::Extern(sym)
+            }
             ".global" | ".globl" => {
                 let sym = self.expect_ident()?;
                 Directive::Global(sym)
@@ -262,6 +270,9 @@ impl<'a> Parser<'a> {
             ".byte" => {
                 Directive::Byte(self.parse_expr_list()?)
             }
+            ".short" => {
+                Directive::Short(self.parse_expr_list()?)
+            }
             ".word" | ".long" => {
                 Directive::Word(self.parse_expr_list()?)
             }
@@ -289,6 +300,21 @@ impl<'a> Parser<'a> {
             ".space" | ".skip" => {
                 let n = self.parse_const_expr("space expression")? as u64;
                 Directive::Space(n)
+            }
+            ".zero" => {
+                let n = self.parse_const_expr("zero expression")? as u64;
+                Directive::Space(n)
+            }
+            ".fill" => {
+                let repeat = self.parse_const_expr("fill repeat expression")? as u64;
+                self.expect(&Tok::Comma)?;
+                let size = self.parse_const_expr("fill size expression")? as u8;
+                let value = if self.eat(&Tok::Comma) {
+                    self.parse_const_expr("fill value expression")? as u64
+                } else {
+                    0
+                };
+                Directive::Fill { repeat, size, value }
             }
             ".section" => {
                 let seg = self.expect_ident()?;
@@ -1466,6 +1492,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_extern_directive() {
+        let stmts = parse_stmts(".extern _puts");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Extern("_puts".into()))]);
+    }
+
+    #[test]
     fn parse_private_extern_directive() {
         let stmts = parse_stmts(".private_extern _hidden");
         assert_eq!(stmts, vec![Stmt::Directive(Directive::PrivateExtern("_hidden".into()))]);
@@ -1533,6 +1565,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_short_directive() {
+        let stmts = parse_stmts(".short 0x1234, 2");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Short(vec![Expr::Int(0x1234), Expr::Int(2)]))]
+        );
+    }
+
+    #[test]
     fn parse_word_directive_expression() {
         let stmts = parse_stmts(".word 1 + 2 - 3");
         assert_eq!(
@@ -1560,6 +1601,34 @@ mod tests {
     fn parse_space_directive_expression() {
         let stmts = parse_stmts(".space (2 + 3)");
         assert_eq!(stmts, vec![Stmt::Directive(Directive::Space(5))]);
+    }
+
+    #[test]
+    fn parse_zero_directive() {
+        let stmts = parse_stmts(".zero 3");
+        assert_eq!(stmts, vec![Stmt::Directive(Directive::Space(3))]);
+    }
+
+    #[test]
+    fn parse_fill_directive() {
+        let stmts = parse_stmts(".fill 2, 2, 0x3344");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Fill {
+                repeat: 2,
+                size: 2,
+                value: 0x3344,
+            })]
+        );
+    }
+
+    #[test]
+    fn parse_cstring_directive() {
+        let stmts = parse_stmts(".cstring");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section("__TEXT".into(), "__cstring".into()))]
+        );
     }
 
     #[test]
