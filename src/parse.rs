@@ -4,7 +4,7 @@
 //! labels, and directives. Resolves instruction aliases (cmp, mov, tst, etc.)
 //! to their canonical forms.
 
-use crate::encode::Inst;
+use crate::encode::{AddrExtend, Inst};
 use crate::expr::{self, Expr};
 use crate::lex::{Tok, Token, Lexer, LexError};
 use crate::reg::*;
@@ -40,6 +40,8 @@ pub enum RelocKind {
     Branch26,
     /// B.cond / CBZ / CBNZ — assembler-resolved 19-bit branch immediate
     Branch19,
+    /// LDR literal — assembler-resolved 19-bit PC-relative load
+    Literal19,
 }
 
 /// Assembly directives.
@@ -612,6 +614,15 @@ impl<'a> Parser<'a> {
         if mnemonic == "cbnz" {
             return self.parse_cbz(true);
         }
+        if mnemonic == "ldr" {
+            return self.parse_ldr_str(true);
+        }
+        if mnemonic == "str" {
+            return self.parse_ldr_str(false);
+        }
+        if mnemonic == "ldrsw" {
+            return self.parse_ldrsw();
+        }
         if let Some(cond) = mnemonic.strip_prefix("b.") {
             return self.parse_bcond(cond);
         }
@@ -656,11 +667,8 @@ impl<'a> Parser<'a> {
             "blr" => { let rn = self.parse_gp_reg()?; Ok(Inst::Blr { rn }) }
 
             // Load/store
-            "ldr" => self.parse_ldr_str(true),
-            "str" => self.parse_ldr_str(false),
             "ldrb" => self.parse_ldrb_h("ldrb"),
             "ldrh" => self.parse_ldrb_h("ldrh"),
-            "ldrsw" => self.parse_ldrb_h("ldrsw"),
             "stp" => self.parse_ldp_stp(false),
             "ldp" => self.parse_ldp_stp(true),
 
@@ -1071,16 +1079,35 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_ldr_str(&mut self, is_load: bool) -> Result<Inst, ParseError> {
+    fn parse_ldr_str(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
 
-        // Detect label references for LDR (literal pool loads like `ldr x0, =label`).
-        // LDR-literal has a different encoding than base+offset — not yet supported.
-        if self.starts_non_register_symbol_reference() {
-            return Err(self.err(
-                "LDR/STR with label reference not yet supported; use ADRP+ADD+LDR pattern instead".into()
+        if is_load && self.starts_immediate_expr() {
+            let offset = self.parse_immediate_const_expr("ldr literal offset")? as i32;
+            let inst = if sf {
+                Inst::LdrLit64 { rt, offset }
+            } else {
+                Inst::LdrLit32 { rt, offset }
+            };
+            return Ok(Stmt::Instruction(inst));
+        }
+
+        if is_load && self.starts_non_register_symbol_reference() {
+            let label = self.parse_label_reference()?;
+            let inst = if sf {
+                Inst::LdrLit64 { rt, offset: 0 }
+            } else {
+                Inst::LdrLit32 { rt, offset: 0 }
+            };
+            return Ok(Stmt::InstructionWithReloc(
+                inst,
+                LabelRef { symbol: label, kind: RelocKind::Literal19 },
             ));
+        }
+
+        if !is_load && self.peek() != &Tok::LBracket {
+            return Err(self.err("STR expects a bracketed memory operand".into()));
         }
 
         self.expect(&Tok::LBracket)?;
@@ -1090,47 +1117,67 @@ impl<'a> Parser<'a> {
             // [Xn] or [Xn], #off (post-index)
             if self.eat(&Tok::Comma) {
                 let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
-                return Ok(if sf {
+                let inst = if sf {
                     if is_load { Inst::LdrPost64 { rt, rn, offset } }
                     else { Inst::StrPost64 { rt, rn, offset } }
                 } else {
                     // 32-bit post-index not yet in Inst — use 64-bit for now.
                     if is_load { Inst::LdrPost64 { rt, rn, offset } }
                     else { Inst::StrPost64 { rt, rn, offset } }
-                });
+                };
+                return Ok(Stmt::Instruction(inst));
             }
             // [Xn] with no offset → unsigned offset 0
-            return Ok(if sf {
+            let inst = if sf {
                 if is_load { Inst::LdrImm64 { rt, rn, offset: 0 } }
                 else { Inst::StrImm64 { rt, rn, offset: 0 } }
             } else {
                 if is_load { Inst::LdrImm32 { rt, rn, offset: 0 } }
                 else { Inst::StrImm32 { rt, rn, offset: 0 } }
-            });
+            };
+            return Ok(Stmt::Instruction(inst));
         }
 
         self.expect(&Tok::Comma)?;
-        // Could be: register offset or immediate offset
+        if self.starts_register_like_operand() {
+            let (rm, extend, shift) = self.parse_reg_offset_operand(if sf { 3 } else { 2 })?;
+            self.expect(&Tok::RBracket)?;
+            let inst = if sf {
+                if is_load {
+                    Inst::LdrReg64 { rt, rn, rm, extend, shift }
+                } else {
+                    Inst::StrReg64 { rt, rn, rm, extend, shift }
+                }
+            } else if is_load {
+                Inst::LdrReg32 { rt, rn, rm, extend, shift }
+            } else {
+                Inst::StrReg32 { rt, rn, rm, extend, shift }
+            };
+            return Ok(Stmt::Instruction(inst));
+        }
+
         let offset = self.parse_immediate_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
             // Pre-index: [Xn, #off]!
-            return Ok(if is_load {
+            let inst = if is_load {
                 Inst::LdrPre64 { rt, rn, offset: offset as i16 }
             } else {
                 Inst::StrPre64 { rt, rn, offset: offset as i16 }
-            });
+            };
+            return Ok(Stmt::Instruction(inst));
         }
 
         // Unsigned offset: [Xn, #off]
-        Ok(if sf {
+        let inst = if sf {
             if is_load { Inst::LdrImm64 { rt, rn, offset: offset as u16 } }
             else { Inst::StrImm64 { rt, rn, offset: offset as u16 } }
         } else {
             if is_load { Inst::LdrImm32 { rt, rn, offset: offset as u16 } }
             else { Inst::StrImm32 { rt, rn, offset: offset as u16 } }
-        })
+        };
+        Ok(Stmt::Instruction(inst))
     }
 
     fn parse_ldrb_h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -1139,6 +1186,20 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::LBracket)?;
         let rn = self.parse_gp_reg()?;
         let offset = if self.eat(&Tok::Comma) {
+            if self.starts_register_like_operand() {
+                let scale = match mnemonic {
+                    "ldrb" => 0,
+                    "ldrh" => 1,
+                    _ => unreachable!(),
+                };
+                let (rm, extend, shift) = self.parse_reg_offset_operand(scale)?;
+                self.expect(&Tok::RBracket)?;
+                return Ok(match mnemonic {
+                    "ldrb" => Inst::LdrbReg { rt, rn, rm, extend, shift },
+                    "ldrh" => Inst::LdrhReg { rt, rn, rm, extend, shift },
+                    _ => unreachable!(),
+                });
+            }
             self.parse_immediate_const_expr("memory offset")?
         } else {
             0
@@ -1147,9 +1208,44 @@ impl<'a> Parser<'a> {
         Ok(match mnemonic {
             "ldrb" => Inst::Ldrb { rt, rn, offset: offset as u16 },
             "ldrh" => Inst::Ldrh { rt, rn, offset: offset as u16 },
-            "ldrsw" => Inst::Ldrsw { rt, rn, offset: offset as u16 },
             _ => unreachable!(),
         })
+    }
+
+    fn parse_ldrsw(&mut self) -> Result<Stmt, ParseError> {
+        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        if !sf {
+            return Err(self.err("ldrsw destination must be an x-register".into()));
+        }
+        self.expect(&Tok::Comma)?;
+
+        if self.starts_immediate_expr() {
+            let offset = self.parse_immediate_const_expr("ldrsw literal offset")? as i32;
+            return Ok(Stmt::Instruction(Inst::LdrswLit { rt, offset }));
+        }
+
+        if self.starts_non_register_symbol_reference() {
+            let label = self.parse_label_reference()?;
+            return Ok(Stmt::InstructionWithReloc(
+                Inst::LdrswLit { rt, offset: 0 },
+                LabelRef { symbol: label, kind: RelocKind::Literal19 },
+            ));
+        }
+
+        self.expect(&Tok::LBracket)?;
+        let rn = self.parse_gp_reg()?;
+        let offset = if self.eat(&Tok::Comma) {
+            if self.starts_register_like_operand() {
+                let (rm, extend, shift) = self.parse_reg_offset_operand(2)?;
+                self.expect(&Tok::RBracket)?;
+                return Ok(Stmt::Instruction(Inst::LdrswReg { rt, rn, rm, extend, shift }));
+            }
+            self.parse_immediate_const_expr("memory offset")?
+        } else {
+            0
+        };
+        self.expect(&Tok::RBracket)?;
+        Ok(Stmt::Instruction(Inst::Ldrsw { rt, rn, offset: offset as u16 }))
     }
 
     fn parse_ldp_stp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
@@ -1319,6 +1415,61 @@ impl<'a> Parser<'a> {
             Ok(0)
         }
     }
+
+    fn starts_register_like_operand(&self) -> bool {
+        matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
+    }
+
+    fn parse_reg_offset_operand(
+        &mut self,
+        scale: u8,
+    ) -> Result<(GpReg, AddrExtend, bool), ParseError> {
+        let (rm, is_64bit) = self.parse_gp_reg_with_size()?;
+        let mut extend = AddrExtend::Lsl;
+        let mut shift = false;
+
+        if self.eat(&Tok::Comma) {
+            let modifier = self.expect_ident()?.to_lowercase();
+            extend = match modifier.as_str() {
+                "lsl" if is_64bit => AddrExtend::Lsl,
+                "uxtw" if !is_64bit => AddrExtend::Uxtw,
+                "sxtw" if !is_64bit => AddrExtend::Sxtw,
+                "sxtx" if is_64bit => AddrExtend::Sxtx,
+                "lsl" => {
+                    return Err(self.err("lsl register offsets require an x-register index".into()));
+                }
+                "uxtw" | "sxtw" => {
+                    return Err(self.err(format!(
+                        "{} register offsets require a w-register index",
+                        modifier
+                    )));
+                }
+                "sxtx" => {
+                    return Err(self.err("sxtx register offsets require an x-register index".into()));
+                }
+                _ => {
+                    return Err(self.err(format!(
+                        "unsupported register offset modifier '{}'",
+                        modifier
+                    )));
+                }
+            };
+
+            let amount = if self.starts_immediate_expr() {
+                self.parse_immediate_const_expr("register offset shift")? as u8
+            } else {
+                0
+            };
+            shift = parse_index_shift(amount, scale)
+                .map_err(|msg| self.err(format!("{} for {}", msg, modifier)))?;
+        } else if !is_64bit {
+            return Err(self.err(
+                "32-bit register offsets require an explicit uxtw or sxtw modifier".into()
+            ));
+        }
+
+        Ok((rm, extend, shift))
+    }
 }
 
 // ---- Name resolution helpers ----
@@ -1412,6 +1563,14 @@ fn invert_condition(cond: Cond) -> Cond {
         Cond::LE => Cond::GT,
         Cond::AL => Cond::NV,
         Cond::NV => Cond::AL,
+    }
+}
+
+fn parse_index_shift(amount: u8, scale: u8) -> Result<bool, &'static str> {
+    match amount {
+        0 => Ok(false),
+        value if value == scale => Ok(true),
+        _ => Err("register offset shift must be omitted, #0, or the element scale"),
     }
 }
 
@@ -1613,8 +1772,32 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldr_register_offset() {
+        assert_eq!(
+            parse_inst("ldr x0, [x1, x2]"),
+            Inst::LdrReg64 { rt: X0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_register_offset_with_extend() {
+        assert_eq!(
+            parse_inst("ldr x6, [x7, w8, uxtw #3]"),
+            Inst::LdrReg64 { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Uxtw, shift: true }
+        );
+    }
+
+    #[test]
     fn parse_str_offset() {
         assert_eq!(parse_inst("str x2, [x3, #16]"), Inst::StrImm64 { rt: X2, rn: X3, offset: 16 });
+    }
+
+    #[test]
+    fn parse_str_register_offset() {
+        assert_eq!(
+            parse_inst("str w9, [x10, x11]"),
+            Inst::StrReg32 { rt: W9, rn: X10, rm: X11, extend: AddrExtend::Lsl, shift: false }
+        );
     }
 
     #[test]
@@ -1625,6 +1808,90 @@ mod tests {
     #[test]
     fn parse_ldrb_() {
         assert_eq!(parse_inst("ldrb w0, [x1, #3]"), Inst::Ldrb { rt: W0, rn: X1, offset: 3 });
+    }
+
+    #[test]
+    fn parse_ldrb_register_offset() {
+        assert_eq!(
+            parse_inst("ldrb w0, [x1, x2]"),
+            Inst::LdrbReg { rt: W0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }
+        );
+    }
+
+    #[test]
+    fn parse_ldrh_register_offset() {
+        assert_eq!(
+            parse_inst("ldrh w3, [x4, w5, uxtw #1]"),
+            Inst::LdrhReg { rt: W3, rn: X4, rm: W5, extend: AddrExtend::Uxtw, shift: true }
+        );
+    }
+
+    #[test]
+    fn parse_ldrsw_register_offset() {
+        assert_eq!(
+            parse_inst("ldrsw x6, [x7, w8, sxtw #2]"),
+            Inst::LdrswReg { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Sxtw, shift: true }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_literal_label() {
+        assert_eq!(
+            parse_stmts("ldr x0, target"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::LdrLit64 { rt: X0, offset: 0 },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_ldr_literal_offset() {
+        assert_eq!(parse_inst("ldr x0, #8"), Inst::LdrLit64 { rt: X0, offset: 8 });
+    }
+
+    #[test]
+    fn parse_ldr_literal_numeric_local_label() {
+        assert_eq!(
+            parse_stmts("ldr x0, 1f\n1:\n"),
+            vec![
+                Stmt::InstructionWithReloc(
+                    Inst::LdrLit64 { rt: X0, offset: 0 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19 },
+                ),
+                Stmt::Label(".Ltmp$1$1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_ldrsw_literal_label() {
+        assert_eq!(
+            parse_stmts("ldrsw x0, target"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::LdrswLit { rt: X0, offset: 0 },
+                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_ldrsw_literal_offset() {
+        assert_eq!(parse_inst("ldrsw x1, #12"), Inst::LdrswLit { rt: X1, offset: 12 });
+    }
+
+    #[test]
+    fn parse_ldrsw_literal_numeric_local_label() {
+        assert_eq!(
+            parse_stmts("ldrsw x0, 1f\n1:\n"),
+            vec![
+                Stmt::InstructionWithReloc(
+                    Inst::LdrswLit { rt: X0, offset: 0 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19 },
+                ),
+                Stmt::Label(".Ltmp$1$1".into()),
+            ]
+        );
     }
 
     #[test]
@@ -2044,11 +2311,11 @@ _main:
     }
 
     #[test]
-    fn error_ldr_literal_not_supported() {
-        let result = parse("ldr x0, some_label");
+    fn error_str_requires_bracketed_operand() {
+        let result = parse("str x0, some_label");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.msg.contains("not yet supported"), "got: {}", err.msg);
+        assert!(err.msg.contains("bracketed memory operand"), "got: {}", err.msg);
     }
 
     #[test]

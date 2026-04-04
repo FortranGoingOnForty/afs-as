@@ -150,6 +150,7 @@ struct Fixup {
 enum FixupKind {
     Branch26(Inst),
     Branch19(Inst),
+    Literal19(Inst),
     Page21,
     PageOff12,
     Data64,
@@ -256,6 +257,7 @@ impl Assembler {
                             RelocKind::PageOff12 => FixupKind::PageOff12,
                             RelocKind::Branch26 => FixupKind::Branch26(inst.clone()),
                             RelocKind::Branch19 => FixupKind::Branch19(inst.clone()),
+                            RelocKind::Literal19 => FixupKind::Literal19(inst.clone()),
                         },
                     });
                 }
@@ -535,6 +537,7 @@ impl Assembler {
             match fixup.kind.clone() {
                 FixupKind::Branch26(template) => self.resolve_branch_or_reloc(fixup, template, 26, true)?,
                 FixupKind::Branch19(template) => self.resolve_branch_or_reloc(fixup, template, 19, false)?,
+                FixupKind::Literal19(template) => self.resolve_literal_fixup(fixup, template)?,
                 FixupKind::Page21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true)?,
                 FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false)?,
                 FixupKind::Data64 => self.resolve_data64_fixup(fixup)?,
@@ -601,6 +604,24 @@ impl Assembler {
             )));
         }
         self.record_pending_reloc(fixup.section, fixup.offset, symbol, 2, reloc_type, pcrel);
+        Ok(())
+    }
+
+    fn resolve_literal_fixup(&mut self, fixup: Fixup, template: Inst) -> Result<(), AsmError> {
+        let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, "ldr literal target")?;
+        let Some((target_section, target_offset)) = self.labels.get(&symbol) else {
+            return Err(AsmError(format!(
+                "ldr literal target '{}' requires an assembler-local label",
+                symbol
+            )));
+        };
+        self.ensure_same_section(fixup.section, *target_section, &symbol)?;
+        let delta = (*target_offset as i64)
+            .checked_sub(fixup.offset as i64)
+            .and_then(|value| value.checked_add(addend))
+            .ok_or_else(|| AsmError("ldr literal offset overflows i64".into()))?;
+        let resolved = self.resolve_literal_inst(&template, delta)?;
+        self.patch_section_data(fixup.section, fixup.offset, &resolved.encode().to_le_bytes(), "ldr literal fixup")?;
         Ok(())
     }
 
@@ -849,6 +870,16 @@ impl Assembler {
             Inst::Cbz { rt, sf, .. } => Ok(Inst::Cbz { rt: *rt, offset: checked, sf: *sf }),
             Inst::Cbnz { rt, sf, .. } => Ok(Inst::Cbnz { rt: *rt, offset: checked, sf: *sf }),
             _ => Err(AsmError("internal error: invalid branch fixup instruction".into())),
+        }
+    }
+
+    fn resolve_literal_inst(&self, inst: &Inst, offset: i64) -> Result<Inst, AsmError> {
+        let checked = check_branch_offset(offset, 19)?;
+        match inst {
+            Inst::LdrLit64 { rt, .. } => Ok(Inst::LdrLit64 { rt: *rt, offset: checked }),
+            Inst::LdrLit32 { rt, .. } => Ok(Inst::LdrLit32 { rt: *rt, offset: checked }),
+            Inst::LdrswLit { rt, .. } => Ok(Inst::LdrswLit { rt: *rt, offset: checked }),
+            _ => Err(AsmError("internal error: invalid literal fixup instruction".into())),
         }
     }
 
@@ -1695,6 +1726,30 @@ mod tests {
     fn assemble_local_cbz_label() {
         let obj = assemble_source(".text\nstart:\ncbz x0, done\nret\ndone:\nret\n").unwrap();
         assert_eq!(&text_bytes(&obj)[0..4], &Inst::Cbz { rt: X0, offset: 8, sf: true }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_ldr_literal_local_label() {
+        let obj = assemble_source(".text\nldr x0, target\nret\n.p2align 3\ntarget:\n.quad 42\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrLit64 { rt: X0, offset: 8 }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_ldrsw_literal_local_label() {
+        let obj = assemble_source(".text\nldrsw x0, target\nret\ntarget:\n.word -1\n").unwrap();
+        assert_eq!(&text_bytes(&obj)[0..4], &Inst::LdrswLit { rt: X0, offset: 8 }.encode().to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_ldr_literal_requires_local_label() {
+        let err = assemble_source(".text\nldr x0, _ext\n").unwrap_err();
+        assert!(err.0.contains("assembler-local label"), "got: {}", err.0);
+    }
+
+    #[test]
+    fn assemble_ldr_literal_requires_same_section() {
+        let err = assemble_source(".text\nldr x0, target\n.data\ntarget: .quad 42\n").unwrap_err();
+        assert!(err.0.contains("current section"), "got: {}", err.0);
     }
 
     #[test]
