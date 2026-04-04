@@ -36,10 +36,14 @@ pub enum RelocKind {
     Page21,
     /// ADRP — page-relative to GOT slot page (ARM64_RELOC_GOT_LOAD_PAGE21)
     GotLoadPage21,
+    /// ADRP — page-relative to TLVP slot page (ARM64_RELOC_TLVP_LOAD_PAGE21)
+    TlvpLoadPage21,
     /// ADD/LDR — page offset (ARM64_RELOC_PAGEOFF12)
     PageOff12,
     /// LDR — page offset to GOT slot (ARM64_RELOC_GOT_LOAD_PAGEOFF12)
     GotLoadPageOff12,
+    /// LDR — page offset to TLVP slot (ARM64_RELOC_TLVP_LOAD_PAGEOFF12)
+    TlvpLoadPageOff12,
     /// B/BL — branch (ARM64_RELOC_BRANCH26)
     Branch26,
     /// B.cond / CBZ / CBNZ — assembler-resolved 19-bit branch immediate
@@ -1453,6 +1457,7 @@ impl<'a> Parser<'a> {
                 &[
                     ("PAGE", RelocKind::Page21),
                     ("GOTPAGE", RelocKind::GotLoadPage21),
+                    ("TLVPPAGE", RelocKind::TlvpLoadPage21),
                 ],
                 "adrp symbol operand",
             )?;
@@ -1536,6 +1541,7 @@ impl<'a> Parser<'a> {
                 &[
                     ("PAGEOFF", RelocKind::PageOff12),
                     ("GOTPAGEOFF", RelocKind::GotLoadPageOff12),
+                    ("TLVPPAGEOFF", RelocKind::TlvpLoadPageOff12),
                 ][..]
             } else {
                 &[("PAGEOFF", RelocKind::PageOff12)][..]
@@ -3660,6 +3666,31 @@ _main:
                 LabelRef {
                     symbol: "_ext_global".into(),
                     kind: RelocKind::GotLoadPageOff12,
+                },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_adrp_tlvppage() {
+        assert_eq!(
+            parse_stmts("adrp x0, _tls_counter@TLVPPAGE"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::Adrp { rd: X0, imm: 0 },
+                LabelRef { symbol: "_tls_counter".into(), kind: RelocKind::TlvpLoadPage21 },
+            )]
+        );
+    }
+
+    #[test]
+    fn parse_ldr_tlvppageoff_memory_operand() {
+        assert_eq!(
+            parse_stmts("ldr x0, [x0, _tls_counter@TLVPPAGEOFF]"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::LdrImm64 { rt: X0, rn: X0, offset: 0 },
+                LabelRef {
+                    symbol: "_tls_counter".into(),
+                    kind: RelocKind::TlvpLoadPageOff12,
                 },
             )]
         );

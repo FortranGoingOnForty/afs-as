@@ -166,8 +166,10 @@ enum FixupKind {
     Adr21(Inst),
     Page21,
     GotLoadPage21,
+    TlvpLoadPage21,
     PageOff12,
     GotLoadPageOff12,
+    TlvpLoadPageOff12,
     Data64,
 }
 
@@ -473,8 +475,10 @@ impl Assembler {
                         kind: match label_ref.kind {
                             RelocKind::Page21 => FixupKind::Page21,
                             RelocKind::GotLoadPage21 => FixupKind::GotLoadPage21,
+                            RelocKind::TlvpLoadPage21 => FixupKind::TlvpLoadPage21,
                             RelocKind::PageOff12 => FixupKind::PageOff12,
                             RelocKind::GotLoadPageOff12 => FixupKind::GotLoadPageOff12,
+                            RelocKind::TlvpLoadPageOff12 => FixupKind::TlvpLoadPageOff12,
                             RelocKind::Branch26 => FixupKind::Branch26(inst.clone()),
                             RelocKind::Branch19 => FixupKind::Branch19(inst.clone()),
                             RelocKind::Branch14 => FixupKind::Branch14(inst.clone()),
@@ -979,8 +983,10 @@ impl Assembler {
                 FixupKind::Adr21(template) => self.resolve_adr_fixup(fixup, template)?,
                 FixupKind::Page21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGE21, true)?,
                 FixupKind::GotLoadPage21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGE21, true)?,
+                FixupKind::TlvpLoadPage21 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGE21, true)?,
                 FixupKind::PageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_PAGEOFF12, false)?,
                 FixupKind::GotLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_GOT_LOAD_PAGEOFF12, false)?,
+                FixupKind::TlvpLoadPageOff12 => self.resolve_page_fixup(fixup, crate::macho::ARM64_RELOC_TLVP_LOAD_PAGEOFF12, false)?,
                 FixupKind::Data64 => self.resolve_data64_fixup(fixup)?,
             }
         }
@@ -2717,6 +2723,32 @@ mod tests {
             .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
             .collect();
         assert_eq!(reloc_syms, vec!["_puts", "_puts"]);
+    }
+
+    #[test]
+    fn assemble_tlvp_load_reloc_uses_tlvp_types() {
+        let obj = assemble_source(
+            ".global _load_tls\n.text\n_load_tls:\nadrp x0, _tls_counter@TLVPPAGE\nldr x0, [x0, _tls_counter@TLVPPAGEOFF]\nret\n"
+        ).unwrap();
+
+        let tls_counter = obj.symbols.iter().find(|sym| sym.name == "_tls_counter").unwrap();
+        assert!(tls_counter.undefined);
+        assert!(tls_counter.global);
+
+        let relocs = text_relocs(&obj);
+        let reloc_types: Vec<_> = relocs.iter().map(|rel| rel.reloc_type).collect();
+        assert_eq!(
+            reloc_types,
+            vec![
+                crate::macho::ARM64_RELOC_TLVP_LOAD_PAGE21,
+                crate::macho::ARM64_RELOC_TLVP_LOAD_PAGEOFF12,
+            ]
+        );
+        let reloc_syms: Vec<_> = relocs
+            .iter()
+            .map(|rel| obj.symbols[rel.symbol_idx as usize].name.as_str())
+            .collect();
+        assert_eq!(reloc_syms, vec!["_tls_counter", "_tls_counter"]);
     }
 
     #[test]
