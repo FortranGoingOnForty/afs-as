@@ -164,6 +164,20 @@ fn corpus_clang_extern_call_matches_raw_object() {
 }
 
 #[test]
+fn corpus_clang_local_branch_matches_raw_object() {
+    let paths = assemble_fixture("clang_local_branch.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_load_commands(&paths.obj)),
+        normalize_tool_output(&common::object_load_commands(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
 fn corpus_shifted_addsub_matches_text_bytes() {
     let paths = assemble_fixture("shifted_addsub.s");
     assert_eq!(
