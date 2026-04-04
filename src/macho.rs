@@ -25,6 +25,8 @@ const S_REGULAR: u32 = 0x0;
 const S_ZEROFILL: u32 = 0x1;
 const S_CSTRING_LITERALS: u32 = 0x2;
 const S_COALESCED: u32 = 0x0B;
+const S_THREAD_LOCAL_REGULAR: u32 = 0x11;
+const S_THREAD_LOCAL_VARIABLES: u32 = 0x13;
 const S_ATTR_DEBUG: u32 = 0x02000000;
 const S_ATTR_LIVE_SUPPORT: u32 = 0x08000000;
 const S_ATTR_STRIP_STATIC_SYMS: u32 = 0x20000000;
@@ -89,9 +91,9 @@ impl Default for BuildVersion {
 #[derive(Debug, Clone)]
 pub struct Symbol {
     pub name: String,
-    pub section: u8,    // 1-based section index, or 0 for N_UNDF
-    pub value: u64,     // offset within section
-    pub global: bool,   // N_EXT flag
+    pub section: u8,     // 1-based section index, or 0 for N_UNDF
+    pub value: u64,      // offset within section
+    pub global: bool,    // N_EXT flag
     pub undefined: bool, // true for external references
     pub absolute: bool,
     pub common: bool,
@@ -104,12 +106,12 @@ pub struct Symbol {
 /// A relocation entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relocation {
-    pub offset: u32,       // byte offset in section
-    pub symbol_idx: u32,   // index into symbol table
-    pub pcrel: bool,       // PC-relative?
-    pub length: u8,        // 2 = 4 bytes (32-bit)
-    pub extern_: bool,     // true = symbol index, false = section number
-    pub reloc_type: u32,   // ARM64_RELOC_*
+    pub offset: u32,     // byte offset in section
+    pub symbol_idx: u32, // index into symbol table
+    pub pcrel: bool,     // PC-relative?
+    pub length: u8,      // 2 = 4 bytes (32-bit)
+    pub extern_: bool,   // true = symbol index, false = section number
+    pub reloc_type: u32, // ARM64_RELOC_*
 }
 
 /// Supported Mach-O section kinds.
@@ -119,6 +121,8 @@ pub enum SectionKind {
     Data,
     CStringLiterals,
     ConstData,
+    ThreadLocalData,
+    ThreadLocalVariables,
     CompactUnwind,
     EhFrame,
     ZeroFill,
@@ -127,13 +131,19 @@ pub enum SectionKind {
 impl SectionKind {
     fn flags(&self, size: u64, has_instructions: bool) -> u32 {
         match self {
-            Self::Text if has_instructions => S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS,
+            Self::Text if has_instructions => {
+                S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+            }
             Self::Text if size == 0 => S_ATTR_PURE_INSTRUCTIONS,
             Self::Text => S_ATTR_PURE_INSTRUCTIONS,
             Self::CStringLiterals => S_CSTRING_LITERALS,
             Self::CompactUnwind => S_REGULAR | S_ATTR_DEBUG,
-            Self::EhFrame => S_COALESCED | S_ATTR_NO_TOC | S_ATTR_STRIP_STATIC_SYMS | S_ATTR_LIVE_SUPPORT,
+            Self::EhFrame => {
+                S_COALESCED | S_ATTR_NO_TOC | S_ATTR_STRIP_STATIC_SYMS | S_ATTR_LIVE_SUPPORT
+            }
             Self::ZeroFill => S_ZEROFILL,
+            Self::ThreadLocalData => S_THREAD_LOCAL_REGULAR,
+            Self::ThreadLocalVariables => S_THREAD_LOCAL_VARIABLES,
             Self::Data | Self::ConstData => S_REGULAR,
         }
     }
@@ -175,7 +185,11 @@ impl Section {
     }
 
     pub fn file_size(&self) -> u64 {
-        if self.kind.is_zerofill() { 0 } else { self.size }
+        if self.kind.is_zerofill() {
+            0
+        } else {
+            self.size
+        }
     }
 }
 
@@ -209,19 +223,25 @@ impl ObjectFile {
     }
 
     pub fn section(&self, segment: &str, name: &str) -> Option<&Section> {
-        self.sections.iter().find(|section| section.segment == segment && section.name == name)
+        self.sections
+            .iter()
+            .find(|section| section.segment == segment && section.name == name)
     }
 
     pub fn section_mut(&mut self, segment: &str, name: &str) -> Option<&mut Section> {
-        self.sections.iter_mut().find(|section| section.segment == segment && section.name == name)
+        self.sections
+            .iter_mut()
+            .find(|section| section.segment == segment && section.name == name)
     }
 
     pub fn text_section(&self) -> &Section {
-        self.section("__TEXT", "__text").expect("missing __TEXT,__text section")
+        self.section("__TEXT", "__text")
+            .expect("missing __TEXT,__text section")
     }
 
     pub fn text_section_mut(&mut self) -> &mut Section {
-        self.section_mut("__TEXT", "__text").expect("missing __TEXT,__text section")
+        self.section_mut("__TEXT", "__text")
+            .expect("missing __TEXT,__text section")
     }
 }
 
@@ -319,8 +339,16 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     let strsize = strtab.bytes.len() as u32;
 
     // Classify symbols for LC_DYSYMTAB.
-    let nlocalsym = obj.symbols.iter().filter(|s| !s.global && !s.undefined).count() as u32;
-    let nextdefsym = obj.symbols.iter().filter(|s| s.global && !s.undefined).count() as u32;
+    let nlocalsym = obj
+        .symbols
+        .iter()
+        .filter(|s| !s.global && !s.undefined)
+        .count() as u32;
+    let nextdefsym = obj
+        .symbols
+        .iter()
+        .filter(|s| s.global && !s.undefined)
+        .count() as u32;
     let nundefsym = obj.symbols.iter().filter(|s| s.undefined).count() as u32;
 
     let segment_fileoff = layouts
@@ -357,15 +385,15 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- LC_SEGMENT_64 ----
     write_u32(w, LC_SEGMENT_64)?;
     write_u32(w, segment_cmdsize)?;
-    write_pad16(w, b"")?;           // segname (empty for object files)
-    write_u64(w, 0)?;               // vmaddr
-    write_u64(w, vmsize)?;          // vmsize
+    write_pad16(w, b"")?; // segname (empty for object files)
+    write_u64(w, 0)?; // vmaddr
+    write_u64(w, vmsize)?; // vmsize
     write_u64(w, segment_fileoff as u64)?; // fileoff
     write_u64(w, filesize as u64)?; // filesize
-    write_u32(w, 7)?;               // maxprot (rwx)
-    write_u32(w, 7)?;               // initprot (rwx)
+    write_u32(w, 7)?; // maxprot (rwx)
+    write_u32(w, 7)?; // initprot (rwx)
     write_u32(w, nsects)?;
-    write_u32(w, 0)?;               // flags
+    write_u32(w, 0)?; // flags
 
     for (section, layout) in obj.sections.iter().zip(&layouts) {
         write_pad16(w, section.name.as_bytes())?;
@@ -376,7 +404,10 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         write_u32(w, section.align_pow2)?;
         write_u32(w, layout.reloff)?;
         write_u32(w, layout.nreloc)?;
-        write_u32(w, section.kind.flags(section.size, section.has_instructions))?;
+        write_u32(
+            w,
+            section.kind.flags(section.size, section.has_instructions),
+        )?;
         write_u32(w, 0)?;
         write_u32(w, 0)?;
         write_u32(w, 0)?;
@@ -388,7 +419,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     write_u32(w, obj.build_version.platform)?;
     write_u32(w, obj.build_version.minos)?;
     write_u32(w, obj.build_version.sdk)?;
-    write_u32(w, 0)?;               // ntools
+    write_u32(w, 0)?; // ntools
 
     if has_loh {
         write_u32(w, LC_LINKER_OPTIMIZATION_HINT)?;
@@ -408,9 +439,9 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- LC_DYSYMTAB ----
     write_u32(w, LC_DYSYMTAB)?;
     write_u32(w, DYSYMTAB_CMD_SIZE)?;
-    write_u32(w, 0)?;               // ilocalsym
+    write_u32(w, 0)?; // ilocalsym
     write_u32(w, nlocalsym)?;
-    write_u32(w, nlocalsym)?;       // iextdefsym
+    write_u32(w, nlocalsym)?; // iextdefsym
     write_u32(w, nextdefsym)?;
     write_u32(w, nlocalsym + nextdefsym)?; // iundefsym
     write_u32(w, nundefsym)?;
@@ -480,11 +511,11 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         if sym.weak_def {
             n_desc |= N_WEAK_DEF;
         }
-        write_u32(w, str_offset as u32)?;  // n_strx
-        w.write_all(&[n_type])?;           // n_type
-        w.write_all(&[sym.section])?;      // n_sect
-        write_u16(w, n_desc)?;             // n_desc
-        write_u64(w, sym.value)?;          // n_value
+        write_u32(w, str_offset as u32)?; // n_strx
+        w.write_all(&[n_type])?; // n_type
+        w.write_all(&[sym.section])?; // n_sect
+        write_u16(w, n_desc)?; // n_desc
+        write_u64(w, sym.value)?; // n_value
         let _ = i;
     }
 
@@ -537,8 +568,7 @@ fn suffix_string_offset(strtab: &[u8], name: &str) -> Option<u32> {
     }
 
     for pos in 1..=strtab.len() - name_bytes.len() - 1 {
-        if &strtab[pos..pos + name_bytes.len()] == name_bytes
-            && strtab[pos + name_bytes.len()] == 0
+        if &strtab[pos..pos + name_bytes.len()] == name_bytes && strtab[pos + name_bytes.len()] == 0
         {
             return Some(pos as u32);
         }
@@ -562,7 +592,9 @@ fn write_reloc<W: Write>(w: &mut W, rel: &Relocation) -> io::Result<()> {
 }
 
 fn align_to(value: u32, align: u32) -> u32 {
-    if align <= 1 { return value; }
+    if align <= 1 {
+        return value;
+    }
     (value + align - 1) & !(align - 1)
 }
 
@@ -761,7 +793,10 @@ mod tests {
         ];
         let strtab = build_string_table(&syms);
 
-        assert_eq!(strtab.bytes, b"\0_ext\0ccc\0_bbb\0_aaa\0ltmp0\0\0\0\0\0\0\0");
+        assert_eq!(
+            strtab.bytes,
+            b"\0_ext\0ccc\0_bbb\0_aaa\0ltmp0\0\0\0\0\0\0\0"
+        );
         assert_eq!(strtab.offsets["_ext"], 1);
         assert_eq!(strtab.offsets["ccc"], 6);
         assert_eq!(strtab.offsets["_bbb"], 10);
@@ -837,11 +872,11 @@ mod tests {
         assert_eq!(&buf[0..4], &4u32.to_le_bytes());
         // info: sym=1, pcrel=1, length=2, extern=1, type=3
         let info = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
-        assert_eq!(info & 0x00FFFFFF, 1);        // symbolnum
-        assert_eq!((info >> 24) & 1, 1);         // pcrel
-        assert_eq!((info >> 25) & 3, 2);         // length
-        assert_eq!((info >> 27) & 1, 1);         // extern
-        assert_eq!((info >> 28) & 0xF, 3);       // type = PAGE21
+        assert_eq!(info & 0x00FFFFFF, 1); // symbolnum
+        assert_eq!((info >> 24) & 1, 1); // pcrel
+        assert_eq!((info >> 25) & 3, 2); // length
+        assert_eq!((info >> 27) & 1, 1); // extern
+        assert_eq!((info >> 28) & 0xF, 3); // type = PAGE21
     }
 
     #[test]
@@ -877,8 +912,9 @@ mod tests {
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
 
-        let symtab_cmd_offset =
-            HEADER_SIZE as usize + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize + BUILD_VERSION_CMD_SIZE as usize;
+        let symtab_cmd_offset = HEADER_SIZE as usize
+            + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize
+            + BUILD_VERSION_CMD_SIZE as usize;
         let symoff = u32::from_le_bytes([
             buf[symtab_cmd_offset + 8],
             buf[symtab_cmd_offset + 9],
@@ -916,8 +952,9 @@ mod tests {
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
 
-        let symtab_cmd_offset =
-            HEADER_SIZE as usize + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize + BUILD_VERSION_CMD_SIZE as usize;
+        let symtab_cmd_offset = HEADER_SIZE as usize
+            + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize
+            + BUILD_VERSION_CMD_SIZE as usize;
         let symoff = u32::from_le_bytes([
             buf[symtab_cmd_offset + 8],
             buf[symtab_cmd_offset + 9],
@@ -963,8 +1000,9 @@ mod tests {
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
 
-        let symtab_cmd_offset =
-            HEADER_SIZE as usize + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize + BUILD_VERSION_CMD_SIZE as usize;
+        let symtab_cmd_offset = HEADER_SIZE as usize
+            + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize
+            + BUILD_VERSION_CMD_SIZE as usize;
         let symoff = u32::from_le_bytes([
             buf[symtab_cmd_offset + 8],
             buf[symtab_cmd_offset + 9],
@@ -1239,5 +1277,14 @@ mod tests {
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
         assert_eq!(&buf[0..4], &MH_MAGIC_64.to_le_bytes());
+    }
+
+    #[test]
+    fn thread_local_sections_use_thread_local_flags() {
+        assert_eq!(SectionKind::ThreadLocalData.flags(4, false), S_THREAD_LOCAL_REGULAR);
+        assert_eq!(
+            SectionKind::ThreadLocalVariables.flags(24, false),
+            S_THREAD_LOCAL_VARIABLES
+        );
     }
 }

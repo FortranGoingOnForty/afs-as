@@ -1708,11 +1708,15 @@ impl Assembler {
             Ok(("__TEXT", "__const", SectionKind::ConstData))
         } else if seg_lower == "__data" && sect_lower == "__data" {
             Ok(("__DATA", "__data", SectionKind::Data))
+        } else if seg_lower == "__data" && sect_lower == "__thread_data" {
+            Ok(("__DATA", "__thread_data", SectionKind::ThreadLocalData))
+        } else if seg_lower == "__data" && sect_lower == "__thread_vars" {
+            Ok(("__DATA", "__thread_vars", SectionKind::ThreadLocalVariables))
         } else if seg_lower == "__data" && sect_lower == "__bss" {
             Ok(("__DATA", "__bss", SectionKind::ZeroFill))
         } else {
             Err(AsmError(format!(
-                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__const, __DATA,__data, __DATA,__bss)",
+                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__const, __DATA,__data, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__bss)",
                 seg, sect
             )))
         }
@@ -3173,6 +3177,35 @@ mod tests {
                 .unwrap()
                 .value,
             6
+        );
+    }
+
+    #[test]
+    fn assemble_supported_thread_local_sections() {
+        let obj = assemble_source(
+            ".section __DATA,__thread_data\n\
+             .p2align 2\n\
+             _tls_value$tlv$init:\n\
+             .long 5\n\
+             .section __DATA,__thread_vars\n\
+             .globl _tls_value\n\
+             _tls_value:\n\
+             .quad __tlv_bootstrap\n\
+             .quad 0\n\
+             .quad _tls_value$tlv$init\n",
+        )
+        .unwrap();
+
+        let thread_data = obj.section("__DATA", "__thread_data").unwrap();
+        let thread_vars = obj.section("__DATA", "__thread_vars").unwrap();
+        assert_eq!(thread_data.data, 5u32.to_le_bytes());
+        assert_eq!(thread_data.align_pow2, 2);
+        assert_eq!(thread_vars.data.len(), 24);
+        assert_eq!(thread_vars.relocations.len(), 2);
+        assert_eq!(obj.symbols[thread_vars.relocations[0].symbol_idx as usize].name, "__tlv_bootstrap");
+        assert_eq!(
+            obj.symbols[thread_vars.relocations[1].symbol_idx as usize].name,
+            "_tls_value$tlv$init"
         );
     }
 

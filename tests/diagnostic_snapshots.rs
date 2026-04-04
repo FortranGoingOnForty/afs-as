@@ -22,17 +22,19 @@ fn run_failure_snapshot(name: &str, src: &str, expected: &str) {
     fs::write(&input, src).expect("write input");
 
     let output = afs_as().arg(&input).output().expect("run afs-as");
-    assert_eq!(output.status.code(), Some(1), "stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 
     let stderr = normalize_stderr(&String::from_utf8_lossy(&output.stderr), &input);
     assert_eq!(stderr, expected);
 }
 
 fn normalize_stderr(stderr: &str, input: &Path) -> String {
-    stderr.replace(
-        input.to_str().expect("input path"),
-        "<input>",
-    )
+    stderr.replace(input.to_str().expect("input path"), "<input>")
 }
 
 #[test]
@@ -76,7 +78,7 @@ fn snapshot_unsupported_section() {
     run_failure_snapshot(
         "unsupported-section.s",
         ".section __TEXT,__foo\n.space 16\n",
-        "<input>:1:1: error: unsupported section __TEXT,__foo (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__const, __DATA,__data, __DATA,__bss)\n.section __TEXT,__foo\n^\n",
+        "<input>:1:1: error: unsupported section __TEXT,__foo (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__const, __DATA,__data, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__bss)\n.section __TEXT,__foo\n^\n",
     );
 }
 
