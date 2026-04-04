@@ -6,7 +6,7 @@
 
 use crate::encode::{AddrExtend, BarrierOpt, Inst, RegExtend, RegShift};
 use crate::expr::{self, Expr, SymbolModifier};
-use crate::lex::{Tok, Token, Lexer, LexError};
+use crate::lex::{LexError, Lexer, Tok, Token};
 use crate::reg::*;
 
 use std::collections::BTreeMap;
@@ -62,15 +62,27 @@ pub enum RelocKind {
 pub enum Directive {
     Text,
     Data,
-    Comm { name: String, size: u64, align_pow2: u8 },
+    Comm {
+        name: String,
+        size: u64,
+        align_pow2: u8,
+    },
     Extern(String),
     Global(String),
     PrivateExtern(String),
     WeakReference(String),
     WeakDefinition(String),
     Set(String, Expr),
-    Align { power: u32, fill: Option<u8>, max_skip: Option<u64> },
-    P2Align { power: u32, fill: Option<u8>, max_skip: Option<u64> },
+    Align {
+        power: u32,
+        fill: Option<u8>,
+        max_skip: Option<u64>,
+    },
+    P2Align {
+        power: u32,
+        fill: Option<u8>,
+        max_skip: Option<u64>,
+    },
     Byte(Vec<Expr>),
     Short(Vec<Expr>),
     Word(Vec<Expr>),
@@ -78,7 +90,11 @@ pub enum Directive {
     Ascii(Vec<u8>),
     Asciz(Vec<u8>),
     Space(u64),
-    Fill { repeat: u64, size: u8, value: u64 },
+    Fill {
+        repeat: u64,
+        size: u8,
+        value: u64,
+    },
     Zerofill {
         segment: String,
         section: String,
@@ -88,10 +104,16 @@ pub enum Directive {
     },
     CfiStartProc,
     CfiEndProc,
-    CfiDefCfa { register: GpReg, offset: i64 },
+    CfiDefCfa {
+        register: GpReg,
+        offset: i64,
+    },
     CfiDefCfaOffset(i64),
     CfiDefCfaRegister(GpReg),
-    CfiOffset { register: GpReg, offset: i64 },
+    CfiOffset {
+        register: GpReg,
+        offset: i64,
+    },
     CfiRestore(GpReg),
     CfiAdjustCfaOffset(i64),
     Section(String, String),
@@ -145,7 +167,11 @@ impl std::error::Error for ParseError {}
 
 impl From<LexError> for ParseError {
     fn from(e: LexError) -> Self {
-        ParseError { line: e.line, col: e.col, msg: e.msg }
+        ParseError {
+            line: e.line,
+            col: e.col,
+            msg: e.msg,
+        }
     }
 }
 
@@ -201,7 +227,11 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&self) -> &Tok {
-        if self.pos < self.tokens.len() { &self.tokens[self.pos].kind } else { &Tok::Eof }
+        if self.pos < self.tokens.len() {
+            &self.tokens[self.pos].kind
+        } else {
+            &Tok::Eof
+        }
     }
 
     fn token_at(&self, pos: usize) -> &Token {
@@ -214,13 +244,18 @@ impl<'a> Parser<'a> {
 
     fn advance(&mut self) -> &Token {
         let t = &self.tokens[self.pos.min(self.tokens.len() - 1)];
-        if self.pos < self.tokens.len() { self.pos += 1; }
+        if self.pos < self.tokens.len() {
+            self.pos += 1;
+        }
         t
     }
 
     fn expect_ident(&mut self) -> Result<String, ParseError> {
         match self.peek().clone() {
-            Tok::Ident(s) => { self.advance(); Ok(s) }
+            Tok::Ident(s) => {
+                self.advance();
+                Ok(s)
+            }
             other => Err(self.err(format!("expected identifier, got {}", other))),
         }
     }
@@ -235,12 +270,21 @@ impl<'a> Parser<'a> {
     }
 
     fn eat(&mut self, kind: &Tok) -> bool {
-        if self.peek() == kind { self.advance(); true } else { false }
+        if self.peek() == kind {
+            self.advance();
+            true
+        } else {
+            false
+        }
     }
 
     fn err(&self, msg: String) -> ParseError {
         let t = self.cur();
-        ParseError { line: t.line, col: t.col, msg }
+        ParseError {
+            line: t.line,
+            col: t.col,
+            msg,
+        }
     }
 
     fn at_end_of_stmt(&self) -> bool {
@@ -248,7 +292,9 @@ impl<'a> Parser<'a> {
     }
 
     fn skip_newlines(&mut self) {
-        while self.peek() == &Tok::Newline { self.advance(); }
+        while self.peek() == &Tok::Newline {
+            self.advance();
+        }
     }
 
     fn parse_program(&mut self) -> Result<Vec<LocatedStmt>, ParseError> {
@@ -287,7 +333,11 @@ impl<'a> Parser<'a> {
             }
             Tok::Ident(_) => {
                 let start = self.cur().clone();
-                let name = if let Tok::Ident(s) = self.peek().clone() { s } else { unreachable!() };
+                let name = if let Tok::Ident(s) = self.peek().clone() {
+                    s
+                } else {
+                    unreachable!()
+                };
                 self.advance();
                 if self.eat(&Tok::Colon) {
                     // Label
@@ -368,7 +418,11 @@ impl<'a> Parser<'a> {
                 } else {
                     0
                 };
-                Directive::Comm { name: sym, size, align_pow2 }
+                Directive::Comm {
+                    name: sym,
+                    size,
+                    align_pow2,
+                }
             }
             ".extern" => {
                 let sym = self.expect_ident()?;
@@ -403,24 +457,24 @@ impl<'a> Parser<'a> {
             }
             ".align" => {
                 let (power, fill, max_skip) = self.parse_alignment_directive_args()?;
-                Directive::Align { power, fill, max_skip }
+                Directive::Align {
+                    power,
+                    fill,
+                    max_skip,
+                }
             }
             ".p2align" => {
                 let (power, fill, max_skip) = self.parse_alignment_directive_args()?;
-                Directive::P2Align { power, fill, max_skip }
+                Directive::P2Align {
+                    power,
+                    fill,
+                    max_skip,
+                }
             }
-            ".byte" => {
-                Directive::Byte(self.parse_expr_list()?)
-            }
-            ".short" => {
-                Directive::Short(self.parse_expr_list()?)
-            }
-            ".word" | ".long" => {
-                Directive::Word(self.parse_expr_list()?)
-            }
-            ".quad" => {
-                Directive::Quad(self.parse_expr_list()?)
-            }
+            ".byte" => Directive::Byte(self.parse_expr_list()?),
+            ".short" => Directive::Short(self.parse_expr_list()?),
+            ".word" | ".long" => Directive::Word(self.parse_expr_list()?),
+            ".quad" => Directive::Quad(self.parse_expr_list()?),
             ".ascii" => {
                 if let Tok::StringLit(s) = self.peek().clone() {
                     self.advance();
@@ -456,7 +510,11 @@ impl<'a> Parser<'a> {
                 } else {
                     0
                 };
-                Directive::Fill { repeat, size, value }
+                Directive::Fill {
+                    repeat,
+                    size,
+                    value,
+                }
             }
             ".zerofill" => {
                 let segment = self.expect_ident()?;
@@ -475,7 +533,13 @@ impl<'a> Parser<'a> {
                 } else {
                     0
                 };
-                Directive::Zerofill { segment, section, symbol, size, align_pow2 }
+                Directive::Zerofill {
+                    segment,
+                    section,
+                    symbol,
+                    size,
+                    align_pow2,
+                }
             }
             ".cfi_startproc" => Directive::CfiStartProc,
             ".cfi_endproc" => Directive::CfiEndProc,
@@ -488,9 +552,7 @@ impl<'a> Parser<'a> {
             ".cfi_def_cfa_offset" => {
                 Directive::CfiDefCfaOffset(self.parse_const_expr("CFA offset")?)
             }
-            ".cfi_def_cfa_register" => {
-                Directive::CfiDefCfaRegister(self.parse_cfi_register()?)
-            }
+            ".cfi_def_cfa_register" => Directive::CfiDefCfaRegister(self.parse_cfi_register()?),
             ".cfi_offset" => {
                 let register = self.parse_cfi_register()?;
                 self.expect(&Tok::Comma)?;
@@ -533,7 +595,11 @@ impl<'a> Parser<'a> {
                 if !self.at_end_of_stmt() {
                     return Err(self.err("unexpected tokens after .build_version".into()));
                 }
-                Directive::BuildVersion(BuildVersionDirective { platform, minos, sdk })
+                Directive::BuildVersion(BuildVersionDirective {
+                    platform,
+                    minos,
+                    sdk,
+                })
             }
             ".loh" => {
                 let kind = self.expect_ident()?;
@@ -574,7 +640,9 @@ impl<'a> Parser<'a> {
         Ok(vals)
     }
 
-    fn parse_alignment_directive_args(&mut self) -> Result<(u32, Option<u8>, Option<u64>), ParseError> {
+    fn parse_alignment_directive_args(
+        &mut self,
+    ) -> Result<(u32, Option<u8>, Option<u64>), ParseError> {
         let power = self.parse_const_expr("alignment expression")? as u32;
         let mut fill = None;
         let mut max_skip = None;
@@ -608,7 +676,11 @@ impl<'a> Parser<'a> {
         } else {
             0
         };
-        Ok(VersionTriple { major, minor, patch })
+        Ok(VersionTriple {
+            major,
+            minor,
+            patch,
+        })
     }
 
     fn parse_version_component(&mut self, context: &str) -> Result<u32, ParseError> {
@@ -616,24 +688,27 @@ impl<'a> Parser<'a> {
             Tok::Integer(value) if value >= 0 => {
                 self.advance();
                 u32::try_from(value).map_err(|_| {
-                    self.err(format!("{} component {} does not fit in u32", context, value))
+                    self.err(format!(
+                        "{} component {} does not fit in u32",
+                        context, value
+                    ))
                 })
             }
             Tok::Integer(value) => Err(self.err(format!(
                 "{} component must be non-negative, got {}",
                 context, value
             ))),
-            other => Err(self.err(format!(
-                "expected integer for {}, got {}",
-                context, other
-            ))),
+            other => Err(self.err(format!("expected integer for {}, got {}", context, other))),
         }
     }
 
     fn parse_const_expr(&mut self, context: &str) -> Result<i64, ParseError> {
         let expr = self.parse_expr()?;
         expr::eval_with_symbols(&expr, &self.absolute_symbols).map_err(|err| {
-            self.err(format!("{} must be a pure constant expression: {}", context, err))
+            self.err(format!(
+                "{} must be a pure constant expression: {}",
+                context, err
+            ))
         })
     }
 
@@ -725,7 +800,9 @@ impl<'a> Parser<'a> {
 
     fn numeric_label_definition_number(&self) -> Option<u32> {
         match self.peek() {
-            Tok::Integer(value) if *value >= 0 && matches!(&self.token_at(self.pos + 1).kind, Tok::Colon) => {
+            Tok::Integer(value)
+                if *value >= 0 && matches!(&self.token_at(self.pos + 1).kind, Tok::Colon) =>
+            {
                 u32::try_from(*value).ok()
             }
             _ => None,
@@ -780,9 +857,8 @@ impl<'a> Parser<'a> {
         context: &str,
     ) -> Result<RelocKind, ParseError> {
         if !self.eat(&Tok::At) {
-            return default.ok_or_else(|| {
-                self.err(format!("{} requires a relocation modifier", context))
-            });
+            return default
+                .ok_or_else(|| self.err(format!("{} requires a relocation modifier", context)));
         }
 
         let modifier = self.expect_ident()?;
@@ -824,7 +900,9 @@ impl<'a> Parser<'a> {
             return true;
         }
         match self.peek() {
-            Tok::Ident(name) => !looks_like_gp_register_name(name) && !looks_like_fp_register_name(name),
+            Tok::Ident(name) => {
+                !looks_like_gp_register_name(name) && !looks_like_fp_register_name(name)
+            }
             _ => false,
         }
     }
@@ -843,7 +921,9 @@ impl<'a> Parser<'a> {
         let current = self.numeric_labels.get(&number).copied().unwrap_or(0);
         match direction {
             NumericLabelDirection::Forward => Ok(numeric_label_symbol(number, current + 1)),
-            NumericLabelDirection::Backward if current > 0 => Ok(numeric_label_symbol(number, current)),
+            NumericLabelDirection::Backward if current > 0 => {
+                Ok(numeric_label_symbol(number, current))
+            }
             NumericLabelDirection::Backward => Err(self.err(format!(
                 "numeric label '{}' has no previous definition",
                 number
@@ -886,6 +966,12 @@ impl<'a> Parser<'a> {
         if mnemonic == "str" {
             return self.parse_ldr_str(false);
         }
+        if mnemonic == "ldur" {
+            return self.parse_ldur_stur(true);
+        }
+        if mnemonic == "stur" {
+            return self.parse_ldur_stur(false);
+        }
         if mnemonic == "ldrsw" {
             return self.parse_ldrsw();
         }
@@ -902,6 +988,7 @@ impl<'a> Parser<'a> {
             "cmp" => self.parse_cmp(),
             "cmn" => self.parse_cmn(),
             "mul" => self.parse_3reg("mul"),
+            "madd" => self.parse_madd(),
             "sdiv" => self.parse_3reg("sdiv"),
             "udiv" => self.parse_3reg("udiv"),
 
@@ -936,8 +1023,14 @@ impl<'a> Parser<'a> {
 
             // Branches
             "ret" => self.parse_ret(),
-            "br" => { let rn = self.parse_gp_reg()?; Ok(Inst::Br { rn }) }
-            "blr" => { let rn = self.parse_gp_reg()?; Ok(Inst::Blr { rn }) }
+            "br" => {
+                let rn = self.parse_gp_reg()?;
+                Ok(Inst::Br { rn })
+            }
+            "blr" => {
+                let rn = self.parse_gp_reg()?;
+                Ok(Inst::Blr { rn })
+            }
 
             // Load/store
             "ldrb" => self.parse_ldrb_h("ldrb"),
@@ -972,8 +1065,12 @@ impl<'a> Parser<'a> {
             "wfi" => Ok(Inst::Wfi),
             "sev" => Ok(Inst::Sev),
             "sevl" => Ok(Inst::Sevl),
-            "dmb" => Ok(Inst::Dmb { option: self.parse_barrier_option("dmb option")? }),
-            "dsb" => Ok(Inst::Dsb { option: self.parse_barrier_option("dsb option")? }),
+            "dmb" => Ok(Inst::Dmb {
+                option: self.parse_barrier_option("dmb option")?,
+            }),
+            "dsb" => Ok(Inst::Dsb {
+                option: self.parse_barrier_option("dsb option")?,
+            }),
             "isb" => {
                 let option = if self.at_end_of_stmt() {
                     BarrierOpt::Sy
@@ -996,7 +1093,8 @@ impl<'a> Parser<'a> {
 
     fn parse_gp_reg(&mut self) -> Result<GpReg, ParseError> {
         let name = self.expect_ident()?;
-        parse_gp_reg_name(&name).ok_or_else(|| self.err(format!("expected GP register, got '{}'", name)))
+        parse_gp_reg_name(&name)
+            .ok_or_else(|| self.err(format!("expected GP register, got '{}'", name)))
     }
 
     /// Returns (register, is_64bit).
@@ -1009,17 +1107,23 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         if lower == "sp" || lower == "xzr" {
-            let kind = if lower == "sp" { GpRegKind::Sp } else { GpRegKind::Zr };
+            let kind = if lower == "sp" {
+                GpRegKind::Sp
+            } else {
+                GpRegKind::Zr
+            };
             return Ok((parse_gp_reg_name(&lower).unwrap(), true, kind));
         }
         if lower == "wzr" {
             return Ok((WZR, false, GpRegKind::Zr));
         }
         if lower.starts_with('x') {
-            let reg = parse_gp_reg_name(&lower).ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
+            let reg = parse_gp_reg_name(&lower)
+                .ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
             Ok((reg, true, GpRegKind::Reg))
         } else if lower.starts_with('w') {
-            let reg = parse_gp_reg_name(&lower).ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
+            let reg = parse_gp_reg_name(&lower)
+                .ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
             Ok((reg, false, GpRegKind::Reg))
         } else {
             Err(self.err(format!("expected GP register, got '{}'", name)))
@@ -1030,10 +1134,12 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         if lower.starts_with('d') {
-            let reg = parse_fp_reg_name(&lower).ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
+            let reg = parse_fp_reg_name(&lower)
+                .ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
             Ok((reg, true)) // double
         } else if lower.starts_with('s') {
-            let reg = parse_fp_reg_name(&lower).ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
+            let reg = parse_fp_reg_name(&lower)
+                .ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
             Ok((reg, false)) // single
         } else {
             Err(self.err(format!("expected FP register, got '{}'", name)))
@@ -1052,10 +1158,34 @@ impl<'a> Parser<'a> {
             let imm = self.parse_immediate_const_expr("add/sub immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
             Ok(match (is_sub, sets_flags) {
-                (false, false) => Inst::AddImm { rd, rn, imm12: imm, shift, sf },
-                (true, false)  => Inst::SubImm { rd, rn, imm12: imm, shift, sf },
-                (false, true)  => Inst::AddsImm { rd, rn, imm12: imm, shift, sf },
-                (true, true)   => Inst::SubsImm { rd, rn, imm12: imm, shift, sf },
+                (false, false) => Inst::AddImm {
+                    rd,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                },
+                (true, false) => Inst::SubImm {
+                    rd,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                },
+                (false, true) => Inst::AddsImm {
+                    rd,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                },
+                (true, true) => Inst::SubsImm {
+                    rd,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                },
             })
         } else {
             let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
@@ -1063,25 +1193,73 @@ impl<'a> Parser<'a> {
             self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
             Ok(match (is_sub, sets_flags, modifier) {
                 (false, false, None) => Inst::AddReg { rd, rn, rm, sf },
-                (true, false, None)  => Inst::SubReg { rd, rn, rm, sf },
-                (false, true, None)  => Inst::AddsReg { rd, rn, rm, sf },
-                (true, true, None)   => Inst::SubsReg { rd, rn, rm, sf },
-                (false, false, Some(AddSubModifier::Shift(shift, amount))) =>
-                    Inst::AddShiftReg { rd, rn, rm, shift, amount, sf },
-                (true, false, Some(AddSubModifier::Shift(shift, amount)))  =>
-                    Inst::SubShiftReg { rd, rn, rm, shift, amount, sf },
-                (false, true, Some(AddSubModifier::Shift(shift, amount)))  =>
-                    Inst::AddsShiftReg { rd, rn, rm, shift, amount, sf },
-                (true, true, Some(AddSubModifier::Shift(shift, amount)))   =>
-                    Inst::SubsShiftReg { rd, rn, rm, shift, amount, sf },
-                (false, false, Some(AddSubModifier::Extend(extend, amount))) =>
-                    Inst::AddExtReg { rd, rn, rm, extend, amount, sf },
-                (true, false, Some(AddSubModifier::Extend(extend, amount)))  =>
-                    Inst::SubExtReg { rd, rn, rm, extend, amount, sf },
-                (false, true, Some(AddSubModifier::Extend(extend, amount)))  =>
-                    Inst::AddsExtReg { rd, rn, rm, extend, amount, sf },
-                (true, true, Some(AddSubModifier::Extend(extend, amount)))   =>
-                    Inst::SubsExtReg { rd, rn, rm, extend, amount, sf },
+                (true, false, None) => Inst::SubReg { rd, rn, rm, sf },
+                (false, true, None) => Inst::AddsReg { rd, rn, rm, sf },
+                (true, true, None) => Inst::SubsReg { rd, rn, rm, sf },
+                (false, false, Some(AddSubModifier::Shift(shift, amount))) => Inst::AddShiftReg {
+                    rd,
+                    rn,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                (true, false, Some(AddSubModifier::Shift(shift, amount))) => Inst::SubShiftReg {
+                    rd,
+                    rn,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                (false, true, Some(AddSubModifier::Shift(shift, amount))) => Inst::AddsShiftReg {
+                    rd,
+                    rn,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                (true, true, Some(AddSubModifier::Shift(shift, amount))) => Inst::SubsShiftReg {
+                    rd,
+                    rn,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                (false, false, Some(AddSubModifier::Extend(extend, amount))) => Inst::AddExtReg {
+                    rd,
+                    rn,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
+                (true, false, Some(AddSubModifier::Extend(extend, amount))) => Inst::SubExtReg {
+                    rd,
+                    rn,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
+                (false, true, Some(AddSubModifier::Extend(extend, amount))) => Inst::AddsExtReg {
+                    rd,
+                    rn,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
+                (true, true, Some(AddSubModifier::Extend(extend, amount))) => Inst::SubsExtReg {
+                    rd,
+                    rn,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
             })
         }
     }
@@ -1102,8 +1280,21 @@ impl<'a> Parser<'a> {
                 "add/sub symbol operand",
             )?;
             let addend = self.parse_optional_symbol_addend()?;
-            let inst = Inst::AddImm { rd, rn, imm12: 0, shift: false, sf };
-            return Ok(Stmt::InstructionWithReloc(inst, LabelRef { symbol: label, kind, addend }));
+            let inst = Inst::AddImm {
+                rd,
+                rn,
+                imm12: 0,
+                shift: false,
+                sf,
+            };
+            return Ok(Stmt::InstructionWithReloc(
+                inst,
+                LabelRef {
+                    symbol: label,
+                    kind,
+                    addend,
+                },
+            ));
         }
 
         // Normal add/sub (immediate or register).
@@ -1125,10 +1316,34 @@ impl<'a> Parser<'a> {
             let imm = self.parse_immediate_const_expr("add/sub immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
             Ok(match (is_sub, sets_flags) {
-                (false, false) => Inst::AddImm { rd, rn, imm12: imm, shift, sf },
-                (true, false)  => Inst::SubImm { rd, rn, imm12: imm, shift, sf },
-                (false, true)  => Inst::AddsImm { rd, rn, imm12: imm, shift, sf },
-                (true, true)   => Inst::SubsImm { rd, rn, imm12: imm, shift, sf },
+                (false, false) => Inst::AddImm {
+                    rd,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                },
+                (true, false) => Inst::SubImm {
+                    rd,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                },
+                (false, true) => Inst::AddsImm {
+                    rd,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                },
+                (true, true) => Inst::SubsImm {
+                    rd,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                },
             })
         } else {
             let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
@@ -1136,25 +1351,73 @@ impl<'a> Parser<'a> {
             self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
             Ok(match (is_sub, sets_flags, modifier) {
                 (false, false, None) => Inst::AddReg { rd, rn, rm, sf },
-                (true, false, None)  => Inst::SubReg { rd, rn, rm, sf },
-                (false, true, None)  => Inst::AddsReg { rd, rn, rm, sf },
-                (true, true, None)   => Inst::SubsReg { rd, rn, rm, sf },
-                (false, false, Some(AddSubModifier::Shift(shift, amount))) =>
-                    Inst::AddShiftReg { rd, rn, rm, shift, amount, sf },
-                (true, false, Some(AddSubModifier::Shift(shift, amount)))  =>
-                    Inst::SubShiftReg { rd, rn, rm, shift, amount, sf },
-                (false, true, Some(AddSubModifier::Shift(shift, amount)))  =>
-                    Inst::AddsShiftReg { rd, rn, rm, shift, amount, sf },
-                (true, true, Some(AddSubModifier::Shift(shift, amount)))   =>
-                    Inst::SubsShiftReg { rd, rn, rm, shift, amount, sf },
-                (false, false, Some(AddSubModifier::Extend(extend, amount))) =>
-                    Inst::AddExtReg { rd, rn, rm, extend, amount, sf },
-                (true, false, Some(AddSubModifier::Extend(extend, amount)))  =>
-                    Inst::SubExtReg { rd, rn, rm, extend, amount, sf },
-                (false, true, Some(AddSubModifier::Extend(extend, amount)))  =>
-                    Inst::AddsExtReg { rd, rn, rm, extend, amount, sf },
-                (true, true, Some(AddSubModifier::Extend(extend, amount)))   =>
-                    Inst::SubsExtReg { rd, rn, rm, extend, amount, sf },
+                (true, false, None) => Inst::SubReg { rd, rn, rm, sf },
+                (false, true, None) => Inst::AddsReg { rd, rn, rm, sf },
+                (true, true, None) => Inst::SubsReg { rd, rn, rm, sf },
+                (false, false, Some(AddSubModifier::Shift(shift, amount))) => Inst::AddShiftReg {
+                    rd,
+                    rn,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                (true, false, Some(AddSubModifier::Shift(shift, amount))) => Inst::SubShiftReg {
+                    rd,
+                    rn,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                (false, true, Some(AddSubModifier::Shift(shift, amount))) => Inst::AddsShiftReg {
+                    rd,
+                    rn,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                (true, true, Some(AddSubModifier::Shift(shift, amount))) => Inst::SubsShiftReg {
+                    rd,
+                    rn,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                (false, false, Some(AddSubModifier::Extend(extend, amount))) => Inst::AddExtReg {
+                    rd,
+                    rn,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
+                (true, false, Some(AddSubModifier::Extend(extend, amount))) => Inst::SubExtReg {
+                    rd,
+                    rn,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
+                (false, true, Some(AddSubModifier::Extend(extend, amount))) => Inst::AddsExtReg {
+                    rd,
+                    rn,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
+                (true, true, Some(AddSubModifier::Extend(extend, amount))) => Inst::SubsExtReg {
+                    rd,
+                    rn,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
             })
         }
     }
@@ -1165,20 +1428,43 @@ impl<'a> Parser<'a> {
         if self.starts_immediate_expr() {
             let imm = self.parse_immediate_const_expr("cmp immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
-            Ok(Inst::SubsImm { rd: XZR, rn, imm12: imm, shift, sf })
+            Ok(Inst::SubsImm {
+                rd: XZR,
+                rn,
+                imm12: imm,
+                shift,
+                sf,
+            })
         } else {
             let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
             let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
             self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
             if let Some(modifier) = modifier {
                 Ok(match modifier {
-                    AddSubModifier::Shift(shift, amount) =>
-                        Inst::SubsShiftReg { rd: XZR, rn, rm, shift, amount, sf },
-                    AddSubModifier::Extend(extend, amount) =>
-                        Inst::SubsExtReg { rd: XZR, rn, rm, extend, amount, sf },
+                    AddSubModifier::Shift(shift, amount) => Inst::SubsShiftReg {
+                        rd: XZR,
+                        rn,
+                        rm,
+                        shift,
+                        amount,
+                        sf,
+                    },
+                    AddSubModifier::Extend(extend, amount) => Inst::SubsExtReg {
+                        rd: XZR,
+                        rn,
+                        rm,
+                        extend,
+                        amount,
+                        sf,
+                    },
                 })
             } else {
-                Ok(Inst::SubsReg { rd: XZR, rn, rm, sf })
+                Ok(Inst::SubsReg {
+                    rd: XZR,
+                    rn,
+                    rm,
+                    sf,
+                })
             }
         }
     }
@@ -1191,13 +1477,30 @@ impl<'a> Parser<'a> {
         self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
         if let Some(modifier) = modifier {
             Ok(match modifier {
-                AddSubModifier::Shift(shift, amount) =>
-                    Inst::AddsShiftReg { rd: XZR, rn, rm, shift, amount, sf },
-                AddSubModifier::Extend(extend, amount) =>
-                    Inst::AddsExtReg { rd: XZR, rn, rm, extend, amount, sf },
+                AddSubModifier::Shift(shift, amount) => Inst::AddsShiftReg {
+                    rd: XZR,
+                    rn,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                AddSubModifier::Extend(extend, amount) => Inst::AddsExtReg {
+                    rd: XZR,
+                    rn,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
             })
         } else {
-            Ok(Inst::AddsReg { rd: XZR, rn, rm, sf })
+            Ok(Inst::AddsReg {
+                rd: XZR,
+                rn,
+                rm,
+                sf,
+            })
         }
     }
 
@@ -1205,7 +1508,12 @@ impl<'a> Parser<'a> {
         let (rn, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rm, _) = self.parse_gp_reg_with_size()?;
-        Ok(Inst::AndsReg { rd: XZR, rn, rm, sf })
+        Ok(Inst::AndsReg {
+            rd: XZR,
+            rn,
+            rm,
+            sf,
+        })
     }
 
     fn parse_neg(&mut self) -> Result<Inst, ParseError> {
@@ -1216,13 +1524,30 @@ impl<'a> Parser<'a> {
         self.validate_add_sub_extended_base_reg(GpRegKind::Zr, modifier)?;
         if let Some(modifier) = modifier {
             Ok(match modifier {
-                AddSubModifier::Shift(shift, amount) =>
-                    Inst::SubShiftReg { rd, rn: XZR, rm, shift, amount, sf },
-                AddSubModifier::Extend(extend, amount) =>
-                    Inst::SubExtReg { rd, rn: XZR, rm, extend, amount, sf },
+                AddSubModifier::Shift(shift, amount) => Inst::SubShiftReg {
+                    rd,
+                    rn: XZR,
+                    rm,
+                    shift,
+                    amount,
+                    sf,
+                },
+                AddSubModifier::Extend(extend, amount) => Inst::SubExtReg {
+                    rd,
+                    rn: XZR,
+                    rm,
+                    extend,
+                    amount,
+                    sf,
+                },
             })
         } else {
-            Ok(Inst::SubReg { rd, rn: XZR, rm, sf })
+            Ok(Inst::SubReg {
+                rd,
+                rn: XZR,
+                rm,
+                sf,
+            })
         }
     }
 
@@ -1230,7 +1555,12 @@ impl<'a> Parser<'a> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rm, _) = self.parse_gp_reg_with_size()?;
-        Ok(Inst::OrnReg { rd, rn: XZR, rm, sf })
+        Ok(Inst::OrnReg {
+            rd,
+            rn: XZR,
+            rm,
+            sf,
+        })
     }
 
     fn parse_cond_select(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -1244,10 +1574,34 @@ impl<'a> Parser<'a> {
         let cond = parse_condition(&cond_name)
             .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
         Ok(match mnemonic {
-            "csel" => Inst::Csel { rd, rn, rm, cond, sf },
-            "csinc" => Inst::Csinc { rd, rn, rm, cond, sf },
-            "csinv" => Inst::Csinv { rd, rn, rm, cond, sf },
-            "csneg" => Inst::Csneg { rd, rn, rm, cond, sf },
+            "csel" => Inst::Csel {
+                rd,
+                rn,
+                rm,
+                cond,
+                sf,
+            },
+            "csinc" => Inst::Csinc {
+                rd,
+                rn,
+                rm,
+                cond,
+                sf,
+            },
+            "csinv" => Inst::Csinv {
+                rd,
+                rn,
+                rm,
+                cond,
+                sf,
+            },
+            "csneg" => Inst::Csneg {
+                rd,
+                rn,
+                rm,
+                cond,
+                sf,
+            },
             _ => unreachable!("unsupported conditional select mnemonic"),
         })
     }
@@ -1260,8 +1614,20 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
         let cond = invert_condition(cond);
         Ok(match mnemonic {
-            "cset" => Inst::Csinc { rd, rn: XZR, rm: XZR, cond, sf },
-            "csetm" => Inst::Csinv { rd, rn: XZR, rm: XZR, cond, sf },
+            "cset" => Inst::Csinc {
+                rd,
+                rn: XZR,
+                rm: XZR,
+                cond,
+                sf,
+            },
+            "csetm" => Inst::Csinv {
+                rd,
+                rn: XZR,
+                rm: XZR,
+                cond,
+                sf,
+            },
             _ => unreachable!("unsupported conditional set alias"),
         })
     }
@@ -1276,9 +1642,27 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
         let cond = invert_condition(cond);
         Ok(match mnemonic {
-            "cinc" => Inst::Csinc { rd, rn, rm: rn, cond, sf },
-            "cinv" => Inst::Csinv { rd, rn, rm: rn, cond, sf },
-            "cneg" => Inst::Csneg { rd, rn, rm: rn, cond, sf },
+            "cinc" => Inst::Csinc {
+                rd,
+                rn,
+                rm: rn,
+                cond,
+                sf,
+            },
+            "cinv" => Inst::Csinv {
+                rd,
+                rn,
+                rm: rn,
+                cond,
+                sf,
+            },
+            "cneg" => Inst::Csneg {
+                rd,
+                rn,
+                rm: rn,
+                cond,
+                sf,
+            },
             _ => unreachable!("unsupported conditional unary alias"),
         })
     }
@@ -1333,6 +1717,17 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_madd(&mut self) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rm, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (ra, _) = self.parse_gp_reg_with_size()?;
+        Ok(Inst::Madd { rd, rn, rm, ra, sf })
+    }
+
     fn parse_logic(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
@@ -1365,10 +1760,21 @@ impl<'a> Parser<'a> {
             let (rm, _) = self.parse_gp_reg_with_size()?;
             if rm == SP || rd == SP {
                 // MOV involving SP → ADD Xd, Xn, #0 (SP can't be used in ORR shifted reg)
-                Ok(Inst::AddImm { rd, rn: rm, imm12: 0, shift: false, sf })
+                Ok(Inst::AddImm {
+                    rd,
+                    rn: rm,
+                    imm12: 0,
+                    shift: false,
+                    sf,
+                })
             } else {
                 // MOV Xd, Xm → ORR Xd, XZR, Xm
-                Ok(Inst::OrrReg { rd, rn: XZR, rm, sf })
+                Ok(Inst::OrrReg {
+                    rd,
+                    rn: XZR,
+                    rm,
+                    sf,
+                })
             }
         }
     }
@@ -1379,9 +1785,24 @@ impl<'a> Parser<'a> {
         let imm = self.parse_immediate_const_expr("mov wide immediate")? as u16;
         let shift = self.parse_optional_lsl_amount()?;
         Ok(match mnemonic {
-            "movz" => Inst::Movz { rd, imm16: imm, shift, sf },
-            "movk" => Inst::Movk { rd, imm16: imm, shift, sf },
-            "movn" => Inst::Movn { rd, imm16: imm, shift, sf },
+            "movz" => Inst::Movz {
+                rd,
+                imm16: imm,
+                shift,
+                sf,
+            },
+            "movk" => Inst::Movk {
+                rd,
+                imm16: imm,
+                shift,
+                sf,
+            },
+            "movn" => Inst::Movn {
+                rd,
+                imm16: imm,
+                shift,
+                sf,
+            },
             _ => unreachable!(),
         })
     }
@@ -1409,7 +1830,11 @@ impl<'a> Parser<'a> {
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::B { offset: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Branch26, addend },
+                LabelRef {
+                    symbol: label,
+                    kind: RelocKind::Branch26,
+                    addend,
+                },
             ))
         }
     }
@@ -1423,7 +1848,11 @@ impl<'a> Parser<'a> {
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Bl { offset: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Branch26, addend },
+                LabelRef {
+                    symbol: label,
+                    kind: RelocKind::Branch26,
+                    addend,
+                },
             ))
         }
     }
@@ -1439,7 +1868,11 @@ impl<'a> Parser<'a> {
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::BCond { cond, offset: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Branch19, addend },
+                LabelRef {
+                    symbol: label,
+                    kind: RelocKind::Branch19,
+                    addend,
+                },
             ))
         }
     }
@@ -1465,7 +1898,11 @@ impl<'a> Parser<'a> {
             };
             Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind: RelocKind::Branch19, addend },
+                LabelRef {
+                    symbol: label,
+                    kind: RelocKind::Branch19,
+                    addend,
+                },
             ))
         }
     }
@@ -1473,27 +1910,58 @@ impl<'a> Parser<'a> {
     fn parse_tbz(&mut self, is_nz: bool) -> Result<Stmt, ParseError> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let bit = self.parse_bit_index(sf, if is_nz { "tbnz bit index" } else { "tbz bit index" })?;
+        let bit = self.parse_bit_index(
+            sf,
+            if is_nz {
+                "tbnz bit index"
+            } else {
+                "tbz bit index"
+            },
+        )?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let offset = self.parse_immediate_const_expr("tbz/tbnz offset")? as i32;
             let inst = if is_nz {
-                Inst::Tbnz { rt, bit, offset, sf }
+                Inst::Tbnz {
+                    rt,
+                    bit,
+                    offset,
+                    sf,
+                }
             } else {
-                Inst::Tbz { rt, bit, offset, sf }
+                Inst::Tbz {
+                    rt,
+                    bit,
+                    offset,
+                    sf,
+                }
             };
             Ok(Stmt::Instruction(inst))
         } else {
             let label = self.parse_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             let inst = if is_nz {
-                Inst::Tbnz { rt, bit, offset: 0, sf }
+                Inst::Tbnz {
+                    rt,
+                    bit,
+                    offset: 0,
+                    sf,
+                }
             } else {
-                Inst::Tbz { rt, bit, offset: 0, sf }
+                Inst::Tbz {
+                    rt,
+                    bit,
+                    offset: 0,
+                    sf,
+                }
             };
             Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind: RelocKind::Branch14, addend },
+                LabelRef {
+                    symbol: label,
+                    kind: RelocKind::Branch14,
+                    addend,
+                },
             ))
         }
     }
@@ -1518,7 +1986,11 @@ impl<'a> Parser<'a> {
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Adr { rd, imm: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Adr21, addend },
+                LabelRef {
+                    symbol: label,
+                    kind: RelocKind::Adr21,
+                    addend,
+                },
             ))
         }
     }
@@ -1543,7 +2015,11 @@ impl<'a> Parser<'a> {
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Adrp { rd, imm: 0 },
-                LabelRef { symbol: label, kind, addend },
+                LabelRef {
+                    symbol: label,
+                    kind,
+                    addend,
+                },
             ))
         }
     }
@@ -1553,6 +2029,92 @@ impl<'a> Parser<'a> {
             return self.parse_ldr_str_fp(is_load);
         }
         self.parse_ldr_str_gp(is_load)
+    }
+
+    fn gp_mem_offset_inst(
+        &self,
+        is_load: bool,
+        sf: bool,
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+        force_unscaled: bool,
+    ) -> Inst {
+        if force_unscaled || offset < 0 {
+            match (is_load, sf) {
+                (true, true) => Inst::Ldur64 { rt, rn, offset },
+                (false, true) => Inst::Stur64 { rt, rn, offset },
+                (true, false) => Inst::Ldur32 { rt, rn, offset },
+                (false, false) => Inst::Stur32 { rt, rn, offset },
+            }
+        } else {
+            match (is_load, sf) {
+                (true, true) => Inst::LdrImm64 {
+                    rt,
+                    rn,
+                    offset: offset as u16,
+                },
+                (false, true) => Inst::StrImm64 {
+                    rt,
+                    rn,
+                    offset: offset as u16,
+                },
+                (true, false) => Inst::LdrImm32 {
+                    rt,
+                    rn,
+                    offset: offset as u16,
+                },
+                (false, false) => Inst::StrImm32 {
+                    rt,
+                    rn,
+                    offset: offset as u16,
+                },
+            }
+        }
+    }
+
+    fn gp_mem_pre_inst(&self, is_load: bool, sf: bool, rt: GpReg, rn: GpReg, offset: i16) -> Inst {
+        match (is_load, sf) {
+            (true, true) => Inst::LdrPre64 { rt, rn, offset },
+            (false, true) => Inst::StrPre64 { rt, rn, offset },
+            (true, false) => Inst::LdrPre32 { rt, rn, offset },
+            (false, false) => Inst::StrPre32 { rt, rn, offset },
+        }
+    }
+
+    fn gp_mem_post_inst(&self, is_load: bool, sf: bool, rt: GpReg, rn: GpReg, offset: i16) -> Inst {
+        match (is_load, sf) {
+            (true, true) => Inst::LdrPost64 { rt, rn, offset },
+            (false, true) => Inst::StrPost64 { rt, rn, offset },
+            (true, false) => Inst::LdrPost32 { rt, rn, offset },
+            (false, false) => Inst::StrPost32 { rt, rn, offset },
+        }
+    }
+
+    fn parse_ldur_stur(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
+        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        self.expect(&Tok::LBracket)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let offset = if self.eat(&Tok::RBracket) {
+            0
+        } else {
+            self.expect(&Tok::Comma)?;
+            let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+            self.expect(&Tok::RBracket)?;
+            offset
+        };
+
+        if self.eat(&Tok::Bang) {
+            return Err(self.err("ldur/stur do not support pre-index addressing".into()));
+        }
+        if self.eat(&Tok::Comma) {
+            return Err(self.err("ldur/stur do not support post-index addressing".into()));
+        }
+
+        Ok(Stmt::Instruction(
+            self.gp_mem_offset_inst(is_load, sf, rt, rn, offset, true),
+        ))
     }
 
     fn parse_ldr_str_gp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
@@ -1579,7 +2141,11 @@ impl<'a> Parser<'a> {
             };
             return Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind: RelocKind::Literal19, addend },
+                LabelRef {
+                    symbol: label,
+                    kind: RelocKind::Literal19,
+                    addend,
+                },
             ));
         }
 
@@ -1594,25 +2160,13 @@ impl<'a> Parser<'a> {
             // [Xn] or [Xn], #off (post-index)
             if self.eat(&Tok::Comma) {
                 let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
-                let inst = if sf {
-                    if is_load { Inst::LdrPost64 { rt, rn, offset } }
-                    else { Inst::StrPost64 { rt, rn, offset } }
-                } else {
-                    // 32-bit post-index not yet in Inst — use 64-bit for now.
-                    if is_load { Inst::LdrPost64 { rt, rn, offset } }
-                    else { Inst::StrPost64 { rt, rn, offset } }
-                };
-                return Ok(Stmt::Instruction(inst));
+                return Ok(Stmt::Instruction(
+                    self.gp_mem_post_inst(is_load, sf, rt, rn, offset),
+                ));
             }
-            // [Xn] with no offset → unsigned offset 0
-            let inst = if sf {
-                if is_load { Inst::LdrImm64 { rt, rn, offset: 0 } }
-                else { Inst::StrImm64 { rt, rn, offset: 0 } }
-            } else {
-                if is_load { Inst::LdrImm32 { rt, rn, offset: 0 } }
-                else { Inst::StrImm32 { rt, rn, offset: 0 } }
-            };
-            return Ok(Stmt::Instruction(inst));
+            return Ok(Stmt::Instruction(
+                self.gp_mem_offset_inst(is_load, sf, rt, rn, 0, false),
+            ));
         }
 
         self.expect(&Tok::Comma)?;
@@ -1631,15 +2185,25 @@ impl<'a> Parser<'a> {
             let addend = self.parse_optional_symbol_addend()?;
             self.expect(&Tok::RBracket)?;
             let inst = if sf {
-                if is_load { Inst::LdrImm64 { rt, rn, offset: 0 } }
-                else { Inst::StrImm64 { rt, rn, offset: 0 } }
+                if is_load {
+                    Inst::LdrImm64 { rt, rn, offset: 0 }
+                } else {
+                    Inst::StrImm64 { rt, rn, offset: 0 }
+                }
             } else {
-                if is_load { Inst::LdrImm32 { rt, rn, offset: 0 } }
-                else { Inst::StrImm32 { rt, rn, offset: 0 } }
+                if is_load {
+                    Inst::LdrImm32 { rt, rn, offset: 0 }
+                } else {
+                    Inst::StrImm32 { rt, rn, offset: 0 }
+                }
             };
             return Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind, addend },
+                LabelRef {
+                    symbol: label,
+                    kind,
+                    addend,
+                },
             ));
         }
 
@@ -1648,40 +2212,54 @@ impl<'a> Parser<'a> {
             self.expect(&Tok::RBracket)?;
             let inst = if sf {
                 if is_load {
-                    Inst::LdrReg64 { rt, rn, rm, extend, shift }
+                    Inst::LdrReg64 {
+                        rt,
+                        rn,
+                        rm,
+                        extend,
+                        shift,
+                    }
                 } else {
-                    Inst::StrReg64 { rt, rn, rm, extend, shift }
+                    Inst::StrReg64 {
+                        rt,
+                        rn,
+                        rm,
+                        extend,
+                        shift,
+                    }
                 }
             } else if is_load {
-                Inst::LdrReg32 { rt, rn, rm, extend, shift }
+                Inst::LdrReg32 {
+                    rt,
+                    rn,
+                    rm,
+                    extend,
+                    shift,
+                }
             } else {
-                Inst::StrReg32 { rt, rn, rm, extend, shift }
+                Inst::StrReg32 {
+                    rt,
+                    rn,
+                    rm,
+                    extend,
+                    shift,
+                }
             };
             return Ok(Stmt::Instruction(inst));
         }
 
-        let offset = self.parse_immediate_const_expr("memory offset")?;
+        let offset = self.parse_immediate_const_expr("memory offset")? as i16;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
-            // Pre-index: [Xn, #off]!
-            let inst = if is_load {
-                Inst::LdrPre64 { rt, rn, offset: offset as i16 }
-            } else {
-                Inst::StrPre64 { rt, rn, offset: offset as i16 }
-            };
-            return Ok(Stmt::Instruction(inst));
+            return Ok(Stmt::Instruction(
+                self.gp_mem_pre_inst(is_load, sf, rt, rn, offset),
+            ));
         }
 
-        // Unsigned offset: [Xn, #off]
-        let inst = if sf {
-            if is_load { Inst::LdrImm64 { rt, rn, offset: offset as u16 } }
-            else { Inst::StrImm64 { rt, rn, offset: offset as u16 } }
-        } else {
-            if is_load { Inst::LdrImm32 { rt, rn, offset: offset as u16 } }
-            else { Inst::StrImm32 { rt, rn, offset: offset as u16 } }
-        };
-        Ok(Stmt::Instruction(inst))
+        Ok(Stmt::Instruction(
+            self.gp_mem_offset_inst(is_load, sf, rt, rn, offset, false),
+        ))
     }
 
     fn parse_ldr_str_fp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
@@ -1708,7 +2286,11 @@ impl<'a> Parser<'a> {
             };
             return Ok(Stmt::InstructionWithReloc(
                 inst,
-                LabelRef { symbol: label, kind: RelocKind::Literal19, addend },
+                LabelRef {
+                    symbol: label,
+                    kind: RelocKind::Literal19,
+                    addend,
+                },
             ));
         }
 
@@ -1741,13 +2323,38 @@ impl<'a> Parser<'a> {
 
         self.expect(&Tok::Comma)?;
         if self.starts_register_like_operand() {
-            let (rm, extend, shift) = self.parse_reg_offset_operand(if is_double { 3 } else { 2 })?;
+            let (rm, extend, shift) =
+                self.parse_reg_offset_operand(if is_double { 3 } else { 2 })?;
             self.expect(&Tok::RBracket)?;
             let inst = match (is_load, is_double) {
-                (true, true) => Inst::LdrFpReg64 { rt, rn, rm, extend, shift },
-                (false, true) => Inst::StrFpReg64 { rt, rn, rm, extend, shift },
-                (true, false) => Inst::LdrFpReg32 { rt, rn, rm, extend, shift },
-                (false, false) => Inst::StrFpReg32 { rt, rn, rm, extend, shift },
+                (true, true) => Inst::LdrFpReg64 {
+                    rt,
+                    rn,
+                    rm,
+                    extend,
+                    shift,
+                },
+                (false, true) => Inst::StrFpReg64 {
+                    rt,
+                    rn,
+                    rm,
+                    extend,
+                    shift,
+                },
+                (true, false) => Inst::LdrFpReg32 {
+                    rt,
+                    rn,
+                    rm,
+                    extend,
+                    shift,
+                },
+                (false, false) => Inst::StrFpReg32 {
+                    rt,
+                    rn,
+                    rm,
+                    extend,
+                    shift,
+                },
             };
             return Ok(Stmt::Instruction(inst));
         }
@@ -1757,19 +2364,51 @@ impl<'a> Parser<'a> {
 
         if self.eat(&Tok::Bang) {
             let inst = match (is_load, is_double) {
-                (true, true) => Inst::LdrFpPre64 { rt, rn, offset: offset as i16 },
-                (false, true) => Inst::StrFpPre64 { rt, rn, offset: offset as i16 },
-                (true, false) => Inst::LdrFpPre32 { rt, rn, offset: offset as i16 },
-                (false, false) => Inst::StrFpPre32 { rt, rn, offset: offset as i16 },
+                (true, true) => Inst::LdrFpPre64 {
+                    rt,
+                    rn,
+                    offset: offset as i16,
+                },
+                (false, true) => Inst::StrFpPre64 {
+                    rt,
+                    rn,
+                    offset: offset as i16,
+                },
+                (true, false) => Inst::LdrFpPre32 {
+                    rt,
+                    rn,
+                    offset: offset as i16,
+                },
+                (false, false) => Inst::StrFpPre32 {
+                    rt,
+                    rn,
+                    offset: offset as i16,
+                },
             };
             return Ok(Stmt::Instruction(inst));
         }
 
         let inst = match (is_load, is_double) {
-            (true, true) => Inst::LdrFpImm64 { rt, rn, offset: offset as u16 },
-            (false, true) => Inst::StrFpImm64 { rt, rn, offset: offset as u16 },
-            (true, false) => Inst::LdrFpImm32 { rt, rn, offset: offset as u16 },
-            (false, false) => Inst::StrFpImm32 { rt, rn, offset: offset as u16 },
+            (true, true) => Inst::LdrFpImm64 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            (false, true) => Inst::StrFpImm64 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            (true, false) => Inst::LdrFpImm32 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            (false, false) => Inst::StrFpImm32 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
         };
         Ok(Stmt::Instruction(inst))
     }
@@ -1789,8 +2428,20 @@ impl<'a> Parser<'a> {
                 let (rm, extend, shift) = self.parse_reg_offset_operand(scale)?;
                 self.expect(&Tok::RBracket)?;
                 return Ok(match mnemonic {
-                    "ldrb" => Inst::LdrbReg { rt, rn, rm, extend, shift },
-                    "ldrh" => Inst::LdrhReg { rt, rn, rm, extend, shift },
+                    "ldrb" => Inst::LdrbReg {
+                        rt,
+                        rn,
+                        rm,
+                        extend,
+                        shift,
+                    },
+                    "ldrh" => Inst::LdrhReg {
+                        rt,
+                        rn,
+                        rm,
+                        extend,
+                        shift,
+                    },
                     _ => unreachable!(),
                 });
             }
@@ -1800,8 +2451,16 @@ impl<'a> Parser<'a> {
         };
         self.expect(&Tok::RBracket)?;
         Ok(match mnemonic {
-            "ldrb" => Inst::Ldrb { rt, rn, offset: offset as u16 },
-            "ldrh" => Inst::Ldrh { rt, rn, offset: offset as u16 },
+            "ldrb" => Inst::Ldrb {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            "ldrh" => Inst::Ldrh {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
             _ => unreachable!(),
         })
     }
@@ -1823,7 +2482,11 @@ impl<'a> Parser<'a> {
             let addend = self.parse_optional_symbol_addend()?;
             return Ok(Stmt::InstructionWithReloc(
                 Inst::LdrswLit { rt, offset: 0 },
-                LabelRef { symbol: label, kind: RelocKind::Literal19, addend },
+                LabelRef {
+                    symbol: label,
+                    kind: RelocKind::Literal19,
+                    addend,
+                },
             ));
         }
 
@@ -1833,14 +2496,24 @@ impl<'a> Parser<'a> {
             if self.starts_register_like_operand() {
                 let (rm, extend, shift) = self.parse_reg_offset_operand(2)?;
                 self.expect(&Tok::RBracket)?;
-                return Ok(Stmt::Instruction(Inst::LdrswReg { rt, rn, rm, extend, shift }));
+                return Ok(Stmt::Instruction(Inst::LdrswReg {
+                    rt,
+                    rn,
+                    rm,
+                    extend,
+                    shift,
+                }));
             }
             self.parse_immediate_const_expr("memory offset")?
         } else {
             0
         };
         self.expect(&Tok::RBracket)?;
-        Ok(Stmt::Instruction(Inst::Ldrsw { rt, rn, offset: offset as u16 }))
+        Ok(Stmt::Instruction(Inst::Ldrsw {
+            rt,
+            rn,
+            offset: offset as u16,
+        }))
     }
 
     fn parse_ldp_stp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
@@ -1851,21 +2524,72 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldp_stp_gp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
-        let (rt1, _sf) = self.parse_gp_reg_with_size()?;
+        let (rt1, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rt2, _) = self.parse_gp_reg_with_size()?;
+        let (rt2, second_sf) = self.parse_gp_reg_with_size()?;
+        if sf != second_sf {
+            return Err(self.err("ldp/stp register pair must use matching register widths".into()));
+        }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
 
         if self.eat(&Tok::RBracket) {
-            // Post-index: [Xn], #off
-            self.expect(&Tok::Comma)?;
-            let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
-            return Ok(if is_load {
-                Inst::LdpPost64 { rt1, rt2, rn, offset }
-            } else {
-                Inst::StpPost64 { rt1, rt2, rn, offset }
+            if self.eat(&Tok::Comma) {
+                let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
+                return Ok(match (is_load, sf) {
+                    (true, true) => Inst::LdpPost64 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                    (false, true) => Inst::StpPost64 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                    (true, false) => Inst::LdpPost32 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                    (false, false) => Inst::StpPost32 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                });
+            }
+
+            return Ok(match (is_load, sf) {
+                (true, true) => Inst::LdpOff64 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
+                (false, true) => Inst::StpOff64 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
+                (true, false) => Inst::LdpOff32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
+                (false, false) => Inst::StpOff32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
             });
         }
 
@@ -1875,18 +2599,60 @@ impl<'a> Parser<'a> {
 
         if self.eat(&Tok::Bang) {
             // Pre-index
-            return Ok(if is_load {
-                Inst::LdpPre64 { rt1, rt2, rn, offset }
-            } else {
-                Inst::StpPre64 { rt1, rt2, rn, offset }
+            return Ok(match (is_load, sf) {
+                (true, true) => Inst::LdpPre64 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
+                (false, true) => Inst::StpPre64 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
+                (true, false) => Inst::LdpPre32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
+                (false, false) => Inst::StpPre32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
             });
         }
 
         // Signed offset
-        Ok(if is_load {
-            Inst::LdpOff64 { rt1, rt2, rn, offset }
-        } else {
-            Inst::StpOff64 { rt1, rt2, rn, offset }
+        Ok(match (is_load, sf) {
+            (true, true) => Inst::LdpOff64 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
+            (false, true) => Inst::StpOff64 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
+            (true, false) => Inst::LdpOff32 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
+            (false, false) => Inst::StpOff32 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
         })
     }
 
@@ -1895,20 +2661,70 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rt2, second_is_double) = self.parse_fp_reg_with_size()?;
         if is_double != second_is_double {
-            return Err(self.err("ldp/stp FP register pair must use matching register widths".into()));
+            return Err(
+                self.err("ldp/stp FP register pair must use matching register widths".into())
+            );
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
 
         if self.eat(&Tok::RBracket) {
-            self.expect(&Tok::Comma)?;
-            let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
+            if self.eat(&Tok::Comma) {
+                let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
+                return Ok(match (is_load, is_double) {
+                    (true, true) => Inst::LdpFpPost64 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                    (false, true) => Inst::StpFpPost64 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                    (true, false) => Inst::LdpFpPost32 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                    (false, false) => Inst::StpFpPost32 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                });
+            }
+
             return Ok(match (is_load, is_double) {
-                (true, true) => Inst::LdpFpPost64 { rt1, rt2, rn, offset },
-                (false, true) => Inst::StpFpPost64 { rt1, rt2, rn, offset },
-                (true, false) => Inst::LdpFpPost32 { rt1, rt2, rn, offset },
-                (false, false) => Inst::StpFpPost32 { rt1, rt2, rn, offset },
+                (true, true) => Inst::LdpFpOff64 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
+                (false, true) => Inst::StpFpOff64 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
+                (true, false) => Inst::LdpFpOff32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
+                (false, false) => Inst::StpFpOff32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
             });
         }
 
@@ -1918,18 +2734,58 @@ impl<'a> Parser<'a> {
 
         if self.eat(&Tok::Bang) {
             return Ok(match (is_load, is_double) {
-                (true, true) => Inst::LdpFpPre64 { rt1, rt2, rn, offset },
-                (false, true) => Inst::StpFpPre64 { rt1, rt2, rn, offset },
-                (true, false) => Inst::LdpFpPre32 { rt1, rt2, rn, offset },
-                (false, false) => Inst::StpFpPre32 { rt1, rt2, rn, offset },
+                (true, true) => Inst::LdpFpPre64 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
+                (false, true) => Inst::StpFpPre64 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
+                (true, false) => Inst::LdpFpPre32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
+                (false, false) => Inst::StpFpPre32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
             });
         }
 
         Ok(match (is_load, is_double) {
-            (true, true) => Inst::LdpFpOff64 { rt1, rt2, rn, offset },
-            (false, true) => Inst::StpFpOff64 { rt1, rt2, rn, offset },
-            (true, false) => Inst::LdpFpOff32 { rt1, rt2, rn, offset },
-            (false, false) => Inst::StpFpOff32 { rt1, rt2, rn, offset },
+            (true, true) => Inst::LdpFpOff64 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
+            (false, true) => Inst::StpFpOff64 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
+            (true, false) => Inst::LdpFpOff32 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
+            (false, false) => Inst::StpFpOff32 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
         })
     }
 
@@ -1942,13 +2798,13 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rm, _) = self.parse_fp_reg_with_size()?;
         Ok(match (mnemonic, is_double) {
-            ("fadd", true)  => Inst::FaddD { rd, rn, rm },
+            ("fadd", true) => Inst::FaddD { rd, rn, rm },
             ("fadd", false) => Inst::FaddS { rd, rn, rm },
-            ("fsub", true)  => Inst::FsubD { rd, rn, rm },
+            ("fsub", true) => Inst::FsubD { rd, rn, rm },
             ("fsub", false) => Inst::FsubS { rd, rn, rm },
-            ("fmul", true)  => Inst::FmulD { rd, rn, rm },
+            ("fmul", true) => Inst::FmulD { rd, rn, rm },
             ("fmul", false) => Inst::FmulS { rd, rn, rm },
-            ("fdiv", true)  => Inst::FdivD { rd, rn, rm },
+            ("fdiv", true) => Inst::FdivD { rd, rn, rm },
             ("fdiv", false) => Inst::FdivS { rd, rn, rm },
             _ => unreachable!(),
         })
@@ -1959,11 +2815,11 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_fp_reg_with_size()?;
         Ok(match (mnemonic, is_double) {
-            ("fneg", true)  => Inst::FnegD  { rd, rn },
-            ("fneg", false) => Inst::FnegS  { rd, rn },
-            ("fabs", true)  => Inst::FabsD  { rd, rn },
-            ("fabs", false) => Inst::FabsS  { rd, rn },
-            ("fsqrt", true)  => Inst::FsqrtD { rd, rn },
+            ("fneg", true) => Inst::FnegD { rd, rn },
+            ("fneg", false) => Inst::FnegS { rd, rn },
+            ("fabs", true) => Inst::FabsD { rd, rn },
+            ("fabs", false) => Inst::FabsS { rd, rn },
+            ("fsqrt", true) => Inst::FsqrtD { rd, rn },
             ("fsqrt", false) => Inst::FsqrtS { rd, rn },
             _ => unreachable!(),
         })
@@ -2016,12 +2872,14 @@ impl<'a> Parser<'a> {
 
         if lower.starts_with('d') || lower.starts_with('s') {
             // FMOV Dd, Xn (GP → FP)
-            let rd = parse_fp_reg_name(&lower).ok_or_else(|| self.err(format!("bad FP reg '{}'", name)))?;
+            let rd = parse_fp_reg_name(&lower)
+                .ok_or_else(|| self.err(format!("bad FP reg '{}'", name)))?;
             let rn = self.parse_gp_reg()?;
             Ok(Inst::FmovToD { rd, rn })
         } else {
             // FMOV Xd, Dn (FP → GP)
-            let rd = parse_gp_reg_name(&lower).ok_or_else(|| self.err(format!("bad GP reg '{}'", name)))?;
+            let rd = parse_gp_reg_name(&lower)
+                .ok_or_else(|| self.err(format!("bad GP reg '{}'", name)))?;
             let (rn, _) = self.parse_fp_reg_with_size()?;
             Ok(Inst::FmovFromD { rd, rn })
         }
@@ -2058,7 +2916,9 @@ impl<'a> Parser<'a> {
                         self.advance(); // comma
                         self.advance(); // lsl
                         let amount = self.parse_immediate_const_expr("lsl amount")?;
-                        if amount == 12 { return Ok(true); }
+                        if amount == 12 {
+                            return Ok(true);
+                        }
                         return Err(self.err(format!("expected lsl #12, got lsl #{}", amount)));
                     }
                 }
@@ -2124,25 +2984,33 @@ impl<'a> Parser<'a> {
                 let extend = match name.as_str() {
                     "uxtw" => {
                         if rm_is_64bit {
-                            return Err(self.err("uxtw add/sub extensions require a w-register operand".into()));
+                            return Err(self.err(
+                                "uxtw add/sub extensions require a w-register operand".into(),
+                            ));
                         }
                         RegExtend::Uxtw
                     }
                     "uxtx" => {
                         if !rm_is_64bit {
-                            return Err(self.err("uxtx add/sub extensions require an x-register operand".into()));
+                            return Err(self.err(
+                                "uxtx add/sub extensions require an x-register operand".into(),
+                            ));
                         }
                         RegExtend::Uxtx
                     }
                     "sxtw" => {
                         if rm_is_64bit {
-                            return Err(self.err("sxtw add/sub extensions require a w-register operand".into()));
+                            return Err(self.err(
+                                "sxtw add/sub extensions require a w-register operand".into(),
+                            ));
                         }
                         RegExtend::Sxtw
                     }
                     "sxtx" => {
                         if !rm_is_64bit {
-                            return Err(self.err("sxtx add/sub extensions require an x-register operand".into()));
+                            return Err(self.err(
+                                "sxtx add/sub extensions require an x-register operand".into(),
+                            ));
                         }
                         RegExtend::Sxtx
                     }
@@ -2212,7 +3080,9 @@ impl<'a> Parser<'a> {
                     )));
                 }
                 "sxtx" => {
-                    return Err(self.err("sxtx register offsets require an x-register index".into()));
+                    return Err(
+                        self.err("sxtx register offsets require an x-register index".into())
+                    );
                 }
                 _ => {
                     return Err(self.err(format!(
@@ -2230,9 +3100,8 @@ impl<'a> Parser<'a> {
             shift = parse_index_shift(amount, scale)
                 .map_err(|msg| self.err(format!("{} for {}", msg, modifier)))?;
         } else if !is_64bit {
-            return Err(self.err(
-                "32-bit register offsets require an explicit uxtw or sxtw modifier".into()
-            ));
+            return Err(self
+                .err("32-bit register offsets require an explicit uxtw or sxtw modifier".into()));
         }
 
         Ok((rm, extend, shift))
@@ -2266,7 +3135,9 @@ fn parse_gp_reg_name(name: &str) -> Option<GpReg> {
                 return None;
             };
             let num: u8 = num_str.parse().ok()?;
-            if num > 30 { return None; }
+            if num > 30 {
+                return None;
+            }
             let _ = prefix; // both x and w map to the same encoding
             Some(GpReg::new(num))
         }
@@ -2275,18 +3146,25 @@ fn parse_gp_reg_name(name: &str) -> Option<GpReg> {
 
 fn looks_like_gp_register_name(name: &str) -> bool {
     let lower = name.to_lowercase();
-    lower == "sp" || lower == "xzr" || lower == "wzr" || lower.starts_with('x') || lower.starts_with('w')
+    lower == "sp"
+        || lower == "xzr"
+        || lower == "wzr"
+        || lower.starts_with('x')
+        || lower.starts_with('w')
 }
 
 fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
     let lower = name.to_lowercase();
-    let (prefix, num_str) = if lower.starts_with('d') || lower.starts_with('s') || lower.starts_with('q') {
-        (&lower[..1], &lower[1..])
-    } else {
-        return None;
-    };
+    let (prefix, num_str) =
+        if lower.starts_with('d') || lower.starts_with('s') || lower.starts_with('q') {
+            (&lower[..1], &lower[1..])
+        } else {
+            return None;
+        };
     let num: u8 = num_str.parse().ok()?;
-    if num > 31 { return None; }
+    if num > 31 {
+        return None;
+    }
     let _ = prefix;
     Some(FpReg::new(num))
 }
@@ -2355,12 +3233,22 @@ fn mov_alias_imm(rd: GpReg, imm: i64, sf: bool) -> Option<Inst> {
         let shift_bits = shift as u32;
         let movz_imm = ((value >> shift_bits) & 0xFFFF) as u16;
         if value == ((movz_imm as u64) << shift_bits) {
-            return Some(Inst::Movz { rd, imm16: movz_imm, shift, sf });
+            return Some(Inst::Movz {
+                rd,
+                imm16: movz_imm,
+                shift,
+                sf,
+            });
         }
 
         let movn_imm = ((inverted >> shift_bits) & 0xFFFF) as u16;
         if inverted == ((movn_imm as u64) << shift_bits) {
-            return Some(Inst::Movn { rd, imm16: movn_imm, shift, sf });
+            return Some(Inst::Movn {
+                rd,
+                imm16: movn_imm,
+                shift,
+                sf,
+            });
         }
     }
 
@@ -2373,9 +3261,16 @@ mod tests {
 
     fn parse_inst(src: &str) -> Inst {
         let stmts = parse(src).unwrap();
-        stmts.into_iter().find_map(|s| {
-            if let Stmt::Instruction(i) = s { Some(i) } else { None }
-        }).unwrap()
+        stmts
+            .into_iter()
+            .find_map(|s| {
+                if let Stmt::Instruction(i) = s {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
     }
 
     fn parse_stmts(src: &str) -> Vec<Stmt> {
@@ -2390,34 +3285,84 @@ mod tests {
 
     #[test]
     fn parse_add_reg() {
-        assert_eq!(parse_inst("add x0, x1, x2"), Inst::AddReg { rd: X0, rn: X1, rm: X2, sf: true });
+        assert_eq!(
+            parse_inst("add x0, x1, x2"),
+            Inst::AddReg {
+                rd: X0,
+                rn: X1,
+                rm: X2,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_add_w_reg() {
-        assert_eq!(parse_inst("add w3, w4, w5"), Inst::AddReg { rd: W3, rn: W4, rm: W5, sf: false });
+        assert_eq!(
+            parse_inst("add w3, w4, w5"),
+            Inst::AddReg {
+                rd: W3,
+                rn: W4,
+                rm: W5,
+                sf: false
+            }
+        );
     }
 
     #[test]
     fn parse_sub_imm() {
-        assert_eq!(parse_inst("sub x0, x1, #42"), Inst::SubImm { rd: X0, rn: X1, imm12: 42, shift: false, sf: true });
+        assert_eq!(
+            parse_inst("sub x0, x1, #42"),
+            Inst::SubImm {
+                rd: X0,
+                rn: X1,
+                imm12: 42,
+                shift: false,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_add_imm_lsl12() {
-        assert_eq!(parse_inst("add x0, x1, #42, lsl #12"), Inst::AddImm { rd: X0, rn: X1, imm12: 42, shift: true, sf: true });
+        assert_eq!(
+            parse_inst("add x0, x1, #42, lsl #12"),
+            Inst::AddImm {
+                rd: X0,
+                rn: X1,
+                imm12: 42,
+                shift: true,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_add_immediate_expression() {
-        assert_eq!(parse_inst("add x0, x1, #1 + 2"), Inst::AddImm { rd: X0, rn: X1, imm12: 3, shift: false, sf: true });
+        assert_eq!(
+            parse_inst("add x0, x1, #1 + 2"),
+            Inst::AddImm {
+                rd: X0,
+                rn: X1,
+                imm12: 3,
+                shift: false,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_add_shifted_reg() {
         assert_eq!(
             parse_inst("add x0, x1, x2, lsl #3"),
-            Inst::AddShiftReg { rd: X0, rn: X1, rm: X2, shift: RegShift::Lsl, amount: 3, sf: true }
+            Inst::AddShiftReg {
+                rd: X0,
+                rn: X1,
+                rm: X2,
+                shift: RegShift::Lsl,
+                amount: 3,
+                sf: true
+            }
         );
     }
 
@@ -2425,7 +3370,14 @@ mod tests {
     fn parse_sub_shifted_reg() {
         assert_eq!(
             parse_inst("sub w3, w4, w5, asr #7"),
-            Inst::SubShiftReg { rd: W3, rn: W4, rm: W5, shift: RegShift::Asr, amount: 7, sf: false }
+            Inst::SubShiftReg {
+                rd: W3,
+                rn: W4,
+                rm: W5,
+                shift: RegShift::Asr,
+                amount: 7,
+                sf: false
+            }
         );
     }
 
@@ -2433,7 +3385,14 @@ mod tests {
     fn parse_add_extended_reg() {
         assert_eq!(
             parse_inst("add x0, x0, w1, sxtw #3"),
-            Inst::AddExtReg { rd: X0, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 3, sf: true }
+            Inst::AddExtReg {
+                rd: X0,
+                rn: X0,
+                rm: W1,
+                extend: RegExtend::Sxtw,
+                amount: 3,
+                sf: true
+            }
         );
     }
 
@@ -2441,7 +3400,14 @@ mod tests {
     fn parse_add_extended_reg_with_sp_base() {
         assert_eq!(
             parse_inst("add x11, sp, w12, sxtw #2"),
-            Inst::AddExtReg { rd: X11, rn: SP, rm: W12, extend: RegExtend::Sxtw, amount: 2, sf: true }
+            Inst::AddExtReg {
+                rd: X11,
+                rn: SP,
+                rm: W12,
+                extend: RegExtend::Sxtw,
+                amount: 2,
+                sf: true
+            }
         );
     }
 
@@ -2449,20 +3415,42 @@ mod tests {
     fn parse_sub_extended_reg() {
         assert_eq!(
             parse_inst("sub x2, x3, w4, uxtw #2"),
-            Inst::SubExtReg { rd: X2, rn: X3, rm: W4, extend: RegExtend::Uxtw, amount: 2, sf: true }
+            Inst::SubExtReg {
+                rd: X2,
+                rn: X3,
+                rm: W4,
+                extend: RegExtend::Uxtw,
+                amount: 2,
+                sf: true
+            }
         );
     }
 
     #[test]
     fn parse_cmp_reg() {
-        assert_eq!(parse_inst("cmp x0, x1"), Inst::SubsReg { rd: XZR, rn: X0, rm: X1, sf: true });
+        assert_eq!(
+            parse_inst("cmp x0, x1"),
+            Inst::SubsReg {
+                rd: XZR,
+                rn: X0,
+                rm: X1,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_cmp_shifted_reg() {
         assert_eq!(
             parse_inst("cmp x6, x7, lsr #4"),
-            Inst::SubsShiftReg { rd: XZR, rn: X6, rm: X7, shift: RegShift::Lsr, amount: 4, sf: true }
+            Inst::SubsShiftReg {
+                rd: XZR,
+                rn: X6,
+                rm: X7,
+                shift: RegShift::Lsr,
+                amount: 4,
+                sf: true
+            }
         );
     }
 
@@ -2470,20 +3458,43 @@ mod tests {
     fn parse_cmp_extended_reg() {
         assert_eq!(
             parse_inst("cmp x0, w1, sxtw"),
-            Inst::SubsExtReg { rd: XZR, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 0, sf: true }
+            Inst::SubsExtReg {
+                rd: XZR,
+                rn: X0,
+                rm: W1,
+                extend: RegExtend::Sxtw,
+                amount: 0,
+                sf: true
+            }
         );
     }
 
     #[test]
     fn parse_cmp_imm() {
-        assert_eq!(parse_inst("cmp x5, #255"), Inst::SubsImm { rd: XZR, rn: X5, imm12: 255, shift: false, sf: true });
+        assert_eq!(
+            parse_inst("cmp x5, #255"),
+            Inst::SubsImm {
+                rd: XZR,
+                rn: X5,
+                imm12: 255,
+                shift: false,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_cmn_shifted_reg() {
         assert_eq!(
             parse_inst("cmn x8, x9, lsl #1"),
-            Inst::AddsShiftReg { rd: XZR, rn: X8, rm: X9, shift: RegShift::Lsl, amount: 1, sf: true }
+            Inst::AddsShiftReg {
+                rd: XZR,
+                rn: X8,
+                rm: X9,
+                shift: RegShift::Lsl,
+                amount: 1,
+                sf: true
+            }
         );
     }
 
@@ -2491,66 +3502,160 @@ mod tests {
     fn parse_cmn_extended_reg() {
         assert_eq!(
             parse_inst("cmn x6, w7, sxtw #3"),
-            Inst::AddsExtReg { rd: XZR, rn: X6, rm: W7, extend: RegExtend::Sxtw, amount: 3, sf: true }
+            Inst::AddsExtReg {
+                rd: XZR,
+                rn: X6,
+                rm: W7,
+                extend: RegExtend::Sxtw,
+                amount: 3,
+                sf: true
+            }
         );
     }
 
     #[test]
     fn parse_tst_() {
-        assert_eq!(parse_inst("tst x0, x1"), Inst::AndsReg { rd: XZR, rn: X0, rm: X1, sf: true });
+        assert_eq!(
+            parse_inst("tst x0, x1"),
+            Inst::AndsReg {
+                rd: XZR,
+                rn: X0,
+                rm: X1,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_mul_() {
-        assert_eq!(parse_inst("mul x6, x7, x8"), Inst::Mul { rd: X6, rn: X7, rm: X8, sf: true });
+        assert_eq!(
+            parse_inst("mul x6, x7, x8"),
+            Inst::Mul {
+                rd: X6,
+                rn: X7,
+                rm: X8,
+                sf: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_madd_() {
+        assert_eq!(
+            parse_inst("madd w0, w0, w0, w8"),
+            Inst::Madd {
+                rd: W0,
+                rn: W0,
+                rm: W0,
+                ra: W8,
+                sf: false
+            }
+        );
     }
 
     #[test]
     fn parse_and_() {
-        assert_eq!(parse_inst("and x3, x4, x5"), Inst::AndReg { rd: X3, rn: X4, rm: X5, sf: true });
+        assert_eq!(
+            parse_inst("and x3, x4, x5"),
+            Inst::AndReg {
+                rd: X3,
+                rn: X4,
+                rm: X5,
+                sf: true
+            }
+        );
     }
 
     // ---- Move ----
 
     #[test]
     fn parse_mov_imm() {
-        assert_eq!(parse_inst("mov x0, #42"), Inst::Movz { rd: X0, imm16: 42, shift: 0, sf: true });
+        assert_eq!(
+            parse_inst("mov x0, #42"),
+            Inst::Movz {
+                rd: X0,
+                imm16: 42,
+                shift: 0,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_mov_reg() {
-        assert_eq!(parse_inst("mov x0, x1"), Inst::OrrReg { rd: X0, rn: XZR, rm: X1, sf: true });
+        assert_eq!(
+            parse_inst("mov x0, x1"),
+            Inst::OrrReg {
+                rd: X0,
+                rn: XZR,
+                rm: X1,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_neg_alias() {
-        assert_eq!(parse_inst("neg x0, x1"), Inst::SubReg { rd: X0, rn: XZR, rm: X1, sf: true });
+        assert_eq!(
+            parse_inst("neg x0, x1"),
+            Inst::SubReg {
+                rd: X0,
+                rn: XZR,
+                rm: X1,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_neg_shift_alias() {
         assert_eq!(
             parse_inst("neg x0, x1, lsl #2"),
-            Inst::SubShiftReg { rd: X0, rn: XZR, rm: X1, shift: RegShift::Lsl, amount: 2, sf: true }
+            Inst::SubShiftReg {
+                rd: X0,
+                rn: XZR,
+                rm: X1,
+                shift: RegShift::Lsl,
+                amount: 2,
+                sf: true
+            }
         );
     }
 
     #[test]
     fn error_neg_extend_alias_rejects_zero_base_register() {
         let err = parse_err("neg x8, w9, sxtw #2");
-        assert!(err.contains("x-register or sp base operand"), "got: {}", err);
+        assert!(
+            err.contains("x-register or sp base operand"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
     fn parse_mvn_alias() {
-        assert_eq!(parse_inst("mvn x0, x1"), Inst::OrnReg { rd: X0, rn: XZR, rm: X1, sf: true });
+        assert_eq!(
+            parse_inst("mvn x0, x1"),
+            Inst::OrnReg {
+                rd: X0,
+                rn: XZR,
+                rm: X1,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_cset_alias() {
         assert_eq!(
             parse_inst("cset x0, eq"),
-            Inst::Csinc { rd: X0, rn: XZR, rm: XZR, cond: Cond::NE, sf: true }
+            Inst::Csinc {
+                rd: X0,
+                rn: XZR,
+                rm: XZR,
+                cond: Cond::NE,
+                sf: true
+            }
         );
     }
 
@@ -2558,7 +3663,13 @@ mod tests {
     fn parse_csel() {
         assert_eq!(
             parse_inst("csel w0, w0, w1, gt"),
-            Inst::Csel { rd: W0, rn: W0, rm: W1, cond: Cond::GT, sf: false }
+            Inst::Csel {
+                rd: W0,
+                rn: W0,
+                rm: W1,
+                cond: Cond::GT,
+                sf: false
+            }
         );
     }
 
@@ -2566,7 +3677,13 @@ mod tests {
     fn parse_csinc() {
         assert_eq!(
             parse_inst("csinc x2, x3, x4, ne"),
-            Inst::Csinc { rd: X2, rn: X3, rm: X4, cond: Cond::NE, sf: true }
+            Inst::Csinc {
+                rd: X2,
+                rn: X3,
+                rm: X4,
+                cond: Cond::NE,
+                sf: true
+            }
         );
     }
 
@@ -2574,7 +3691,13 @@ mod tests {
     fn parse_csinv() {
         assert_eq!(
             parse_inst("csinv x2, x3, x4, ne"),
-            Inst::Csinv { rd: X2, rn: X3, rm: X4, cond: Cond::NE, sf: true }
+            Inst::Csinv {
+                rd: X2,
+                rn: X3,
+                rm: X4,
+                cond: Cond::NE,
+                sf: true
+            }
         );
     }
 
@@ -2582,7 +3705,13 @@ mod tests {
     fn parse_csneg() {
         assert_eq!(
             parse_inst("csneg x5, x6, x7, gt"),
-            Inst::Csneg { rd: X5, rn: X6, rm: X7, cond: Cond::GT, sf: true }
+            Inst::Csneg {
+                rd: X5,
+                rn: X6,
+                rm: X7,
+                cond: Cond::GT,
+                sf: true
+            }
         );
     }
 
@@ -2590,7 +3719,13 @@ mod tests {
     fn parse_cinc_alias() {
         assert_eq!(
             parse_inst("cinc w2, w3, ne"),
-            Inst::Csinc { rd: W2, rn: W3, rm: W3, cond: Cond::EQ, sf: false }
+            Inst::Csinc {
+                rd: W2,
+                rn: W3,
+                rm: W3,
+                cond: Cond::EQ,
+                sf: false
+            }
         );
     }
 
@@ -2598,7 +3733,13 @@ mod tests {
     fn parse_csetm_alias() {
         assert_eq!(
             parse_inst("csetm w8, eq"),
-            Inst::Csinv { rd: W8, rn: XZR, rm: XZR, cond: Cond::NE, sf: false }
+            Inst::Csinv {
+                rd: W8,
+                rn: XZR,
+                rm: XZR,
+                cond: Cond::NE,
+                sf: false
+            }
         );
     }
 
@@ -2606,7 +3747,13 @@ mod tests {
     fn parse_cinv_alias() {
         assert_eq!(
             parse_inst("cinv w9, w10, mi"),
-            Inst::Csinv { rd: W9, rn: W10, rm: W10, cond: Cond::PL, sf: false }
+            Inst::Csinv {
+                rd: W9,
+                rn: W10,
+                rm: W10,
+                cond: Cond::PL,
+                sf: false
+            }
         );
     }
 
@@ -2614,20 +3761,42 @@ mod tests {
     fn parse_cneg_alias() {
         assert_eq!(
             parse_inst("cneg x11, x12, lt"),
-            Inst::Csneg { rd: X11, rn: X12, rm: X12, cond: Cond::GE, sf: true }
+            Inst::Csneg {
+                rd: X11,
+                rn: X12,
+                rm: X12,
+                cond: Cond::GE,
+                sf: true
+            }
         );
     }
 
     #[test]
     fn parse_movz_shift() {
-        assert_eq!(parse_inst("movz x0, #0x1234, lsl #16"), Inst::Movz { rd: X0, imm16: 0x1234, shift: 16, sf: true });
+        assert_eq!(
+            parse_inst("movz x0, #0x1234, lsl #16"),
+            Inst::Movz {
+                rd: X0,
+                imm16: 0x1234,
+                shift: 16,
+                sf: true
+            }
+        );
     }
 
     // ---- Shifts ----
 
     #[test]
     fn parse_lsl_() {
-        assert_eq!(parse_inst("lsl x0, x1, #3"), Inst::LslImm { rd: X0, rn: X1, amount: 3, sf: true });
+        assert_eq!(
+            parse_inst("lsl x0, x1, #3"),
+            Inst::LslImm {
+                rd: X0,
+                rn: X1,
+                amount: 3,
+                sf: true
+            }
+        );
     }
 
     // ---- Branches ----
@@ -2644,27 +3813,61 @@ mod tests {
 
     #[test]
     fn parse_b_eq() {
-        assert_eq!(parse_inst("b.eq #8"), Inst::BCond { cond: Cond::EQ, offset: 8 });
+        assert_eq!(
+            parse_inst("b.eq #8"),
+            Inst::BCond {
+                cond: Cond::EQ,
+                offset: 8
+            }
+        );
     }
 
     #[test]
     fn parse_b_ne() {
-        assert_eq!(parse_inst("b.ne #12"), Inst::BCond { cond: Cond::NE, offset: 12 });
+        assert_eq!(
+            parse_inst("b.ne #12"),
+            Inst::BCond {
+                cond: Cond::NE,
+                offset: 12
+            }
+        );
     }
 
     #[test]
     fn parse_b_ge() {
-        assert_eq!(parse_inst("b.ge #16"), Inst::BCond { cond: Cond::GE, offset: 16 });
+        assert_eq!(
+            parse_inst("b.ge #16"),
+            Inst::BCond {
+                cond: Cond::GE,
+                offset: 16
+            }
+        );
     }
 
     #[test]
     fn parse_tbz_() {
-        assert_eq!(parse_inst("tbz x0, #5, #8"), Inst::Tbz { rt: X0, bit: 5, offset: 8, sf: true });
+        assert_eq!(
+            parse_inst("tbz x0, #5, #8"),
+            Inst::Tbz {
+                rt: X0,
+                bit: 5,
+                offset: 8,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_tbnz_() {
-        assert_eq!(parse_inst("tbnz w1, #31, #12"), Inst::Tbnz { rt: W1, bit: 31, offset: 12, sf: false });
+        assert_eq!(
+            parse_inst("tbnz w1, #31, #12"),
+            Inst::Tbnz {
+                rt: W1,
+                bit: 31,
+                offset: 12,
+                sf: false
+            }
+        );
     }
 
     #[test]
@@ -2672,8 +3875,17 @@ mod tests {
         assert_eq!(
             parse_stmts("tbz x0, #5, target"),
             vec![Stmt::InstructionWithReloc(
-                Inst::Tbz { rt: X0, bit: 5, offset: 0, sf: true },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Branch14, addend: 0 },
+                Inst::Tbz {
+                    rt: X0,
+                    bit: 5,
+                    offset: 0,
+                    sf: true
+                },
+                LabelRef {
+                    symbol: "target".into(),
+                    kind: RelocKind::Branch14,
+                    addend: 0
+                },
             )]
         );
     }
@@ -2684,8 +3896,17 @@ mod tests {
             parse_stmts("tbnz x0, #33, 1f\n1:\n"),
             vec![
                 Stmt::InstructionWithReloc(
-                    Inst::Tbnz { rt: X0, bit: 33, offset: 0, sf: true },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch14, addend: 0 },
+                    Inst::Tbnz {
+                        rt: X0,
+                        bit: 33,
+                        offset: 0,
+                        sf: true
+                    },
+                    LabelRef {
+                        symbol: ".Ltmp$1$1".into(),
+                        kind: RelocKind::Branch14,
+                        addend: 0
+                    },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -2698,7 +3919,11 @@ mod tests {
             parse_stmts("adr x0, target"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Adr { rd: X0, imm: 0 },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Adr21, addend: 0 },
+                LabelRef {
+                    symbol: "target".into(),
+                    kind: RelocKind::Adr21,
+                    addend: 0
+                },
             )]
         );
     }
@@ -2715,7 +3940,11 @@ mod tests {
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::Adr { rd: X0, imm: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Adr21, addend: 0 },
+                    LabelRef {
+                        symbol: ".Ltmp$1$1".into(),
+                        kind: RelocKind::Adr21,
+                        addend: 0
+                    },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -2724,7 +3953,14 @@ mod tests {
 
     #[test]
     fn parse_cbz_() {
-        assert_eq!(parse_inst("cbz x0, #8"), Inst::Cbz { rt: X0, offset: 8, sf: true });
+        assert_eq!(
+            parse_inst("cbz x0, #8"),
+            Inst::Cbz {
+                rt: X0,
+                offset: 8,
+                sf: true
+            }
+        );
     }
 
     #[test]
@@ -2754,7 +3990,11 @@ mod tests {
     #[test]
     fn error_extended_add_sub_rejects_zero_base_register() {
         let err = parse_err("sub x11, xzr, w12, sxtw #2");
-        assert!(err.contains("x-register or sp base operand"), "got: {}", err);
+        assert!(
+            err.contains("x-register or sp base operand"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -2771,19 +4011,39 @@ mod tests {
 
     #[test]
     fn parse_ldr_base() {
-        assert_eq!(parse_inst("ldr x0, [x1]"), Inst::LdrImm64 { rt: X0, rn: X1, offset: 0 });
+        assert_eq!(
+            parse_inst("ldr x0, [x1]"),
+            Inst::LdrImm64 {
+                rt: X0,
+                rn: X1,
+                offset: 0
+            }
+        );
     }
 
     #[test]
     fn parse_ldr_offset() {
-        assert_eq!(parse_inst("ldr x0, [x1, #8]"), Inst::LdrImm64 { rt: X0, rn: X1, offset: 8 });
+        assert_eq!(
+            parse_inst("ldr x0, [x1, #8]"),
+            Inst::LdrImm64 {
+                rt: X0,
+                rn: X1,
+                offset: 8
+            }
+        );
     }
 
     #[test]
     fn parse_ldr_register_offset() {
         assert_eq!(
             parse_inst("ldr x0, [x1, x2]"),
-            Inst::LdrReg64 { rt: X0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }
+            Inst::LdrReg64 {
+                rt: X0,
+                rn: X1,
+                rm: X2,
+                extend: AddrExtend::Lsl,
+                shift: false
+            }
         );
     }
 
@@ -2791,43 +4051,161 @@ mod tests {
     fn parse_ldr_register_offset_with_extend() {
         assert_eq!(
             parse_inst("ldr x6, [x7, w8, uxtw #3]"),
-            Inst::LdrReg64 { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Uxtw, shift: true }
+            Inst::LdrReg64 {
+                rt: X6,
+                rn: X7,
+                rm: W8,
+                extend: AddrExtend::Uxtw,
+                shift: true
+            }
         );
     }
 
     #[test]
     fn parse_str_offset() {
-        assert_eq!(parse_inst("str x2, [x3, #16]"), Inst::StrImm64 { rt: X2, rn: X3, offset: 16 });
+        assert_eq!(
+            parse_inst("str x2, [x3, #16]"),
+            Inst::StrImm64 {
+                rt: X2,
+                rn: X3,
+                offset: 16
+            }
+        );
     }
 
     #[test]
     fn parse_str_register_offset() {
         assert_eq!(
             parse_inst("str w9, [x10, x11]"),
-            Inst::StrReg32 { rt: W9, rn: X10, rm: X11, extend: AddrExtend::Lsl, shift: false }
+            Inst::StrReg32 {
+                rt: W9,
+                rn: X10,
+                rm: X11,
+                extend: AddrExtend::Lsl,
+                shift: false
+            }
         );
     }
 
     #[test]
     fn parse_ldr_w() {
-        assert_eq!(parse_inst("ldr w4, [x5, #4]"), Inst::LdrImm32 { rt: W4, rn: X5, offset: 4 });
+        assert_eq!(
+            parse_inst("ldr w4, [x5, #4]"),
+            Inst::LdrImm32 {
+                rt: W4,
+                rn: X5,
+                offset: 4
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_negative_offset_aliases_to_ldur() {
+        assert_eq!(
+            parse_inst("ldr x9, [x29, #-8]"),
+            Inst::Ldur64 {
+                rt: X9,
+                rn: X29,
+                offset: -8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_str_negative_offset_aliases_to_stur() {
+        assert_eq!(
+            parse_inst("str w6, [x7, #-4]"),
+            Inst::Stur32 {
+                rt: W6,
+                rn: X7,
+                offset: -4
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldur_() {
+        assert_eq!(
+            parse_inst("ldur x9, [x29, #-8]"),
+            Inst::Ldur64 {
+                rt: X9,
+                rn: X29,
+                offset: -8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_stur_() {
+        assert_eq!(
+            parse_inst("stur w6, [x7, #-4]"),
+            Inst::Stur32 {
+                rt: W6,
+                rn: X7,
+                offset: -4
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_w_post_index() {
+        assert_eq!(
+            parse_inst("ldr w0, [x1], #4"),
+            Inst::LdrPost32 {
+                rt: W0,
+                rn: X1,
+                offset: 4
+            }
+        );
+    }
+
+    #[test]
+    fn parse_str_w_pre_index() {
+        assert_eq!(
+            parse_inst("str w2, [x3, #-4]!"),
+            Inst::StrPre32 {
+                rt: W2,
+                rn: X3,
+                offset: -4
+            }
+        );
     }
 
     #[test]
     fn parse_ldr_d_base() {
-        assert_eq!(parse_inst("ldr d0, [x1]"), Inst::LdrFpImm64 { rt: D0, rn: X1, offset: 0 });
+        assert_eq!(
+            parse_inst("ldr d0, [x1]"),
+            Inst::LdrFpImm64 {
+                rt: D0,
+                rn: X1,
+                offset: 0
+            }
+        );
     }
 
     #[test]
     fn parse_str_d_offset() {
-        assert_eq!(parse_inst("str d2, [x3, #16]"), Inst::StrFpImm64 { rt: D2, rn: X3, offset: 16 });
+        assert_eq!(
+            parse_inst("str d2, [x3, #16]"),
+            Inst::StrFpImm64 {
+                rt: D2,
+                rn: X3,
+                offset: 16
+            }
+        );
     }
 
     #[test]
     fn parse_ldr_s_register_offset() {
         assert_eq!(
             parse_inst("ldr s4, [x5, x6]"),
-            Inst::LdrFpReg32 { rt: S4, rn: X5, rm: X6, extend: AddrExtend::Lsl, shift: false }
+            Inst::LdrFpReg32 {
+                rt: S4,
+                rn: X5,
+                rm: X6,
+                extend: AddrExtend::Lsl,
+                shift: false
+            }
         );
     }
 
@@ -2835,30 +4213,63 @@ mod tests {
     fn parse_str_s_register_offset_with_extend() {
         assert_eq!(
             parse_inst("str s7, [x8, w9, uxtw #2]"),
-            Inst::StrFpReg32 { rt: S7, rn: X8, rm: W9, extend: AddrExtend::Uxtw, shift: true }
+            Inst::StrFpReg32 {
+                rt: S7,
+                rn: X8,
+                rm: W9,
+                extend: AddrExtend::Uxtw,
+                shift: true
+            }
         );
     }
 
     #[test]
     fn parse_ldr_d_post_index() {
-        assert_eq!(parse_inst("ldr d0, [sp], #8"), Inst::LdrFpPost64 { rt: D0, rn: SP, offset: 8 });
+        assert_eq!(
+            parse_inst("ldr d0, [sp], #8"),
+            Inst::LdrFpPost64 {
+                rt: D0,
+                rn: SP,
+                offset: 8
+            }
+        );
     }
 
     #[test]
     fn parse_str_s_pre_index() {
-        assert_eq!(parse_inst("str s3, [sp, #-8]!"), Inst::StrFpPre32 { rt: S3, rn: SP, offset: -8 });
+        assert_eq!(
+            parse_inst("str s3, [sp, #-8]!"),
+            Inst::StrFpPre32 {
+                rt: S3,
+                rn: SP,
+                offset: -8
+            }
+        );
     }
 
     #[test]
     fn parse_ldrb_() {
-        assert_eq!(parse_inst("ldrb w0, [x1, #3]"), Inst::Ldrb { rt: W0, rn: X1, offset: 3 });
+        assert_eq!(
+            parse_inst("ldrb w0, [x1, #3]"),
+            Inst::Ldrb {
+                rt: W0,
+                rn: X1,
+                offset: 3
+            }
+        );
     }
 
     #[test]
     fn parse_ldrb_register_offset() {
         assert_eq!(
             parse_inst("ldrb w0, [x1, x2]"),
-            Inst::LdrbReg { rt: W0, rn: X1, rm: X2, extend: AddrExtend::Lsl, shift: false }
+            Inst::LdrbReg {
+                rt: W0,
+                rn: X1,
+                rm: X2,
+                extend: AddrExtend::Lsl,
+                shift: false
+            }
         );
     }
 
@@ -2866,7 +4277,13 @@ mod tests {
     fn parse_ldrh_register_offset() {
         assert_eq!(
             parse_inst("ldrh w3, [x4, w5, uxtw #1]"),
-            Inst::LdrhReg { rt: W3, rn: X4, rm: W5, extend: AddrExtend::Uxtw, shift: true }
+            Inst::LdrhReg {
+                rt: W3,
+                rn: X4,
+                rm: W5,
+                extend: AddrExtend::Uxtw,
+                shift: true
+            }
         );
     }
 
@@ -2874,7 +4291,13 @@ mod tests {
     fn parse_ldrsw_register_offset() {
         assert_eq!(
             parse_inst("ldrsw x6, [x7, w8, sxtw #2]"),
-            Inst::LdrswReg { rt: X6, rn: X7, rm: W8, extend: AddrExtend::Sxtw, shift: true }
+            Inst::LdrswReg {
+                rt: X6,
+                rn: X7,
+                rm: W8,
+                extend: AddrExtend::Sxtw,
+                shift: true
+            }
         );
     }
 
@@ -2884,14 +4307,21 @@ mod tests {
             parse_stmts("ldr x0, target"),
             vec![Stmt::InstructionWithReloc(
                 Inst::LdrLit64 { rt: X0, offset: 0 },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19, addend: 0 },
+                LabelRef {
+                    symbol: "target".into(),
+                    kind: RelocKind::Literal19,
+                    addend: 0
+                },
             )]
         );
     }
 
     #[test]
     fn parse_ldr_literal_offset() {
-        assert_eq!(parse_inst("ldr x0, #8"), Inst::LdrLit64 { rt: X0, offset: 8 });
+        assert_eq!(
+            parse_inst("ldr x0, #8"),
+            Inst::LdrLit64 { rt: X0, offset: 8 }
+        );
     }
 
     #[test]
@@ -2900,14 +4330,24 @@ mod tests {
             parse_stmts("ldr d10, target"),
             vec![Stmt::InstructionWithReloc(
                 Inst::LdrFpLit64 { rt: D10, offset: 0 },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19, addend: 0 },
+                LabelRef {
+                    symbol: "target".into(),
+                    kind: RelocKind::Literal19,
+                    addend: 0
+                },
             )]
         );
     }
 
     #[test]
     fn parse_ldr_s_literal_offset() {
-        assert_eq!(parse_inst("ldr s11, #20"), Inst::LdrFpLit32 { rt: S11, offset: 20 });
+        assert_eq!(
+            parse_inst("ldr s11, #20"),
+            Inst::LdrFpLit32 {
+                rt: S11,
+                offset: 20
+            }
+        );
     }
 
     #[test]
@@ -2917,7 +4357,11 @@ mod tests {
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::LdrLit64 { rt: X0, offset: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19, addend: 0 },
+                    LabelRef {
+                        symbol: ".Ltmp$1$1".into(),
+                        kind: RelocKind::Literal19,
+                        addend: 0
+                    },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -2931,7 +4375,11 @@ mod tests {
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::LdrFpLit32 { rt: S0, offset: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19, addend: 0 },
+                    LabelRef {
+                        symbol: ".Ltmp$1$1".into(),
+                        kind: RelocKind::Literal19,
+                        addend: 0
+                    },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -2944,14 +4392,21 @@ mod tests {
             parse_stmts("ldrsw x0, target"),
             vec![Stmt::InstructionWithReloc(
                 Inst::LdrswLit { rt: X0, offset: 0 },
-                LabelRef { symbol: "target".into(), kind: RelocKind::Literal19, addend: 0 },
+                LabelRef {
+                    symbol: "target".into(),
+                    kind: RelocKind::Literal19,
+                    addend: 0
+                },
             )]
         );
     }
 
     #[test]
     fn parse_ldrsw_literal_offset() {
-        assert_eq!(parse_inst("ldrsw x1, #12"), Inst::LdrswLit { rt: X1, offset: 12 });
+        assert_eq!(
+            parse_inst("ldrsw x1, #12"),
+            Inst::LdrswLit { rt: X1, offset: 12 }
+        );
     }
 
     #[test]
@@ -2961,7 +4416,11 @@ mod tests {
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::LdrswLit { rt: X0, offset: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Literal19, addend: 0 },
+                    LabelRef {
+                        symbol: ".Ltmp$1$1".into(),
+                        kind: RelocKind::Literal19,
+                        addend: 0
+                    },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -2970,38 +4429,80 @@ mod tests {
 
     #[test]
     fn parse_stp_pre() {
-        assert_eq!(parse_inst("stp x29, x30, [sp, #-16]!"),
-            Inst::StpPre64 { rt1: X29, rt2: X30, rn: SP, offset: -16 });
+        assert_eq!(
+            parse_inst("stp x29, x30, [sp, #-16]!"),
+            Inst::StpPre64 {
+                rt1: X29,
+                rt2: X30,
+                rn: SP,
+                offset: -16
+            }
+        );
     }
 
     #[test]
     fn parse_ldp_d_pre() {
-        assert_eq!(parse_inst("ldp d8, d9, [sp, #-16]!"),
-            Inst::LdpFpPre64 { rt1: D8, rt2: D9, rn: SP, offset: -16 });
+        assert_eq!(
+            parse_inst("ldp d8, d9, [sp, #-16]!"),
+            Inst::LdpFpPre64 {
+                rt1: D8,
+                rt2: D9,
+                rn: SP,
+                offset: -16
+            }
+        );
     }
 
     #[test]
     fn parse_stp_d_post() {
-        assert_eq!(parse_inst("stp d10, d11, [sp], #16"),
-            Inst::StpFpPost64 { rt1: D10, rt2: D11, rn: SP, offset: 16 });
+        assert_eq!(
+            parse_inst("stp d10, d11, [sp], #16"),
+            Inst::StpFpPost64 {
+                rt1: D10,
+                rt2: D11,
+                rn: SP,
+                offset: 16
+            }
+        );
     }
 
     #[test]
     fn parse_ldp_d_offset() {
-        assert_eq!(parse_inst("ldp d12, d13, [sp, #32]"),
-            Inst::LdpFpOff64 { rt1: D12, rt2: D13, rn: SP, offset: 32 });
+        assert_eq!(
+            parse_inst("ldp d12, d13, [sp, #32]"),
+            Inst::LdpFpOff64 {
+                rt1: D12,
+                rt2: D13,
+                rn: SP,
+                offset: 32
+            }
+        );
     }
 
     #[test]
     fn parse_stp_s_post() {
-        assert_eq!(parse_inst("stp s0, s1, [sp], #8"),
-            Inst::StpFpPost32 { rt1: S0, rt2: S1, rn: SP, offset: 8 });
+        assert_eq!(
+            parse_inst("stp s0, s1, [sp], #8"),
+            Inst::StpFpPost32 {
+                rt1: S0,
+                rt2: S1,
+                rn: SP,
+                offset: 8
+            }
+        );
     }
 
     #[test]
     fn parse_ldp_s_pre() {
-        assert_eq!(parse_inst("ldp s2, s3, [sp, #-8]!"),
-            Inst::LdpFpPre32 { rt1: S2, rt2: S3, rn: SP, offset: -8 });
+        assert_eq!(
+            parse_inst("ldp s2, s3, [sp, #-8]!"),
+            Inst::LdpFpPre32 {
+                rt1: S2,
+                rt2: S3,
+                rn: SP,
+                offset: -8
+            }
+        );
     }
 
     #[test]
@@ -3012,38 +4513,138 @@ mod tests {
 
     #[test]
     fn parse_ldp_post() {
-        assert_eq!(parse_inst("ldp x29, x30, [sp], #16"),
-            Inst::LdpPost64 { rt1: X29, rt2: X30, rn: SP, offset: 16 });
+        assert_eq!(
+            parse_inst("ldp x29, x30, [sp], #16"),
+            Inst::LdpPost64 {
+                rt1: X29,
+                rt2: X30,
+                rn: SP,
+                offset: 16
+            }
+        );
     }
 
     #[test]
     fn parse_stp_post() {
-        assert_eq!(parse_inst("stp x29, x30, [sp], #16"),
-            Inst::StpPost64 { rt1: X29, rt2: X30, rn: SP, offset: 16 });
+        assert_eq!(
+            parse_inst("stp x29, x30, [sp], #16"),
+            Inst::StpPost64 {
+                rt1: X29,
+                rt2: X30,
+                rn: SP,
+                offset: 16
+            }
+        );
     }
 
     #[test]
     fn parse_ldp_pre() {
-        assert_eq!(parse_inst("ldp x29, x30, [sp, #-16]!"),
-            Inst::LdpPre64 { rt1: X29, rt2: X30, rn: SP, offset: -16 });
+        assert_eq!(
+            parse_inst("ldp x29, x30, [sp, #-16]!"),
+            Inst::LdpPre64 {
+                rt1: X29,
+                rt2: X30,
+                rn: SP,
+                offset: -16
+            }
+        );
     }
 
     #[test]
     fn parse_ldp_off() {
-        assert_eq!(parse_inst("ldp x19, x20, [sp, #16]"),
-            Inst::LdpOff64 { rt1: X19, rt2: X20, rn: SP, offset: 16 });
+        assert_eq!(
+            parse_inst("ldp x19, x20, [sp, #16]"),
+            Inst::LdpOff64 {
+                rt1: X19,
+                rt2: X20,
+                rn: SP,
+                offset: 16
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldp_w_off() {
+        assert_eq!(
+            parse_inst("ldp w9, w8, [x8]"),
+            Inst::LdpOff32 {
+                rt1: W9,
+                rt2: W8,
+                rn: X8,
+                offset: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parse_stp_w_off() {
+        assert_eq!(
+            parse_inst("stp w1, w2, [sp, #16]"),
+            Inst::StpOff32 {
+                rt1: W1,
+                rt2: W2,
+                rn: SP,
+                offset: 16
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldp_w_post() {
+        assert_eq!(
+            parse_inst("ldp w9, w8, [sp], #8"),
+            Inst::LdpPost32 {
+                rt1: W9,
+                rt2: W8,
+                rn: SP,
+                offset: 8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldp_w_pre() {
+        assert_eq!(
+            parse_inst("ldp w9, w8, [sp, #-8]!"),
+            Inst::LdpPre32 {
+                rt1: W9,
+                rt2: W8,
+                rn: SP,
+                offset: -8
+            }
+        );
+    }
+
+    #[test]
+    fn error_ldp_gp_pair_requires_matching_widths() {
+        let err = parse_err("ldp x0, w1, [sp]");
+        assert!(err.contains("matching register widths"), "got: {}", err);
     }
 
     // ---- FP ----
 
     #[test]
     fn parse_fadd_d() {
-        assert_eq!(parse_inst("fadd d0, d1, d2"), Inst::FaddD { rd: D0, rn: D1, rm: D2 });
+        assert_eq!(
+            parse_inst("fadd d0, d1, d2"),
+            Inst::FaddD {
+                rd: D0,
+                rn: D1,
+                rm: D2
+            }
+        );
     }
 
     #[test]
     fn parse_fadd_s() {
-        assert_eq!(parse_inst("fadd s0, s1, s2"), Inst::FaddS { rd: S0, rn: S1, rm: S2 });
+        assert_eq!(
+            parse_inst("fadd s0, s1, s2"),
+            Inst::FaddS {
+                rd: S0,
+                rn: S1,
+                rm: S2
+            }
+        );
     }
 
     #[test]
@@ -3053,12 +4654,23 @@ mod tests {
 
     #[test]
     fn parse_fmadd_() {
-        assert_eq!(parse_inst("fmadd d0, d1, d2, d3"), Inst::FmaddD { rd: D0, rn: D1, rm: D2, ra: D3 });
+        assert_eq!(
+            parse_inst("fmadd d0, d1, d2, d3"),
+            Inst::FmaddD {
+                rd: D0,
+                rn: D1,
+                rm: D2,
+                ra: D3
+            }
+        );
     }
 
     #[test]
     fn parse_fcvtzs_() {
-        assert_eq!(parse_inst("fcvtzs x0, d1"), Inst::FcvtzsD { rd: X0, rn: D1 });
+        assert_eq!(
+            parse_inst("fcvtzs x0, d1"),
+            Inst::FcvtzsD { rd: X0, rn: D1 }
+        );
     }
 
     #[test]
@@ -3073,7 +4685,10 @@ mod tests {
 
     #[test]
     fn parse_fmov_from_fp() {
-        assert_eq!(parse_inst("fmov x0, d1"), Inst::FmovFromD { rd: X0, rn: D1 });
+        assert_eq!(
+            parse_inst("fmov x0, d1"),
+            Inst::FmovFromD { rd: X0, rn: D1 }
+        );
     }
 
     // ---- FP single-precision ----
@@ -3100,7 +4715,15 @@ mod tests {
 
     #[test]
     fn parse_fmadd_s() {
-        assert_eq!(parse_inst("fmadd s0, s1, s2, s3"), Inst::FmaddS { rd: S0, rn: S1, rm: S2, ra: S3 });
+        assert_eq!(
+            parse_inst("fmadd s0, s1, s2, s3"),
+            Inst::FmaddS {
+                rd: S0,
+                rn: S1,
+                rm: S2,
+                ra: S3
+            }
+        );
     }
 
     // ---- System ----
@@ -3137,22 +4760,42 @@ mod tests {
 
     #[test]
     fn parse_dmb_ish() {
-        assert_eq!(parse_inst("dmb ish"), Inst::Dmb { option: BarrierOpt::Ish });
+        assert_eq!(
+            parse_inst("dmb ish"),
+            Inst::Dmb {
+                option: BarrierOpt::Ish
+            }
+        );
     }
 
     #[test]
     fn parse_dsb_ishst() {
-        assert_eq!(parse_inst("dsb ishst"), Inst::Dsb { option: BarrierOpt::Ishst });
+        assert_eq!(
+            parse_inst("dsb ishst"),
+            Inst::Dsb {
+                option: BarrierOpt::Ishst
+            }
+        );
     }
 
     #[test]
     fn parse_isb_default_sy() {
-        assert_eq!(parse_inst("isb"), Inst::Isb { option: BarrierOpt::Sy });
+        assert_eq!(
+            parse_inst("isb"),
+            Inst::Isb {
+                option: BarrierOpt::Sy
+            }
+        );
     }
 
     #[test]
     fn parse_isb_sy() {
-        assert_eq!(parse_inst("isb sy"), Inst::Isb { option: BarrierOpt::Sy });
+        assert_eq!(
+            parse_inst("isb sy"),
+            Inst::Isb {
+                option: BarrierOpt::Sy
+            }
+        );
     }
 
     #[test]
@@ -3183,13 +4826,19 @@ mod tests {
     #[test]
     fn parse_global_directive() {
         let stmts = parse_stmts(".global _main");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Global("_main".into()))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Global("_main".into()))]
+        );
     }
 
     #[test]
     fn parse_extern_directive() {
         let stmts = parse_stmts(".extern _puts");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Extern("_puts".into()))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Extern("_puts".into()))]
+        );
     }
 
     #[test]
@@ -3208,25 +4857,37 @@ mod tests {
     #[test]
     fn parse_private_extern_directive() {
         let stmts = parse_stmts(".private_extern _hidden");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::PrivateExtern("_hidden".into()))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::PrivateExtern("_hidden".into()))]
+        );
     }
 
     #[test]
     fn parse_weak_reference_directive() {
         let stmts = parse_stmts(".weak_reference _puts");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::WeakReference("_puts".into()))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::WeakReference("_puts".into()))]
+        );
     }
 
     #[test]
     fn parse_weak_definition_directive() {
         let stmts = parse_stmts(".weak_definition _entry");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::WeakDefinition("_entry".into()))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::WeakDefinition("_entry".into()))]
+        );
     }
 
     #[test]
     fn parse_set_directive() {
         let stmts = parse_stmts(".set ABS1, 7");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Set("ABS1".into(), Expr::Int(7)))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Set("ABS1".into(), Expr::Int(7)))]
+        );
     }
 
     #[test]
@@ -3236,7 +4897,10 @@ mod tests {
             stmts,
             vec![Stmt::Directive(Directive::Set(
                 "ABS2".into(),
-                Expr::Add(Box::new(Expr::Symbol("ABS1".into())), Box::new(Expr::Int(5))),
+                Expr::Add(
+                    Box::new(Expr::Symbol("ABS1".into())),
+                    Box::new(Expr::Int(5))
+                ),
             ))]
         );
     }
@@ -3244,7 +4908,10 @@ mod tests {
     #[test]
     fn parse_asciz_directive() {
         let stmts = parse_stmts(".asciz \"Hello\\n\"");
-        assert_eq!(stmts, vec![Stmt::Directive(Directive::Asciz(b"Hello\n\0".to_vec()))]);
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Asciz(b"Hello\n\0".to_vec()))]
+        );
     }
 
     #[test]
@@ -3317,7 +4984,10 @@ mod tests {
         let stmts = parse_stmts(".short 0x1234, 2");
         assert_eq!(
             stmts,
-            vec![Stmt::Directive(Directive::Short(vec![Expr::Int(0x1234), Expr::Int(2)]))]
+            vec![Stmt::Directive(Directive::Short(vec![
+                Expr::Int(0x1234),
+                Expr::Int(2)
+            ]))]
         );
     }
 
@@ -3338,10 +5008,9 @@ mod tests {
         let stmts = parse_stmts(".quad -(1 + 2)");
         assert_eq!(
             stmts,
-            vec![Stmt::Directive(Directive::Quad(vec![Expr::UnaryMinus(Box::new(Expr::Add(
-                Box::new(Expr::Int(1)),
-                Box::new(Expr::Int(2)),
-            )))]))]
+            vec![Stmt::Directive(Directive::Quad(vec![Expr::UnaryMinus(
+                Box::new(Expr::Add(Box::new(Expr::Int(1)), Box::new(Expr::Int(2)),))
+            )]))]
         );
     }
 
@@ -3375,7 +5044,10 @@ mod tests {
         let stmts = parse_stmts(".cstring");
         assert_eq!(
             stmts,
-            vec![Stmt::Directive(Directive::Section("__TEXT".into(), "__cstring".into()))]
+            vec![Stmt::Directive(Directive::Section(
+                "__TEXT".into(),
+                "__cstring".into()
+            ))]
         );
     }
 
@@ -3412,7 +5084,11 @@ mod tests {
     #[test]
     fn parse_unknown_directive_errors() {
         let err = parse_err(".unknown_directive");
-        assert!(err.contains("unsupported directive '.unknown_directive'"), "got: {}", err);
+        assert!(
+            err.contains("unsupported directive '.unknown_directive'"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -3420,11 +5096,21 @@ mod tests {
         let stmts = parse_stmts(".build_version macos, 11, 0 sdk_version 15, 5");
         assert_eq!(
             stmts,
-            vec![Stmt::Directive(Directive::BuildVersion(BuildVersionDirective {
-                platform: "macos".into(),
-                minos: VersionTriple { major: 11, minor: 0, patch: 0 },
-                sdk: Some(VersionTriple { major: 15, minor: 5, patch: 0 }),
-            }))]
+            vec![Stmt::Directive(Directive::BuildVersion(
+                BuildVersionDirective {
+                    platform: "macos".into(),
+                    minos: VersionTriple {
+                        major: 11,
+                        minor: 0,
+                        patch: 0
+                    },
+                    sdk: Some(VersionTriple {
+                        major: 15,
+                        minor: 5,
+                        patch: 0
+                    }),
+                }
+            ))]
         );
     }
 
@@ -3461,7 +5147,11 @@ mod tests {
     #[test]
     fn parse_unsupported_cfi_directive_errors() {
         let err = parse(".cfi_escape 0x1").unwrap_err();
-        assert!(err.msg.contains("unsupported CFI directive"), "got: {}", err.msg);
+        assert!(
+            err.msg.contains("unsupported CFI directive"),
+            "got: {}",
+            err.msg
+        );
     }
 
     #[test]
@@ -3469,11 +5159,17 @@ mod tests {
         let stmts = parse_stmts(".build_version macos, 14, 1");
         assert_eq!(
             stmts,
-            vec![Stmt::Directive(Directive::BuildVersion(BuildVersionDirective {
-                platform: "macos".into(),
-                minos: VersionTriple { major: 14, minor: 1, patch: 0 },
-                sdk: None,
-            }))]
+            vec![Stmt::Directive(Directive::BuildVersion(
+                BuildVersionDirective {
+                    platform: "macos".into(),
+                    minos: VersionTriple {
+                        major: 14,
+                        minor: 1,
+                        patch: 0
+                    },
+                    sdk: None,
+                }
+            ))]
         );
     }
 
@@ -3510,7 +5206,10 @@ _main:
         let stmts = parse_stmts(src);
         // Should have: global, align, label, 6 instructions
         let labels = stmts.iter().filter(|s| matches!(s, Stmt::Label(_))).count();
-        let insts = stmts.iter().filter(|s| matches!(s, Stmt::Instruction(_))).count();
+        let insts = stmts
+            .iter()
+            .filter(|s| matches!(s, Stmt::Instruction(_)))
+            .count();
         assert_eq!(labels, 1);
         assert_eq!(insts, 6);
     }
@@ -3542,7 +5241,11 @@ _main:
         let result = parse("str x0, some_label");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.msg.contains("bracketed memory operand"), "got: {}", err.msg);
+        assert!(
+            err.msg.contains("bracketed memory operand"),
+            "got: {}",
+            err.msg
+        );
     }
 
     #[test]
@@ -3561,10 +5264,12 @@ _main:
     fn parse_quad_got_expression() {
         assert_eq!(
             parse_stmts(".quad _puts@GOT"),
-            vec![Stmt::Directive(Directive::Quad(vec![Expr::ModifiedSymbol {
-                symbol: "_puts".into(),
-                modifier: SymbolModifier::Got,
-            }]))]
+            vec![Stmt::Directive(Directive::Quad(vec![
+                Expr::ModifiedSymbol {
+                    symbol: "_puts".into(),
+                    modifier: SymbolModifier::Got,
+                }
+            ]))]
         );
     }
 
@@ -3586,28 +5291,66 @@ _main:
 
     #[test]
     fn parse_uppercase_add() {
-        assert_eq!(parse_inst("ADD X0, X1, X2"), Inst::AddReg { rd: X0, rn: X1, rm: X2, sf: true });
+        assert_eq!(
+            parse_inst("ADD X0, X1, X2"),
+            Inst::AddReg {
+                rd: X0,
+                rn: X1,
+                rm: X2,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_uppercase_b_eq() {
-        assert_eq!(parse_inst("B.EQ #8"), Inst::BCond { cond: Cond::EQ, offset: 8 });
+        assert_eq!(
+            parse_inst("B.EQ #8"),
+            Inst::BCond {
+                cond: Cond::EQ,
+                offset: 8
+            }
+        );
     }
 
     #[test]
     fn parse_mixed_case_ldr() {
-        assert_eq!(parse_inst("Ldr X0, [X1, #8]"), Inst::LdrImm64 { rt: X0, rn: X1, offset: 8 });
+        assert_eq!(
+            parse_inst("Ldr X0, [X1, #8]"),
+            Inst::LdrImm64 {
+                rt: X0,
+                rn: X1,
+                offset: 8
+            }
+        );
     }
 
     #[test]
     fn parse_uppercase_add_does_not_treat_x2_as_label() {
         // BUG 3 regression: uppercase X2 must be parsed as register, not label
-        assert_eq!(parse_inst("ADD X0, X1, X2"), Inst::AddReg { rd: X0, rn: X1, rm: X2, sf: true });
+        assert_eq!(
+            parse_inst("ADD X0, X1, X2"),
+            Inst::AddReg {
+                rd: X0,
+                rn: X1,
+                rm: X2,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_uppercase_mov_sp() {
-        assert_eq!(parse_inst("MOV X29, SP"), Inst::AddImm { rd: X29, rn: SP, imm12: 0, shift: false, sf: true });
+        assert_eq!(
+            parse_inst("MOV X29, SP"),
+            Inst::AddImm {
+                rd: X29,
+                rn: SP,
+                imm12: 0,
+                shift: false,
+                sf: true
+            }
+        );
     }
 
     // ---- Test gap coverage (from audit) ----
@@ -3629,90 +5372,218 @@ _main:
 
     #[test]
     fn parse_w_register_shift() {
-        assert_eq!(parse_inst("lsl w0, w1, #3"), Inst::LslImm { rd: W0, rn: W1, amount: 3, sf: false });
+        assert_eq!(
+            parse_inst("lsl w0, w1, #3"),
+            Inst::LslImm {
+                rd: W0,
+                rn: W1,
+                amount: 3,
+                sf: false
+            }
+        );
     }
 
     #[test]
     fn parse_w_register_lsr() {
-        assert_eq!(parse_inst("lsr w5, w6, #8"), Inst::LsrImm { rd: W5, rn: W6, amount: 8, sf: false });
+        assert_eq!(
+            parse_inst("lsr w5, w6, #8"),
+            Inst::LsrImm {
+                rd: W5,
+                rn: W6,
+                amount: 8,
+                sf: false
+            }
+        );
     }
 
     #[test]
     fn parse_w_register_asr() {
-        assert_eq!(parse_inst("asr w5, w6, #15"), Inst::AsrImm { rd: W5, rn: W6, amount: 15, sf: false });
+        assert_eq!(
+            parse_inst("asr w5, w6, #15"),
+            Inst::AsrImm {
+                rd: W5,
+                rn: W6,
+                amount: 15,
+                sf: false
+            }
+        );
     }
 
     #[test]
     fn parse_mov_negative_imm() {
         // mov x0, #-1 → movn x0, #0
-        assert_eq!(parse_inst("mov x0, #-1"), Inst::Movn { rd: X0, imm16: 0, shift: 0, sf: true });
+        assert_eq!(
+            parse_inst("mov x0, #-1"),
+            Inst::Movn {
+                rd: X0,
+                imm16: 0,
+                shift: 0,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_mov_negative_42() {
         // mov x0, #-42 → movn x0, #41
-        assert_eq!(parse_inst("mov x0, #-42"), Inst::Movn { rd: X0, imm16: 41, shift: 0, sf: true });
+        assert_eq!(
+            parse_inst("mov x0, #-42"),
+            Inst::Movn {
+                rd: X0,
+                imm16: 41,
+                shift: 0,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_mov_negative_65537() {
-        assert_eq!(parse_inst("mov x0, #-65537"), Inst::Movn { rd: X0, imm16: 1, shift: 16, sf: true });
+        assert_eq!(
+            parse_inst("mov x0, #-65537"),
+            Inst::Movn {
+                rd: X0,
+                imm16: 1,
+                shift: 16,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_mov_large_positive_shifted() {
-        assert_eq!(parse_inst("mov x0, #0x12340000"), Inst::Movz { rd: X0, imm16: 0x1234, shift: 16, sf: true });
+        assert_eq!(
+            parse_inst("mov x0, #0x12340000"),
+            Inst::Movz {
+                rd: X0,
+                imm16: 0x1234,
+                shift: 16,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_mov_wide_expression() {
-        assert_eq!(parse_inst("movz x0, #1 + 1, lsl #4 + 12"), Inst::Movz { rd: X0, imm16: 2, shift: 16, sf: true });
+        assert_eq!(
+            parse_inst("movz x0, #1 + 1, lsl #4 + 12"),
+            Inst::Movz {
+                rd: X0,
+                imm16: 2,
+                shift: 16,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_immediate_absolute_symbol_after_set() {
         let stmts = parse_stmts(".set ABS1, 7\nmovz x0, #ABS1\n");
-        assert_eq!(stmts[1], Stmt::Instruction(Inst::Movz { rd: X0, imm16: 7, shift: 0, sf: true }));
+        assert_eq!(
+            stmts[1],
+            Stmt::Instruction(Inst::Movz {
+                rd: X0,
+                imm16: 7,
+                shift: 0,
+                sf: true
+            })
+        );
     }
 
     #[test]
     fn parse_parenthesized_immediate_after_hash() {
-        assert_eq!(parse_inst("movz x0, #(1 + 2)"), Inst::Movz { rd: X0, imm16: 3, shift: 0, sf: true });
+        assert_eq!(
+            parse_inst("movz x0, #(1 + 2)"),
+            Inst::Movz {
+                rd: X0,
+                imm16: 3,
+                shift: 0,
+                sf: true
+            }
+        );
     }
 
     #[test]
     fn parse_cbnz_w() {
-        assert_eq!(parse_inst("cbnz w5, #8"), Inst::Cbnz { rt: W5, offset: 8, sf: false });
+        assert_eq!(
+            parse_inst("cbnz w5, #8"),
+            Inst::Cbnz {
+                rt: W5,
+                offset: 8,
+                sf: false
+            }
+        );
     }
 
     #[test]
     fn parse_cbz_w() {
-        assert_eq!(parse_inst("cbz w0, #12"), Inst::Cbz { rt: W0, offset: 12, sf: false });
+        assert_eq!(
+            parse_inst("cbz w0, #12"),
+            Inst::Cbz {
+                rt: W0,
+                offset: 12,
+                sf: false
+            }
+        );
     }
 
     #[test]
     fn parse_memory_offset_expression() {
-        assert_eq!(parse_inst("ldr x0, [x1, #4 + 4]"), Inst::LdrImm64 { rt: X0, rn: X1, offset: 8 });
+        assert_eq!(
+            parse_inst("ldr x0, [x1, #4 + 4]"),
+            Inst::LdrImm64 {
+                rt: X0,
+                rn: X1,
+                offset: 8
+            }
+        );
     }
 
     #[test]
     fn parse_all_condition_codes() {
         // Exercise all 14 named condition codes
         for (name, cond) in [
-            ("eq", Cond::EQ), ("ne", Cond::NE), ("cs", Cond::CS), ("cc", Cond::CC),
-            ("mi", Cond::MI), ("pl", Cond::PL), ("vs", Cond::VS), ("vc", Cond::VC),
-            ("hi", Cond::HI), ("ls", Cond::LS), ("ge", Cond::GE), ("lt", Cond::LT),
-            ("gt", Cond::GT), ("le", Cond::LE),
+            ("eq", Cond::EQ),
+            ("ne", Cond::NE),
+            ("cs", Cond::CS),
+            ("cc", Cond::CC),
+            ("mi", Cond::MI),
+            ("pl", Cond::PL),
+            ("vs", Cond::VS),
+            ("vc", Cond::VC),
+            ("hi", Cond::HI),
+            ("ls", Cond::LS),
+            ("ge", Cond::GE),
+            ("lt", Cond::LT),
+            ("gt", Cond::GT),
+            ("le", Cond::LE),
         ] {
             let src = format!("b.{} #4", name);
-            assert_eq!(parse_inst(&src), Inst::BCond { cond, offset: 4 }, "failed for b.{}", name);
+            assert_eq!(
+                parse_inst(&src),
+                Inst::BCond { cond, offset: 4 },
+                "failed for b.{}",
+                name
+            );
         }
     }
 
     #[test]
     fn parse_hs_lo_aliases() {
-        assert_eq!(parse_inst("b.hs #4"), Inst::BCond { cond: Cond::CS, offset: 4 });
-        assert_eq!(parse_inst("b.lo #4"), Inst::BCond { cond: Cond::CC, offset: 4 });
+        assert_eq!(
+            parse_inst("b.hs #4"),
+            Inst::BCond {
+                cond: Cond::CS,
+                offset: 4
+            }
+        );
+        assert_eq!(
+            parse_inst("b.lo #4"),
+            Inst::BCond {
+                cond: Cond::CC,
+                offset: 4
+            }
+        );
     }
 
     #[test]
@@ -3721,7 +5592,11 @@ _main:
             parse_stmts("b done"),
             vec![Stmt::InstructionWithReloc(
                 Inst::B { offset: 0 },
-                LabelRef { symbol: "done".into(), kind: RelocKind::Branch26, addend: 0 },
+                LabelRef {
+                    symbol: "done".into(),
+                    kind: RelocKind::Branch26,
+                    addend: 0
+                },
             )]
         );
     }
@@ -3731,8 +5606,15 @@ _main:
         assert_eq!(
             parse_stmts("b.eq done"),
             vec![Stmt::InstructionWithReloc(
-                Inst::BCond { cond: Cond::EQ, offset: 0 },
-                LabelRef { symbol: "done".into(), kind: RelocKind::Branch19, addend: 0 },
+                Inst::BCond {
+                    cond: Cond::EQ,
+                    offset: 0
+                },
+                LabelRef {
+                    symbol: "done".into(),
+                    kind: RelocKind::Branch19,
+                    addend: 0
+                },
             )]
         );
     }
@@ -3745,11 +5627,25 @@ _main:
                 Stmt::Label("l_.str".into()),
                 Stmt::InstructionWithReloc(
                     Inst::Adrp { rd: X0, imm: 0 },
-                    LabelRef { symbol: "l_.str".into(), kind: RelocKind::Page21, addend: 0 },
+                    LabelRef {
+                        symbol: "l_.str".into(),
+                        kind: RelocKind::Page21,
+                        addend: 0
+                    },
                 ),
                 Stmt::InstructionWithReloc(
-                    Inst::AddImm { rd: X0, rn: X0, imm12: 0, shift: false, sf: true },
-                    LabelRef { symbol: "l_.str".into(), kind: RelocKind::PageOff12, addend: 0 },
+                    Inst::AddImm {
+                        rd: X0,
+                        rn: X0,
+                        imm12: 0,
+                        shift: false,
+                        sf: true
+                    },
+                    LabelRef {
+                        symbol: "l_.str".into(),
+                        kind: RelocKind::PageOff12,
+                        addend: 0
+                    },
                 ),
             ]
         );
@@ -3761,7 +5657,11 @@ _main:
             parse_stmts("adrp x8, _ext_global@GOTPAGE"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Adrp { rd: X8, imm: 0 },
-                LabelRef { symbol: "_ext_global".into(), kind: RelocKind::GotLoadPage21, addend: 0 },
+                LabelRef {
+                    symbol: "_ext_global".into(),
+                    kind: RelocKind::GotLoadPage21,
+                    addend: 0
+                },
             )]
         );
     }
@@ -3771,7 +5671,11 @@ _main:
         assert_eq!(
             parse_stmts("ldr x8, [x8, _ext_global@GOTPAGEOFF]"),
             vec![Stmt::InstructionWithReloc(
-                Inst::LdrImm64 { rt: X8, rn: X8, offset: 0 },
+                Inst::LdrImm64 {
+                    rt: X8,
+                    rn: X8,
+                    offset: 0
+                },
                 LabelRef {
                     symbol: "_ext_global".into(),
                     kind: RelocKind::GotLoadPageOff12,
@@ -3787,7 +5691,11 @@ _main:
             parse_stmts("adrp x0, _tls_counter@TLVPPAGE"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Adrp { rd: X0, imm: 0 },
-                LabelRef { symbol: "_tls_counter".into(), kind: RelocKind::TlvpLoadPage21, addend: 0 },
+                LabelRef {
+                    symbol: "_tls_counter".into(),
+                    kind: RelocKind::TlvpLoadPage21,
+                    addend: 0
+                },
             )]
         );
     }
@@ -3798,7 +5706,11 @@ _main:
             parse_stmts("bl _puts + 4"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Bl { offset: 0 },
-                LabelRef { symbol: "_puts".into(), kind: RelocKind::Branch26, addend: 4 },
+                LabelRef {
+                    symbol: "_puts".into(),
+                    kind: RelocKind::Branch26,
+                    addend: 4
+                },
             )]
         );
     }
@@ -3809,7 +5721,11 @@ _main:
             parse_stmts("adrp x0, _data@PAGE + 0x24"),
             vec![Stmt::InstructionWithReloc(
                 Inst::Adrp { rd: X0, imm: 0 },
-                LabelRef { symbol: "_data".into(), kind: RelocKind::Page21, addend: 0x24 },
+                LabelRef {
+                    symbol: "_data".into(),
+                    kind: RelocKind::Page21,
+                    addend: 0x24
+                },
             )]
         );
     }
@@ -3819,7 +5735,11 @@ _main:
         assert_eq!(
             parse_stmts("ldr x0, [x0, _tls_counter@TLVPPAGEOFF]"),
             vec![Stmt::InstructionWithReloc(
-                Inst::LdrImm64 { rt: X0, rn: X0, offset: 0 },
+                Inst::LdrImm64 {
+                    rt: X0,
+                    rn: X0,
+                    offset: 0
+                },
                 LabelRef {
                     symbol: "_tls_counter".into(),
                     kind: RelocKind::TlvpLoadPageOff12,
@@ -3834,8 +5754,16 @@ _main:
         assert_eq!(
             parse_stmts("ldr x0, [x0, _data@PAGEOFF + 0x24]"),
             vec![Stmt::InstructionWithReloc(
-                Inst::LdrImm64 { rt: X0, rn: X0, offset: 0 },
-                LabelRef { symbol: "_data".into(), kind: RelocKind::PageOff12, addend: 0x24 },
+                Inst::LdrImm64 {
+                    rt: X0,
+                    rn: X0,
+                    offset: 0
+                },
+                LabelRef {
+                    symbol: "_data".into(),
+                    kind: RelocKind::PageOff12,
+                    addend: 0x24
+                },
             )]
         );
     }
@@ -3845,8 +5773,16 @@ _main:
         assert_eq!(
             parse_stmts("ldr x0, [x1, value@PAGEOFF]"),
             vec![Stmt::InstructionWithReloc(
-                Inst::LdrImm64 { rt: X0, rn: X1, offset: 0 },
-                LabelRef { symbol: "value".into(), kind: RelocKind::PageOff12, addend: 0 },
+                Inst::LdrImm64 {
+                    rt: X0,
+                    rn: X1,
+                    offset: 0
+                },
+                LabelRef {
+                    symbol: "value".into(),
+                    kind: RelocKind::PageOff12,
+                    addend: 0
+                },
             )]
         );
     }
@@ -3854,7 +5790,11 @@ _main:
     #[test]
     fn parse_adrp_rejects_unsupported_modifier() {
         let err = parse_err("adrp x0, _foo@GOTPAGEOFF");
-        assert!(err.contains("unsupported relocation modifier"), "got: {}", err);
+        assert!(
+            err.contains("unsupported relocation modifier"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -3863,7 +5803,11 @@ _main:
             parse_stmts("b .Ldone"),
             vec![Stmt::InstructionWithReloc(
                 Inst::B { offset: 0 },
-                LabelRef { symbol: ".Ldone".into(), kind: RelocKind::Branch26, addend: 0 },
+                LabelRef {
+                    symbol: ".Ldone".into(),
+                    kind: RelocKind::Branch26,
+                    addend: 0
+                },
             )]
         );
     }
@@ -3873,8 +5817,16 @@ _main:
         assert_eq!(
             parse_stmts("cbz x0, done"),
             vec![Stmt::InstructionWithReloc(
-                Inst::Cbz { rt: X0, offset: 0, sf: true },
-                LabelRef { symbol: "done".into(), kind: RelocKind::Branch19, addend: 0 },
+                Inst::Cbz {
+                    rt: X0,
+                    offset: 0,
+                    sf: true
+                },
+                LabelRef {
+                    symbol: "done".into(),
+                    kind: RelocKind::Branch19,
+                    addend: 0
+                },
             )]
         );
     }
@@ -3887,7 +5839,11 @@ _main:
                 Stmt::Label(".Ltmp$1$1".into()),
                 Stmt::InstructionWithReloc(
                     Inst::B { offset: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch26, addend: 0 },
+                    LabelRef {
+                        symbol: ".Ltmp$1$1".into(),
+                        kind: RelocKind::Branch26,
+                        addend: 0
+                    },
                 ),
             ]
         );
@@ -3900,7 +5856,11 @@ _main:
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::B { offset: 0 },
-                    LabelRef { symbol: ".Ltmp$2$1".into(), kind: RelocKind::Branch26, addend: 0 },
+                    LabelRef {
+                        symbol: ".Ltmp$2$1".into(),
+                        kind: RelocKind::Branch26,
+                        addend: 0
+                    },
                 ),
                 Stmt::Label(".Ltmp$2$1".into()),
             ]
@@ -3914,8 +5874,16 @@ _main:
             vec![
                 Stmt::Label(".Ltmp$1$1".into()),
                 Stmt::InstructionWithReloc(
-                    Inst::Cbz { rt: X0, offset: 0, sf: true },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch19, addend: 0 },
+                    Inst::Cbz {
+                        rt: X0,
+                        offset: 0,
+                        sf: true
+                    },
+                    LabelRef {
+                        symbol: ".Ltmp$1$1".into(),
+                        kind: RelocKind::Branch19,
+                        addend: 0
+                    },
                 ),
             ]
         );
@@ -3942,11 +5910,25 @@ _main:
             vec![
                 Stmt::InstructionWithReloc(
                     Inst::Adrp { rd: X0, imm: 0 },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Page21, addend: 0 },
+                    LabelRef {
+                        symbol: ".Ltmp$1$1".into(),
+                        kind: RelocKind::Page21,
+                        addend: 0
+                    },
                 ),
                 Stmt::InstructionWithReloc(
-                    Inst::AddImm { rd: X0, rn: X0, imm12: 0, shift: false, sf: true },
-                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::PageOff12, addend: 0 },
+                    Inst::AddImm {
+                        rd: X0,
+                        rn: X0,
+                        imm12: 0,
+                        shift: false,
+                        sf: true
+                    },
+                    LabelRef {
+                        symbol: ".Ltmp$1$1".into(),
+                        kind: RelocKind::PageOff12,
+                        addend: 0
+                    },
                 ),
                 Stmt::Label(".Ltmp$1$1".into()),
             ]
@@ -3956,6 +5938,10 @@ _main:
     #[test]
     fn parse_numeric_local_requires_previous_definition_for_backward_ref() {
         let err = parse_err("b 1b\n");
-        assert!(err.contains("numeric label '1' has no previous definition"), "got: {}", err);
+        assert!(
+            err.contains("numeric label '1' has no previous definition"),
+            "got: {}",
+            err
+        );
     }
 }
