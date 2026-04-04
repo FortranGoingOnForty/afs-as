@@ -214,6 +214,14 @@ pub enum Inst {
         ra: GpReg,
         sf: bool,
     },
+    /// MSUB Xd, Xn, Xm, Xa
+    Msub {
+        rd: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        ra: GpReg,
+        sf: bool,
+    },
     /// UMULL Xd, Wn, Wm
     Umull { rd: GpReg, rn: GpReg, rm: GpReg },
     /// SDIV Xd, Xn, Xm
@@ -289,6 +297,34 @@ pub enum Inst {
         rd: GpReg,
         rn: GpReg,
         rm: GpReg,
+        sf: bool,
+    },
+    /// AND Xd, Xn, #imm
+    AndImm {
+        rd: GpReg,
+        rn: GpReg,
+        imm: u64,
+        sf: bool,
+    },
+    /// ORR Xd, Xn, #imm
+    OrrImm {
+        rd: GpReg,
+        rn: GpReg,
+        imm: u64,
+        sf: bool,
+    },
+    /// EOR Xd, Xn, #imm
+    EorImm {
+        rd: GpReg,
+        rn: GpReg,
+        imm: u64,
+        sf: bool,
+    },
+    /// ANDS Xd, Xn, #imm
+    AndsImm {
+        rd: GpReg,
+        rn: GpReg,
+        imm: u64,
         sf: bool,
     },
 
@@ -369,6 +405,30 @@ pub enum Inst {
         rd: GpReg,
         rn: GpReg,
         amount: u8,
+        sf: bool,
+    },
+    /// UBFIZ Xd, Xn, #lsb, #width  (alias for UBFM)
+    Ubfiz {
+        rd: GpReg,
+        rn: GpReg,
+        lsb: u8,
+        width: u8,
+        sf: bool,
+    },
+    /// BFI Xd, Xn, #lsb, #width  (alias for BFM)
+    Bfi {
+        rd: GpReg,
+        rn: GpReg,
+        lsb: u8,
+        width: u8,
+        sf: bool,
+    },
+    /// BFXIL Xd, Xn, #lsb, #width  (alias for BFM)
+    Bfxil {
+        rd: GpReg,
+        rn: GpReg,
+        lsb: u8,
+        width: u8,
         sf: bool,
     },
 
@@ -986,6 +1046,15 @@ impl Inst {
                     | (rn.enc() << 5)
                     | rd.enc()
             }
+            Inst::Msub { rd, rn, rm, ra, sf } => {
+                let s = (*sf as u32) << 31;
+                s | (0b00_11011_000 << 21)
+                    | (rm.enc() << 16)
+                    | (1 << 15)
+                    | (ra.enc() << 10)
+                    | (rn.enc() << 5)
+                    | rd.enc()
+            }
             Inst::Umull { rd, rn, rm } => {
                 0x9BA0_0000 | (rm.enc() << 16) | (0b1_1111 << 10) | (rn.enc() << 5) | rd.enc()
             }
@@ -1014,6 +1083,10 @@ impl Inst {
             Inst::OrnReg { rd, rn, rm, sf } => logic_reg(*sf, 0b01, true, *rm, *rn, *rd),
             Inst::EorReg { rd, rn, rm, sf } => logic_reg(*sf, 0b10, false, *rm, *rn, *rd),
             Inst::AndsReg { rd, rn, rm, sf } => logic_reg(*sf, 0b11, false, *rm, *rn, *rd),
+            Inst::AndImm { rd, rn, imm, sf } => logical_imm(*sf, 0b00, *imm, *rn, *rd),
+            Inst::OrrImm { rd, rn, imm, sf } => logical_imm(*sf, 0b01, *imm, *rn, *rd),
+            Inst::EorImm { rd, rn, imm, sf } => logical_imm(*sf, 0b10, *imm, *rn, *rd),
+            Inst::AndsImm { rd, rn, imm, sf } => logical_imm(*sf, 0b11, *imm, *rn, *rd),
 
             // ---- Data processing (immediate) ----
             Inst::AddImm {
@@ -1080,6 +1153,35 @@ impl Inst {
                 let imms = if *sf { 63u8 } else { 31u8 };
                 bitfield(*sf, 0b00, *amount, imms, *rn, *rd)
             }
+            Inst::Ubfiz {
+                rd,
+                rn,
+                lsb,
+                width,
+                sf,
+            } => {
+                let bits = if *sf { 64u8 } else { 32u8 };
+                let immr = bits.wrapping_sub(*lsb) & (bits - 1);
+                bitfield(*sf, 0b10, immr, width.wrapping_sub(1), *rn, *rd)
+            }
+            Inst::Bfi {
+                rd,
+                rn,
+                lsb,
+                width,
+                sf,
+            } => {
+                let bits = if *sf { 64u8 } else { 32u8 };
+                let immr = bits.wrapping_sub(*lsb) & (bits - 1);
+                bitfield(*sf, 0b01, immr, width.wrapping_sub(1), *rn, *rd)
+            }
+            Inst::Bfxil {
+                rd,
+                rn,
+                lsb,
+                width,
+                sf,
+            } => bitfield(*sf, 0b01, *lsb, lsb.wrapping_add(*width).wrapping_sub(1), *rn, *rd),
 
             // ---- Branches ----
             Inst::B { offset } => {
@@ -1553,6 +1655,21 @@ fn logic_reg(sf: bool, opc: u32, n: bool, rm: GpReg, rn: GpReg, rd: GpReg) -> u3
         | rd.enc()
 }
 
+fn logical_imm(sf: bool, opc: u32, imm: u64, rn: GpReg, rd: GpReg) -> u32 {
+    let width = if sf { 64 } else { 32 };
+    let imm = if sf { imm } else { imm & 0xFFFF_FFFF };
+    let (n, immr, imms) =
+        encode_logical_immediate(imm, width).expect("logical immediate validated by parser");
+    ((sf as u32) << 31)
+        | (opc << 29)
+        | (0b100100 << 23)
+        | ((n as u32) << 22)
+        | ((immr as u32) << 16)
+        | ((imms as u32) << 10)
+        | (rn.enc() << 5)
+        | rd.enc()
+}
+
 fn dp_imm(sf: bool, op: u32, imm12: u16, shift: bool, rn: GpReg, rd: GpReg) -> u32 {
     ((sf as u32) << 31)
         | (op << 29)
@@ -1603,6 +1720,71 @@ fn bitfield(sf: bool, opc: u32, immr: u8, imms: u8, rn: GpReg, rd: GpReg) -> u32
         | ((imms as u32) << 10)
         | (rn.enc() << 5)
         | rd.enc()
+}
+
+fn encode_logical_immediate(imm: u64, width: u8) -> Option<(bool, u8, u8)> {
+    let mask = if width == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
+    let imm = imm & mask;
+    if imm == 0 || imm == mask {
+        return None;
+    }
+
+    for esize in [2u8, 4, 8, 16, 32, 64] {
+        if esize > width {
+            continue;
+        }
+        for ones in 1..esize {
+            let base = if ones == 64 {
+                u64::MAX
+            } else {
+                (1u64 << ones) - 1
+            };
+            for rot in 0..esize {
+                let pattern = rotate_right_with_width(base, rot, esize);
+                let candidate = replicate_pattern(pattern, esize, width);
+                if candidate == imm {
+                    let n = esize == 64;
+                    let imms = (((!(u64::from(esize) - 1)) << 1) | u64::from(ones - 1)) as u8
+                        & 0x3F;
+                    return Some((n, rot, imms));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn rotate_right_with_width(value: u64, rot: u8, width: u8) -> u64 {
+    let mask = if width == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
+    let value = value & mask;
+    let rot = rot % width;
+    if rot == 0 {
+        value
+    } else {
+        ((value >> rot) | (value << (width - rot))) & mask
+    }
+}
+
+fn replicate_pattern(pattern: u64, esize: u8, width: u8) -> u64 {
+    let mut out = 0u64;
+    let mut shift = 0u8;
+    while shift < width {
+        out |= pattern << shift;
+        shift += esize;
+    }
+    if width == 64 {
+        out
+    } else {
+        out & ((1u64 << width) - 1)
+    }
 }
 
 fn csel(sf: bool, variant: u32, rm: GpReg, cond: Cond, rn: GpReg, rd: GpReg) -> u32 {
@@ -1972,6 +2154,20 @@ mod tests {
         );
     }
     #[test]
+    fn msub_w9_w8_w1_w0() {
+        assert_eq!(
+            Inst::Msub {
+                rd: W9,
+                rn: W8,
+                rm: W1,
+                ra: W0,
+                sf: false
+            }
+            .encode(),
+            0x1B018109
+        );
+    }
+    #[test]
     fn sdiv_x9_x10_x11() {
         assert_eq!(
             Inst::Sdiv {
@@ -2050,6 +2246,32 @@ mod tests {
             }
             .encode(),
             0xCA020020
+        );
+    }
+    #[test]
+    fn and_w8_w8_0x7() {
+        assert_eq!(
+            Inst::AndImm {
+                rd: W8,
+                rn: W8,
+                imm: 0x7,
+                sf: false
+            }
+            .encode(),
+            0x12000908
+        );
+    }
+    #[test]
+    fn and_x9_x9_0xff() {
+        assert_eq!(
+            Inst::AndImm {
+                rd: X9,
+                rn: X9,
+                imm: 0xFF,
+                sf: true
+            }
+            .encode(),
+            0x92401D29
         );
     }
 
@@ -2275,6 +2497,48 @@ mod tests {
             }
             .encode(),
             0x130F7CC5
+        );
+    }
+    #[test]
+    fn ubfiz_w8_w0_5_3() {
+        assert_eq!(
+            Inst::Ubfiz {
+                rd: W8,
+                rn: W0,
+                lsb: 5,
+                width: 3,
+                sf: false
+            }
+            .encode(),
+            0x531B0808
+        );
+    }
+    #[test]
+    fn bfi_w0_w8_5_27() {
+        assert_eq!(
+            Inst::Bfi {
+                rd: W0,
+                rn: W8,
+                lsb: 5,
+                width: 27,
+                sf: false
+            }
+            .encode(),
+            0x331B6900
+        );
+    }
+    #[test]
+    fn bfxil_w8_w0_3_5() {
+        assert_eq!(
+            Inst::Bfxil {
+                rd: W8,
+                rn: W0,
+                lsb: 3,
+                width: 5,
+                sf: false
+            }
+            .encode(),
+            0x33031C08
         );
     }
 

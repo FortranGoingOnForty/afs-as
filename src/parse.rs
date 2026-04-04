@@ -728,6 +728,23 @@ impl<'a> Parser<'a> {
         self.parse_const_expr(context)
     }
 
+    fn parse_logical_immediate_value(&mut self, sf: bool) -> Result<u64, ParseError> {
+        let imm = self.parse_immediate_const_expr("logical immediate")?;
+        let raw = if sf {
+            imm as u64
+        } else {
+            (imm as u32) as u64
+        };
+        if logical_immediate_encodable(raw, if sf { 64 } else { 32 }) {
+            Ok(raw)
+        } else {
+            Err(self.err(format!(
+                "immediate {:#x} is not encodable as a logical immediate",
+                raw
+            )))
+        }
+    }
+
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         self.parse_add_sub_expr()
     }
@@ -990,6 +1007,7 @@ impl<'a> Parser<'a> {
             "mul" => self.parse_3reg("mul"),
             "umull" => self.parse_umull(),
             "madd" => self.parse_madd(),
+            "msub" => self.parse_madd_sub("msub"),
             "sdiv" => self.parse_3reg("sdiv"),
             "udiv" => self.parse_3reg("udiv"),
 
@@ -1021,6 +1039,9 @@ impl<'a> Parser<'a> {
             "lsl" => self.parse_shift("lsl"),
             "lsr" => self.parse_shift("lsr"),
             "asr" => self.parse_shift("asr"),
+            "ubfiz" => self.parse_bitfield_alias("ubfiz"),
+            "bfi" => self.parse_bitfield_alias("bfi"),
+            "bfxil" => self.parse_bitfield_alias("bfxil"),
 
             // Branches
             "ret" => self.parse_ret(),
@@ -1509,13 +1530,23 @@ impl<'a> Parser<'a> {
     fn parse_tst(&mut self) -> Result<Inst, ParseError> {
         let (rn, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
-        Ok(Inst::AndsReg {
-            rd: XZR,
-            rn,
-            rm,
-            sf,
-        })
+        if self.starts_immediate_expr() {
+            let imm = self.parse_logical_immediate_value(sf)?;
+            Ok(Inst::AndsImm {
+                rd: XZR,
+                rn,
+                imm,
+                sf,
+            })
+        } else {
+            let (rm, _) = self.parse_gp_reg_with_size()?;
+            Ok(Inst::AndsReg {
+                rd: XZR,
+                rn,
+                rm,
+                sf,
+            })
+        }
     }
 
     fn parse_neg(&mut self) -> Result<Inst, ParseError> {
@@ -1719,7 +1750,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_madd(&mut self) -> Result<Inst, ParseError> {
+    fn parse_madd_sub(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
@@ -1727,7 +1758,15 @@ impl<'a> Parser<'a> {
         let (rm, _) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (ra, _) = self.parse_gp_reg_with_size()?;
-        Ok(Inst::Madd { rd, rn, rm, ra, sf })
+        Ok(match mnemonic {
+            "madd" => Inst::Madd { rd, rn, rm, ra, sf },
+            "msub" => Inst::Msub { rd, rn, rm, ra, sf },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_madd(&mut self) -> Result<Inst, ParseError> {
+        self.parse_madd_sub("madd")
     }
 
     fn parse_umull(&mut self) -> Result<Inst, ParseError> {
@@ -1753,14 +1792,25 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
-        Ok(match mnemonic {
-            "and" => Inst::AndReg { rd, rn, rm, sf },
-            "orr" => Inst::OrrReg { rd, rn, rm, sf },
-            "eor" => Inst::EorReg { rd, rn, rm, sf },
-            "ands" => Inst::AndsReg { rd, rn, rm, sf },
-            _ => unreachable!(),
-        })
+        if self.starts_immediate_expr() {
+            let imm = self.parse_logical_immediate_value(sf)?;
+            Ok(match mnemonic {
+                "and" => Inst::AndImm { rd, rn, imm, sf },
+                "orr" => Inst::OrrImm { rd, rn, imm, sf },
+                "eor" => Inst::EorImm { rd, rn, imm, sf },
+                "ands" => Inst::AndsImm { rd, rn, imm, sf },
+                _ => unreachable!(),
+            })
+        } else {
+            let (rm, _) = self.parse_gp_reg_with_size()?;
+            Ok(match mnemonic {
+                "and" => Inst::AndReg { rd, rn, rm, sf },
+                "orr" => Inst::OrrReg { rd, rn, rm, sf },
+                "eor" => Inst::EorReg { rd, rn, rm, sf },
+                "ands" => Inst::AndsReg { rd, rn, rm, sf },
+                _ => unreachable!(),
+            })
+        }
     }
 
     fn parse_mov(&mut self) -> Result<Inst, ParseError> {
@@ -1837,6 +1887,41 @@ impl<'a> Parser<'a> {
             "lsl" => Inst::LslImm { rd, rn, amount, sf },
             "lsr" => Inst::LsrImm { rd, rn, amount, sf },
             "asr" => Inst::AsrImm { rd, rn, amount, sf },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_bitfield_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, _) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let lsb = self.parse_immediate_const_expr("bitfield lsb")? as u8;
+        self.expect(&Tok::Comma)?;
+        let width = self.parse_immediate_const_expr("bitfield width")? as u8;
+        self.validate_bitfield_alias_args(mnemonic, sf, lsb, width)?;
+        Ok(match mnemonic {
+            "ubfiz" => Inst::Ubfiz {
+                rd,
+                rn,
+                lsb,
+                width,
+                sf,
+            },
+            "bfi" => Inst::Bfi {
+                rd,
+                rn,
+                lsb,
+                width,
+                sf,
+            },
+            "bfxil" => Inst::Bfxil {
+                rd,
+                rn,
+                lsb,
+                width,
+                sf,
+            },
             _ => unreachable!(),
         })
     }
@@ -3132,6 +3217,32 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    fn validate_bitfield_alias_args(
+        &self,
+        mnemonic: &str,
+        sf: bool,
+        lsb: u8,
+        width: u8,
+    ) -> Result<(), ParseError> {
+        let bits = if sf { 64u8 } else { 32u8 };
+        if width == 0 {
+            return Err(self.err(format!("{} width must be at least 1", mnemonic)));
+        }
+        if lsb >= bits {
+            return Err(self.err(format!(
+                "{} lsb {} is out of range for {}-bit register",
+                mnemonic, lsb, bits
+            )));
+        }
+        if width > bits - lsb {
+            return Err(self.err(format!(
+                "{} width {} with lsb {} exceeds {}-bit register width",
+                mnemonic, width, lsb, bits
+            )));
+        }
+        Ok(())
+    }
+
     fn starts_register_like_operand(&self) -> bool {
         matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
     }
@@ -3334,6 +3445,69 @@ fn parse_index_shift(amount: u8, scale: u8) -> Result<bool, &'static str> {
         0 => Ok(false),
         value if value == scale => Ok(true),
         _ => Err("register offset shift must be omitted, #0, or the element scale"),
+    }
+}
+
+fn logical_immediate_encodable(imm: u64, width: u8) -> bool {
+    let mask = if width == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
+    let imm = imm & mask;
+    if imm == 0 || imm == mask {
+        return false;
+    }
+
+    for esize in [2u8, 4, 8, 16, 32, 64] {
+        if esize > width {
+            continue;
+        }
+        for ones in 1..esize {
+            let base = if ones == 64 {
+                u64::MAX
+            } else {
+                (1u64 << ones) - 1
+            };
+            for rot in 0..esize {
+                let pattern = rotate_right_for_logical_immediate(base, rot, esize);
+                let candidate = replicate_logical_immediate_pattern(pattern, esize, width);
+                if candidate == imm {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn rotate_right_for_logical_immediate(value: u64, rot: u8, width: u8) -> u64 {
+    let mask = if width == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
+    let value = value & mask;
+    let rot = rot % width;
+    if rot == 0 {
+        value
+    } else {
+        ((value >> rot) | (value << (width - rot))) & mask
+    }
+}
+
+fn replicate_logical_immediate_pattern(pattern: u64, esize: u8, width: u8) -> u64 {
+    let mut out = 0u64;
+    let mut shift = 0u8;
+    while shift < width {
+        out |= pattern << shift;
+        shift += esize;
+    }
+    if width == 64 {
+        out
+    } else {
+        out & ((1u64 << width) - 1)
     }
 }
 
@@ -3641,6 +3815,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_tst_imm() {
+        assert_eq!(
+            parse_inst("tst w8, #0x7"),
+            Inst::AndsImm {
+                rd: XZR,
+                rn: W8,
+                imm: 0x7,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
     fn parse_mul_() {
         assert_eq!(
             parse_inst("mul x6, x7, x8"),
@@ -3662,6 +3849,20 @@ mod tests {
                 rn: W0,
                 rm: W0,
                 ra: W8,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_msub_() {
+        assert_eq!(
+            parse_inst("msub w9, w8, w1, w0"),
+            Inst::Msub {
+                rd: W9,
+                rn: W8,
+                rm: W1,
+                ra: W0,
                 sf: false
             }
         );
@@ -3692,6 +3893,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parse_and_imm() {
+        assert_eq!(
+            parse_inst("and w8, w8, #0x7"),
+            Inst::AndImm {
+                rd: W8,
+                rn: W8,
+                imm: 0x7,
+                sf: false
+            }
+        );
+    }
+
     // ---- Move ----
 
     #[test]
@@ -3716,6 +3930,48 @@ mod tests {
                 rn: XZR,
                 rm: X1,
                 sf: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ubfiz_() {
+        assert_eq!(
+            parse_inst("ubfiz w8, w0, #5, #3"),
+            Inst::Ubfiz {
+                rd: W8,
+                rn: W0,
+                lsb: 5,
+                width: 3,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_bfi_() {
+        assert_eq!(
+            parse_inst("bfi w0, w8, #5, #27"),
+            Inst::Bfi {
+                rd: W0,
+                rn: W8,
+                lsb: 5,
+                width: 27,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_bfxil_() {
+        assert_eq!(
+            parse_inst("bfxil w8, w0, #3, #5"),
+            Inst::Bfxil {
+                rd: W8,
+                rn: W0,
+                lsb: 3,
+                width: 5,
+                sf: false
             }
         );
     }

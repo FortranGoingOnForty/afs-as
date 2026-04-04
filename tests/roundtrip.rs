@@ -145,6 +145,10 @@ fn rt_madd() {
     roundtrip(".text\nmadd w0, w0, w0, w8\n");
 }
 #[test]
+fn rt_msub() {
+    roundtrip(".text\nmsub w9, w8, w1, w0\n");
+}
+#[test]
 fn rt_umull() {
     roundtrip(".text\numull x9, w8, w9\n");
 }
@@ -159,6 +163,10 @@ fn rt_udiv() {
 #[test]
 fn rt_and() {
     roundtrip(".text\nand x0, x1, x2\n");
+}
+#[test]
+fn rt_and_imm() {
+    roundtrip(".text\nand w8, w8, #0x7\n");
 }
 #[test]
 fn rt_orr() {
@@ -187,6 +195,10 @@ fn rt_cmp_imm() {
 #[test]
 fn rt_tst() {
     roundtrip(".text\ntst x0, x1\n");
+}
+#[test]
+fn rt_tst_imm() {
+    roundtrip(".text\ntst w8, #0x7\n");
 }
 #[test]
 fn rt_csel() {
@@ -223,6 +235,18 @@ fn rt_cinv() {
 #[test]
 fn rt_cneg() {
     roundtrip(".text\ncneg x11, x12, lt\n");
+}
+#[test]
+fn rt_ubfiz() {
+    roundtrip(".text\nubfiz w8, w0, #5, #3\n");
+}
+#[test]
+fn rt_bfi() {
+    roundtrip(".text\nbfi w0, w8, #5, #27\n");
+}
+#[test]
+fn rt_bfxil() {
+    roundtrip(".text\nbfxil w8, w0, #3, #5\n");
 }
 #[test]
 fn rt_movz() {

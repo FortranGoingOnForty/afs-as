@@ -229,6 +229,19 @@ fn sys_madd() {
     );
 }
 #[test]
+fn sys_msub() {
+    verify(
+        "msub w9, w8, w1, w0",
+        Inst::Msub {
+            rd: W9,
+            rn: W8,
+            rm: W1,
+            ra: W0,
+            sf: false,
+        },
+    );
+}
+#[test]
 fn sys_umull() {
     verify(
         "umull x9, w8, w9",
@@ -272,6 +285,18 @@ fn sys_and() {
             rn: X4,
             rm: X5,
             sf: true,
+        },
+    );
+}
+#[test]
+fn sys_and_imm() {
+    verify(
+        "and w8, w8, #0x7",
+        Inst::AndImm {
+            rd: W8,
+            rn: W8,
+            imm: 0x7,
+            sf: false,
         },
     );
 }
@@ -620,6 +645,57 @@ fn sys_cneg() {
             rm: X12,
             cond: Cond::GE,
             sf: true,
+        },
+    );
+}
+#[test]
+fn sys_tst_imm() {
+    verify(
+        "tst w8, #0x7",
+        Inst::AndsImm {
+            rd: XZR,
+            rn: W8,
+            imm: 0x7,
+            sf: false,
+        },
+    );
+}
+#[test]
+fn sys_ubfiz() {
+    verify(
+        "ubfiz w8, w0, #5, #3",
+        Inst::Ubfiz {
+            rd: W8,
+            rn: W0,
+            lsb: 5,
+            width: 3,
+            sf: false,
+        },
+    );
+}
+#[test]
+fn sys_bfi() {
+    verify(
+        "bfi w0, w8, #5, #27",
+        Inst::Bfi {
+            rd: W0,
+            rn: W8,
+            lsb: 5,
+            width: 27,
+            sf: false,
+        },
+    );
+}
+#[test]
+fn sys_bfxil() {
+    verify(
+        "bfxil w8, w0, #3, #5",
+        Inst::Bfxil {
+            rd: W8,
+            rn: W0,
+            lsb: 3,
+            width: 5,
+            sf: false,
         },
     );
 }
