@@ -493,8 +493,36 @@ fn rt_stlr() {
     roundtrip(".text\nstlr x10, [x11]\n");
 }
 #[test]
+fn rt_ldaddalb() {
+    roundtrip(".text\nldaddalb w0, w1, [x2]\n");
+}
+#[test]
+fn rt_ldaddalh() {
+    roundtrip(".text\nldaddalh w3, w4, [x5]\n");
+}
+#[test]
+fn rt_ldumaxalb() {
+    roundtrip(".text\nldumaxalb w0, w1, [x2]\n");
+}
+#[test]
+fn rt_ldumaxalh() {
+    roundtrip(".text\nldumaxalh w3, w4, [x5]\n");
+}
+#[test]
+fn rt_ldsmaxalb() {
+    roundtrip(".text\nldsmaxalb w18, w19, [x20]\n");
+}
+#[test]
+fn rt_ldsmaxalh() {
+    roundtrip(".text\nldsmaxalh w24, w25, [x26]\n");
+}
+#[test]
 fn rt_ldaddal() {
     roundtrip(".text\nldaddal w0, w8, [x8]\n");
+}
+#[test]
+fn rt_ldumaxal() {
+    roundtrip(".text\nldumaxal x9, x10, [x11]\n");
 }
 #[test]
 fn rt_ldsmaxal() {
@@ -505,16 +533,60 @@ fn rt_ldsminal() {
     roundtrip(".text\nldsminal x9, x10, [x11]\n");
 }
 #[test]
+fn rt_lduminalb() {
+    roundtrip(".text\nlduminalb w12, w13, [x14]\n");
+}
+#[test]
+fn rt_lduminalh() {
+    roundtrip(".text\nlduminalh w15, w16, [x17]\n");
+}
+#[test]
+fn rt_ldsminalb() {
+    roundtrip(".text\nldsminalb w21, w22, [x23]\n");
+}
+#[test]
+fn rt_ldsminalh() {
+    roundtrip(".text\nldsminalh w27, w28, [x29]\n");
+}
+#[test]
+fn rt_lduminal() {
+    roundtrip(".text\nlduminal w18, w19, [x20]\n");
+}
+#[test]
 fn rt_ldclral() {
     roundtrip(".text\nldclral w12, w13, [x14]\n");
+}
+#[test]
+fn rt_ldclralb() {
+    roundtrip(".text\nldclralb w6, w7, [x8]\n");
+}
+#[test]
+fn rt_ldclralh() {
+    roundtrip(".text\nldclralh w15, w16, [x17]\n");
 }
 #[test]
 fn rt_ldeoral() {
     roundtrip(".text\nldeoral x9, x10, [x11]\n");
 }
 #[test]
+fn rt_ldeoralb() {
+    roundtrip(".text\nldeoralb w3, w4, [x5]\n");
+}
+#[test]
+fn rt_ldeoralh() {
+    roundtrip(".text\nldeoralh w12, w13, [x14]\n");
+}
+#[test]
 fn rt_ldsetal() {
     roundtrip(".text\nldsetal w0, w1, [x2]\n");
+}
+#[test]
+fn rt_ldsetalb() {
+    roundtrip(".text\nldsetalb w0, w1, [x2]\n");
+}
+#[test]
+fn rt_ldsetalh() {
+    roundtrip(".text\nldsetalh w9, w10, [x11]\n");
 }
 #[test]
 fn rt_swpal() {
@@ -527,6 +599,30 @@ fn rt_swpalb() {
 #[test]
 fn rt_swpalh() {
     roundtrip(".text\nswpalh w11, w12, [x13]\n");
+}
+#[test]
+fn rt_casalb() {
+    roundtrip(".text\ncasalb w6, w7, [x8]\n");
+}
+#[test]
+fn rt_casalh() {
+    roundtrip(".text\ncasalh w9, w10, [x11]\n");
+}
+#[test]
+fn rt_subs_uxtb() {
+    roundtrip(".text\nsubs w10, w8, w9, uxtb\n");
+}
+#[test]
+fn rt_subs_uxth() {
+    roundtrip(".text\nsubs w11, w12, w13, uxth\n");
+}
+#[test]
+fn rt_subs_sxtb() {
+    roundtrip(".text\nsubs x14, x15, w16, sxtb\n");
+}
+#[test]
+fn rt_subs_sxth() {
+    roundtrip(".text\nsubs x17, x18, w19, sxth #1\n");
 }
 #[test]
 fn rt_swpal_x() {

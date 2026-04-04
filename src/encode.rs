@@ -43,8 +43,12 @@ impl RegShift {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegExtend {
+    Uxtb,
+    Uxth,
     Uxtw,
     Uxtx,
+    Sxtb,
+    Sxth,
     Sxtw,
     Sxtx,
 }
@@ -52,8 +56,12 @@ pub enum RegExtend {
 impl RegExtend {
     fn enc(self) -> u32 {
         match self {
+            RegExtend::Uxtb => 0b000,
+            RegExtend::Uxth => 0b001,
             RegExtend::Uxtw => 0b010,
             RegExtend::Uxtx => 0b011,
+            RegExtend::Sxtb => 0b100,
+            RegExtend::Sxth => 0b101,
             RegExtend::Sxtw => 0b110,
             RegExtend::Sxtx => 0b111,
         }
@@ -771,26 +779,66 @@ pub enum Inst {
     Stlr32 { rt: GpReg, rn: GpReg },
     /// STLR Xt, [Xn]
     Stlr64 { rt: GpReg, rn: GpReg },
+    /// LDADDALB Ws, Wt, [Xn]
+    Ldaddalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDADDALH Ws, Wt, [Xn]
+    Ldaddalh { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDADDAL Ws, Wt, [Xn]
     Ldaddal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDADDAL Xs, Xt, [Xn]
     Ldaddal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDUMAXALB Ws, Wt, [Xn]
+    Ldumaxalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDUMAXALH Ws, Wt, [Xn]
+    Ldumaxalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDUMAXAL Ws, Wt, [Xn]
+    Ldumaxal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDUMAXAL Xs, Xt, [Xn]
+    Ldumaxal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSMAXALB Ws, Wt, [Xn]
+    Ldsmaxalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSMAXALH Ws, Wt, [Xn]
+    Ldsmaxalh { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDSMAXAL Ws, Wt, [Xn]
     Ldsmaxal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDSMAXAL Xs, Xt, [Xn]
     Ldsmaxal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDUMINALB Ws, Wt, [Xn]
+    Lduminalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDUMINALH Ws, Wt, [Xn]
+    Lduminalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDUMINAL Ws, Wt, [Xn]
+    Lduminal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDUMINAL Xs, Xt, [Xn]
+    Lduminal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSMINALB Ws, Wt, [Xn]
+    Ldsminalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSMINALH Ws, Wt, [Xn]
+    Ldsminalh { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDSMINAL Ws, Wt, [Xn]
     Ldsminal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDSMINAL Xs, Xt, [Xn]
     Ldsminal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDCLRALB Ws, Wt, [Xn]
+    Ldclralb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDCLRALH Ws, Wt, [Xn]
+    Ldclralh { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDCLRAL Ws, Wt, [Xn]
     Ldclral32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDCLRAL Xs, Xt, [Xn]
     Ldclral64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDEORALB Ws, Wt, [Xn]
+    Ldeoralb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDEORALH Ws, Wt, [Xn]
+    Ldeoralh { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDEORAL Ws, Wt, [Xn]
     Ldeoral32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDEORAL Xs, Xt, [Xn]
     Ldeoral64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSETALB Ws, Wt, [Xn]
+    Ldsetalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDSETALH Ws, Wt, [Xn]
+    Ldsetalh { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDSETAL Ws, Wt, [Xn]
     Ldsetal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// LDSETAL Xs, Xt, [Xn]
@@ -803,6 +851,10 @@ pub enum Inst {
     Swpalb { rs: GpReg, rt: GpReg, rn: GpReg },
     /// SWPALH Ws, Wt, [Xn]
     Swpalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// CASALB Ws, Wt, [Xn]
+    Casalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// CASALH Ws, Wt, [Xn]
+    Casalh { rs: GpReg, rt: GpReg, rn: GpReg },
     /// CASAL Ws, Wt, [Xn]
     Casal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// CASAL Xs, Xt, [Xn]
@@ -1714,11 +1766,35 @@ impl Inst {
             Inst::Stlrh { rt, rn } => 0x489FFC00 | (rn.enc() << 5) | rt.enc(),
             Inst::Stlr32 { rt, rn } => 0x889FFC00 | (rn.enc() << 5) | rt.enc(),
             Inst::Stlr64 { rt, rn } => 0xC89FFC00 | (rn.enc() << 5) | rt.enc(),
+            Inst::Ldaddalb { rs, rt, rn } => {
+                0x38E00000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldaddalh { rs, rt, rn } => {
+                0x78E00000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
             Inst::Ldaddal32 { rs, rt, rn } => {
                 0xB8E00000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldaddal64 { rs, rt, rn } => {
                 0xF8E00000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldumaxalb { rs, rt, rn } => {
+                0x38E06000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldumaxalh { rs, rt, rn } => {
+                0x78E06000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldumaxal32 { rs, rt, rn } => {
+                0xB8E06000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldumaxal64 { rs, rt, rn } => {
+                0xF8E06000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsmaxalb { rs, rt, rn } => {
+                0x38E04000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsmaxalh { rs, rt, rn } => {
+                0x78E04000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldsmaxal32 { rs, rt, rn } => {
                 0xB8E04000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
@@ -1726,11 +1802,35 @@ impl Inst {
             Inst::Ldsmaxal64 { rs, rt, rn } => {
                 0xF8E04000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
+            Inst::Lduminalb { rs, rt, rn } => {
+                0x38E07000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Lduminalh { rs, rt, rn } => {
+                0x78E07000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Lduminal32 { rs, rt, rn } => {
+                0xB8E07000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Lduminal64 { rs, rt, rn } => {
+                0xF8E07000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsminalb { rs, rt, rn } => {
+                0x38E05000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsminalh { rs, rt, rn } => {
+                0x78E05000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
             Inst::Ldsminal32 { rs, rt, rn } => {
                 0xB8E05000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldsminal64 { rs, rt, rn } => {
                 0xF8E05000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldclralb { rs, rt, rn } => {
+                0x38E01000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldclralh { rs, rt, rn } => {
+                0x78E01000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldclral32 { rs, rt, rn } => {
                 0xB8E01000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
@@ -1738,11 +1838,23 @@ impl Inst {
             Inst::Ldclral64 { rs, rt, rn } => {
                 0xF8E01000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
+            Inst::Ldeoralb { rs, rt, rn } => {
+                0x38E02000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldeoralh { rs, rt, rn } => {
+                0x78E02000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
             Inst::Ldeoral32 { rs, rt, rn } => {
                 0xB8E02000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldeoral64 { rs, rt, rn } => {
                 0xF8E02000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsetalb { rs, rt, rn } => {
+                0x38E03000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldsetalh { rs, rt, rn } => {
+                0x78E03000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldsetal32 { rs, rt, rn } => {
                 0xB8E03000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
@@ -1761,6 +1873,12 @@ impl Inst {
             }
             Inst::Swpalh { rs, rt, rn } => {
                 0x78E08000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Casalb { rs, rt, rn } => {
+                0x08E0FC00 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Casalh { rs, rt, rn } => {
+                0x48E0FC00 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Casal32 { rs, rt, rn } => {
                 0x88E0FC00 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
@@ -2458,6 +2576,66 @@ mod tests {
             }
             .encode(),
             0xCB244862
+        );
+    }
+    #[test]
+    fn subs_w10_w8_w9_uxtb() {
+        assert_eq!(
+            Inst::SubsExtReg {
+                rd: W10,
+                rn: W8,
+                rm: W9,
+                extend: RegExtend::Uxtb,
+                amount: 0,
+                sf: false
+            }
+            .encode(),
+            0x6B29010A
+        );
+    }
+    #[test]
+    fn subs_w11_w12_w13_uxth() {
+        assert_eq!(
+            Inst::SubsExtReg {
+                rd: W11,
+                rn: W12,
+                rm: W13,
+                extend: RegExtend::Uxth,
+                amount: 0,
+                sf: false
+            }
+            .encode(),
+            0x6B2D218B
+        );
+    }
+    #[test]
+    fn subs_x14_x15_w16_sxtb() {
+        assert_eq!(
+            Inst::SubsExtReg {
+                rd: X14,
+                rn: X15,
+                rm: W16,
+                extend: RegExtend::Sxtb,
+                amount: 0,
+                sf: true
+            }
+            .encode(),
+            0xEB3081EE
+        );
+    }
+    #[test]
+    fn subs_x17_x18_w19_sxth1() {
+        assert_eq!(
+            Inst::SubsExtReg {
+                rd: X17,
+                rn: X18,
+                rm: W19,
+                extend: RegExtend::Sxth,
+                amount: 1,
+                sf: true
+            }
+            .encode(),
+            0xEB33A651
         );
     }
     #[test]
@@ -3607,6 +3785,222 @@ mod tests {
         assert_eq!(Inst::Stlrh { rt: W6, rn: X7 }.encode(), 0x489FFCE6);
     }
     #[test]
+    fn ldaddalb_w0_w1_x2() {
+        assert_eq!(
+            Inst::Ldaddalb {
+                rs: W0,
+                rt: W1,
+                rn: X2
+            }
+            .encode(),
+            0x38E00041
+        );
+    }
+    #[test]
+    fn ldaddalh_w3_w4_x5() {
+        assert_eq!(
+            Inst::Ldaddalh {
+                rs: W3,
+                rt: W4,
+                rn: X5
+            }
+            .encode(),
+            0x78E300A4
+        );
+    }
+    #[test]
+    fn ldumaxalb_w0_w1_x2() {
+        assert_eq!(
+            Inst::Ldumaxalb {
+                rs: W0,
+                rt: W1,
+                rn: X2
+            }
+            .encode(),
+            0x38E06041
+        );
+    }
+    #[test]
+    fn ldumaxalh_w3_w4_x5() {
+        assert_eq!(
+            Inst::Ldumaxalh {
+                rs: W3,
+                rt: W4,
+                rn: X5
+            }
+            .encode(),
+            0x78E360A4
+        );
+    }
+    #[test]
+    fn ldsmaxalb_w18_w19_x20() {
+        assert_eq!(
+            Inst::Ldsmaxalb {
+                rs: W18,
+                rt: W19,
+                rn: X20
+            }
+            .encode(),
+            0x38F24293
+        );
+    }
+    #[test]
+    fn ldsmaxalh_w24_w25_x26() {
+        assert_eq!(
+            Inst::Ldsmaxalh {
+                rs: W24,
+                rt: W25,
+                rn: X26
+            }
+            .encode(),
+            0x78F84359
+        );
+    }
+    #[test]
+    fn lduminalb_w12_w13_x14() {
+        assert_eq!(
+            Inst::Lduminalb {
+                rs: W12,
+                rt: W13,
+                rn: X14
+            }
+            .encode(),
+            0x38EC71CD
+        );
+    }
+    #[test]
+    fn lduminalh_w15_w16_x17() {
+        assert_eq!(
+            Inst::Lduminalh {
+                rs: W15,
+                rt: W16,
+                rn: X17
+            }
+            .encode(),
+            0x78EF7230
+        );
+    }
+    #[test]
+    fn ldsminalb_w21_w22_x23() {
+        assert_eq!(
+            Inst::Ldsminalb {
+                rs: W21,
+                rt: W22,
+                rn: X23
+            }
+            .encode(),
+            0x38F552F6
+        );
+    }
+    #[test]
+    fn ldsminalh_w27_w28_x29() {
+        assert_eq!(
+            Inst::Ldsminalh {
+                rs: W27,
+                rt: W28,
+                rn: X29
+            }
+            .encode(),
+            0x78FB53BC
+        );
+    }
+    #[test]
+    fn ldclralb_w6_w7_x8() {
+        assert_eq!(
+            Inst::Ldclralb {
+                rs: W6,
+                rt: W7,
+                rn: X8
+            }
+            .encode(),
+            0x38E61107
+        );
+    }
+    #[test]
+    fn ldclralh_w15_w16_x17() {
+        assert_eq!(
+            Inst::Ldclralh {
+                rs: W15,
+                rt: W16,
+                rn: X17
+            }
+            .encode(),
+            0x78EF1230
+        );
+    }
+    #[test]
+    fn ldeoralb_w3_w4_x5() {
+        assert_eq!(
+            Inst::Ldeoralb {
+                rs: W3,
+                rt: W4,
+                rn: X5
+            }
+            .encode(),
+            0x38E320A4
+        );
+    }
+    #[test]
+    fn ldeoralh_w12_w13_x14() {
+        assert_eq!(
+            Inst::Ldeoralh {
+                rs: W12,
+                rt: W13,
+                rn: X14
+            }
+            .encode(),
+            0x78EC21CD
+        );
+    }
+    #[test]
+    fn ldsetalb_w0_w1_x2() {
+        assert_eq!(
+            Inst::Ldsetalb {
+                rs: W0,
+                rt: W1,
+                rn: X2
+            }
+            .encode(),
+            0x38E03041
+        );
+    }
+    #[test]
+    fn ldsetalh_w9_w10_x11() {
+        assert_eq!(
+            Inst::Ldsetalh {
+                rs: W9,
+                rt: W10,
+                rn: X11
+            }
+            .encode(),
+            0x78E9316A
+        );
+    }
+    #[test]
+    fn ldumaxal_w6_w7_x8() {
+        assert_eq!(
+            Inst::Ldumaxal32 {
+                rs: W6,
+                rt: W7,
+                rn: X8
+            }
+            .encode(),
+            0xB8E66107
+        );
+    }
+    #[test]
+    fn ldumaxal_x9_x10_x11() {
+        assert_eq!(
+            Inst::Ldumaxal64 {
+                rs: X9,
+                rt: X10,
+                rn: X11
+            }
+            .encode(),
+            0xF8E9616A
+        );
+    }
+    #[test]
     fn stlr_w10_x11() {
         assert_eq!(
             Inst::Stlr32 { rt: W10, rn: X11 }.encode(),
@@ -3705,6 +4099,30 @@ mod tests {
         );
     }
     #[test]
+    fn lduminal_w18_w19_x20() {
+        assert_eq!(
+            Inst::Lduminal32 {
+                rs: W18,
+                rt: W19,
+                rn: X20
+            }
+            .encode(),
+            0xB8F27293
+        );
+    }
+    #[test]
+    fn lduminal_x21_x22_x23() {
+        assert_eq!(
+            Inst::Lduminal64 {
+                rs: X21,
+                rt: X22,
+                rn: X23
+            }
+            .encode(),
+            0xF8F572F6
+        );
+    }
+    #[test]
     fn swpal_w0_w0_x8() {
         assert_eq!(
             Inst::Swpal32 {
@@ -3750,6 +4168,30 @@ mod tests {
             }
             .encode(),
             0x78EB81AC
+        );
+    }
+    #[test]
+    fn casalb_w6_w7_x8() {
+        assert_eq!(
+            Inst::Casalb {
+                rs: W6,
+                rt: W7,
+                rn: X8
+            }
+            .encode(),
+            0x08E6FD07
+        );
+    }
+    #[test]
+    fn casalh_w9_w10_x11() {
+        assert_eq!(
+            Inst::Casalh {
+                rs: W9,
+                rt: W10,
+                rn: X11
+            }
+            .encode(),
+            0x48E9FD6A
         );
     }
     #[test]

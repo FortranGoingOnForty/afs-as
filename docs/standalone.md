@@ -174,9 +174,16 @@ Major covered families include:
 - scalar atomic memory:
   - `ldaprb`, `ldaprh`, `ldapr`
   - `stlrb`, `stlrh`, `stlr`
-  - `ldaddal`, `ldclral`, `ldeoral`, `ldsetal`, `ldsmaxal`, `ldsminal`
+  - `ldaddalb`, `ldaddalh`, `ldaddal`
+  - `ldclralb`, `ldclralh`, `ldclral`
+  - `ldeoralb`, `ldeoralh`, `ldeoral`
+  - `ldsetalb`, `ldsetalh`, `ldsetal`
+  - `ldumaxalb`, `ldumaxalh`, `ldumaxal`
+  - `ldsmaxalb`, `ldsmaxalh`, `ldsmaxal`
+  - `lduminalb`, `lduminalh`, `lduminal`
+  - `ldsminalb`, `ldsminalh`, `ldsminal`
   - `swpalb`, `swpalh`, `swpal`
-  - `casal`
+  - `casalb`, `casalh`, `casal`
 - floating point:
   - `fadd`, `fsub`, `fmul`, `fdiv`
   - `fabs`, `fneg`, `fsqrt`, `fcmp`, `fmadd`

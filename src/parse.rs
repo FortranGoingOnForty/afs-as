@@ -1044,20 +1044,74 @@ impl<'a> Parser<'a> {
         if mnemonic == "stlr" {
             return self.parse_stlr();
         }
+        if mnemonic == "ldaddalb" {
+            return self.parse_atomic_rmw_narrow("ldaddalb");
+        }
+        if mnemonic == "ldaddalh" {
+            return self.parse_atomic_rmw_narrow("ldaddalh");
+        }
         if mnemonic == "ldaddal" {
             return self.parse_ldaddal();
+        }
+        if mnemonic == "ldumaxalb" {
+            return self.parse_atomic_rmw_narrow("ldumaxalb");
+        }
+        if mnemonic == "ldumaxalh" {
+            return self.parse_atomic_rmw_narrow("ldumaxalh");
+        }
+        if mnemonic == "ldumaxal" {
+            return self.parse_atomic_rmw("ldumaxal");
+        }
+        if mnemonic == "ldsmaxalb" {
+            return self.parse_atomic_rmw_narrow("ldsmaxalb");
+        }
+        if mnemonic == "ldsmaxalh" {
+            return self.parse_atomic_rmw_narrow("ldsmaxalh");
         }
         if mnemonic == "ldsmaxal" {
             return self.parse_ldsmaxal();
         }
+        if mnemonic == "lduminalb" {
+            return self.parse_atomic_rmw_narrow("lduminalb");
+        }
+        if mnemonic == "lduminalh" {
+            return self.parse_atomic_rmw_narrow("lduminalh");
+        }
+        if mnemonic == "lduminal" {
+            return self.parse_atomic_rmw("lduminal");
+        }
+        if mnemonic == "ldsminalb" {
+            return self.parse_atomic_rmw_narrow("ldsminalb");
+        }
+        if mnemonic == "ldsminalh" {
+            return self.parse_atomic_rmw_narrow("ldsminalh");
+        }
         if mnemonic == "ldsminal" {
             return self.parse_ldsminal();
+        }
+        if mnemonic == "ldclralb" {
+            return self.parse_atomic_rmw_narrow("ldclralb");
+        }
+        if mnemonic == "ldclralh" {
+            return self.parse_atomic_rmw_narrow("ldclralh");
         }
         if mnemonic == "ldclral" {
             return self.parse_ldclral();
         }
+        if mnemonic == "ldeoralb" {
+            return self.parse_atomic_rmw_narrow("ldeoralb");
+        }
+        if mnemonic == "ldeoralh" {
+            return self.parse_atomic_rmw_narrow("ldeoralh");
+        }
         if mnemonic == "ldeoral" {
             return self.parse_ldeoral();
+        }
+        if mnemonic == "ldsetalb" {
+            return self.parse_atomic_rmw_narrow("ldsetalb");
+        }
+        if mnemonic == "ldsetalh" {
+            return self.parse_atomic_rmw_narrow("ldsetalh");
         }
         if mnemonic == "ldsetal" {
             return self.parse_ldsetal();
@@ -1070,6 +1124,12 @@ impl<'a> Parser<'a> {
         }
         if mnemonic == "swpal" {
             return self.parse_swpal();
+        }
+        if mnemonic == "casalb" {
+            return self.parse_atomic_rmw_narrow("casalb");
+        }
+        if mnemonic == "casalh" {
+            return self.parse_atomic_rmw_narrow("casalh");
         }
         if mnemonic == "casal" {
             return self.parse_casal();
@@ -1369,8 +1429,12 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Instruction(match (mnemonic, sf) {
             ("ldaddal", true) => Inst::Ldaddal64 { rs, rt, rn },
             ("ldaddal", false) => Inst::Ldaddal32 { rs, rt, rn },
+            ("ldumaxal", true) => Inst::Ldumaxal64 { rs, rt, rn },
+            ("ldumaxal", false) => Inst::Ldumaxal32 { rs, rt, rn },
             ("ldsmaxal", true) => Inst::Ldsmaxal64 { rs, rt, rn },
             ("ldsmaxal", false) => Inst::Ldsmaxal32 { rs, rt, rn },
+            ("lduminal", true) => Inst::Lduminal64 { rs, rt, rn },
+            ("lduminal", false) => Inst::Lduminal32 { rs, rt, rn },
             ("ldsminal", true) => Inst::Ldsminal64 { rs, rt, rn },
             ("ldsminal", false) => Inst::Ldsminal32 { rs, rt, rn },
             ("ldclral", true) => Inst::Ldclral64 { rs, rt, rn },
@@ -1394,8 +1458,26 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let rn = self.parse_atomic_base_reg(mnemonic)?;
         Ok(Stmt::Instruction(match mnemonic {
+            "ldaddalb" => Inst::Ldaddalb { rs, rt, rn },
+            "ldaddalh" => Inst::Ldaddalh { rs, rt, rn },
+            "ldumaxalb" => Inst::Ldumaxalb { rs, rt, rn },
+            "ldumaxalh" => Inst::Ldumaxalh { rs, rt, rn },
+            "ldsmaxalb" => Inst::Ldsmaxalb { rs, rt, rn },
+            "ldsmaxalh" => Inst::Ldsmaxalh { rs, rt, rn },
+            "lduminalb" => Inst::Lduminalb { rs, rt, rn },
+            "lduminalh" => Inst::Lduminalh { rs, rt, rn },
+            "ldsminalb" => Inst::Ldsminalb { rs, rt, rn },
+            "ldsminalh" => Inst::Ldsminalh { rs, rt, rn },
+            "ldclralb" => Inst::Ldclralb { rs, rt, rn },
+            "ldclralh" => Inst::Ldclralh { rs, rt, rn },
+            "ldeoralb" => Inst::Ldeoralb { rs, rt, rn },
+            "ldeoralh" => Inst::Ldeoralh { rs, rt, rn },
+            "ldsetalb" => Inst::Ldsetalb { rs, rt, rn },
+            "ldsetalh" => Inst::Ldsetalh { rs, rt, rn },
             "swpalb" => Inst::Swpalb { rs, rt, rn },
             "swpalh" => Inst::Swpalh { rs, rt, rn },
+            "casalb" => Inst::Casalb { rs, rt, rn },
+            "casalh" => Inst::Casalh { rs, rt, rn },
             _ => unreachable!(),
         }))
     }
@@ -3691,8 +3773,24 @@ impl<'a> Parser<'a> {
                 }
                 Ok(Some(AddSubModifier::Shift(shift, amount as u8)))
             }
-            "uxtw" | "uxtx" | "sxtw" | "sxtx" => {
+            "uxtb" | "uxth" | "uxtw" | "uxtx" | "sxtb" | "sxth" | "sxtw" | "sxtx" => {
                 let extend = match name.as_str() {
+                    "uxtb" => {
+                        if rm_is_64bit {
+                            return Err(self.err(
+                                "uxtb add/sub extensions require a w-register operand".into(),
+                            ));
+                        }
+                        RegExtend::Uxtb
+                    }
+                    "uxth" => {
+                        if rm_is_64bit {
+                            return Err(self.err(
+                                "uxth add/sub extensions require a w-register operand".into(),
+                            ));
+                        }
+                        RegExtend::Uxth
+                    }
                     "uxtw" => {
                         if rm_is_64bit {
                             return Err(self.err(
@@ -3708,6 +3806,22 @@ impl<'a> Parser<'a> {
                             ));
                         }
                         RegExtend::Uxtx
+                    }
+                    "sxtb" => {
+                        if rm_is_64bit {
+                            return Err(self.err(
+                                "sxtb add/sub extensions require a w-register operand".into(),
+                            ));
+                        }
+                        RegExtend::Sxtb
+                    }
+                    "sxth" => {
+                        if rm_is_64bit {
+                            return Err(self.err(
+                                "sxth add/sub extensions require a w-register operand".into(),
+                            ));
+                        }
+                        RegExtend::Sxth
                     }
                     "sxtw" => {
                         if rm_is_64bit {
@@ -3738,7 +3852,7 @@ impl<'a> Parser<'a> {
                 Ok(Some(AddSubModifier::Extend(extend, amount as u8)))
             }
             _ => Err(self.err(format!(
-                "expected add/sub modifier (lsl/lsr/asr/uxtw/uxtx/sxtw/sxtx), got '{}'",
+                "expected add/sub modifier (lsl/lsr/asr/uxtb/uxth/uxtw/uxtx/sxtb/sxth/sxtw/sxtx), got '{}'",
                 name
             ))),
         }
@@ -4250,6 +4364,66 @@ mod tests {
                 rm: W4,
                 extend: RegExtend::Uxtw,
                 amount: 2,
+                sf: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_subs_extended_reg_uxtb() {
+        assert_eq!(
+            parse_inst("subs w10, w8, w9, uxtb"),
+            Inst::SubsExtReg {
+                rd: W10,
+                rn: W8,
+                rm: W9,
+                extend: RegExtend::Uxtb,
+                amount: 0,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_subs_extended_reg_uxth() {
+        assert_eq!(
+            parse_inst("subs w11, w12, w13, uxth"),
+            Inst::SubsExtReg {
+                rd: W11,
+                rn: W12,
+                rm: W13,
+                extend: RegExtend::Uxth,
+                amount: 0,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_subs_extended_reg_sxtb() {
+        assert_eq!(
+            parse_inst("subs x14, x15, w16, sxtb"),
+            Inst::SubsExtReg {
+                rd: X14,
+                rn: X15,
+                rm: W16,
+                extend: RegExtend::Sxtb,
+                amount: 0,
+                sf: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_subs_extended_reg_sxth() {
+        assert_eq!(
+            parse_inst("subs x17, x18, w19, sxth #1"),
+            Inst::SubsExtReg {
+                rd: X17,
+                rn: X18,
+                rm: W19,
+                extend: RegExtend::Sxth,
+                amount: 1,
                 sf: true
             }
         );
@@ -5411,6 +5585,90 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldaddalb_w() {
+        assert_eq!(
+            parse_inst("ldaddalb w0, w1, [x2]"),
+            Inst::Ldaddalb {
+                rs: W0,
+                rt: W1,
+                rn: X2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldaddalh_w() {
+        assert_eq!(
+            parse_inst("ldaddalh w3, w4, [x5]"),
+            Inst::Ldaddalh {
+                rs: W3,
+                rt: W4,
+                rn: X5
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldumaxalb_w() {
+        assert_eq!(
+            parse_inst("ldumaxalb w0, w1, [x2]"),
+            Inst::Ldumaxalb {
+                rs: W0,
+                rt: W1,
+                rn: X2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldumaxalh_w() {
+        assert_eq!(
+            parse_inst("ldumaxalh w3, w4, [x5]"),
+            Inst::Ldumaxalh {
+                rs: W3,
+                rt: W4,
+                rn: X5
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldsmaxalb_w() {
+        assert_eq!(
+            parse_inst("ldsmaxalb w18, w19, [x20]"),
+            Inst::Ldsmaxalb {
+                rs: W18,
+                rt: W19,
+                rn: X20
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldsmaxalh_w() {
+        assert_eq!(
+            parse_inst("ldsmaxalh w24, w25, [x26]"),
+            Inst::Ldsmaxalh {
+                rs: W24,
+                rt: W25,
+                rn: X26
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldumaxal_w() {
+        assert_eq!(
+            parse_inst("ldumaxal w6, w7, [x8]"),
+            Inst::Ldumaxal32 {
+                rs: W6,
+                rt: W7,
+                rn: X8
+            }
+        );
+    }
+
+    #[test]
     fn parse_ldsmaxal_w() {
         assert_eq!(
             parse_inst("ldsmaxal w0, w1, [x2]"),
@@ -5435,6 +5693,66 @@ mod tests {
     }
 
     #[test]
+    fn parse_lduminalb_w() {
+        assert_eq!(
+            parse_inst("lduminalb w12, w13, [x14]"),
+            Inst::Lduminalb {
+                rs: W12,
+                rt: W13,
+                rn: X14
+            }
+        );
+    }
+
+    #[test]
+    fn parse_lduminalh_w() {
+        assert_eq!(
+            parse_inst("lduminalh w15, w16, [x17]"),
+            Inst::Lduminalh {
+                rs: W15,
+                rt: W16,
+                rn: X17
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldsminalb_w() {
+        assert_eq!(
+            parse_inst("ldsminalb w21, w22, [x23]"),
+            Inst::Ldsminalb {
+                rs: W21,
+                rt: W22,
+                rn: X23
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldsminalh_w() {
+        assert_eq!(
+            parse_inst("ldsminalh w27, w28, [x29]"),
+            Inst::Ldsminalh {
+                rs: W27,
+                rt: W28,
+                rn: X29
+            }
+        );
+    }
+
+    #[test]
+    fn parse_lduminal_w() {
+        assert_eq!(
+            parse_inst("lduminal w18, w19, [x20]"),
+            Inst::Lduminal32 {
+                rs: W18,
+                rt: W19,
+                rn: X20
+            }
+        );
+    }
+
+    #[test]
     fn parse_ldclral_w() {
         assert_eq!(
             parse_inst("ldclral w12, w13, [x14]"),
@@ -5442,6 +5760,30 @@ mod tests {
                 rs: W12,
                 rt: W13,
                 rn: X14
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldclralb_w() {
+        assert_eq!(
+            parse_inst("ldclralb w6, w7, [x8]"),
+            Inst::Ldclralb {
+                rs: W6,
+                rt: W7,
+                rn: X8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldclralh_w() {
+        assert_eq!(
+            parse_inst("ldclralh w15, w16, [x17]"),
+            Inst::Ldclralh {
+                rs: W15,
+                rt: W16,
+                rn: X17
             }
         );
     }
@@ -5459,6 +5801,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldeoralb_w() {
+        assert_eq!(
+            parse_inst("ldeoralb w3, w4, [x5]"),
+            Inst::Ldeoralb {
+                rs: W3,
+                rt: W4,
+                rn: X5
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldeoralh_w() {
+        assert_eq!(
+            parse_inst("ldeoralh w12, w13, [x14]"),
+            Inst::Ldeoralh {
+                rs: W12,
+                rt: W13,
+                rn: X14
+            }
+        );
+    }
+
+    #[test]
     fn parse_ldsetal_w() {
         assert_eq!(
             parse_inst("ldsetal w0, w1, [x2]"),
@@ -5466,6 +5832,30 @@ mod tests {
                 rs: W0,
                 rt: W1,
                 rn: X2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldsetalb_w() {
+        assert_eq!(
+            parse_inst("ldsetalb w0, w1, [x2]"),
+            Inst::Ldsetalb {
+                rs: W0,
+                rt: W1,
+                rn: X2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldsetalh_w() {
+        assert_eq!(
+            parse_inst("ldsetalh w9, w10, [x11]"),
+            Inst::Ldsetalh {
+                rs: W9,
+                rt: W10,
+                rn: X11
             }
         );
     }
@@ -5514,6 +5904,30 @@ mod tests {
                 rs: W4,
                 rt: W5,
                 rn: X6
+            }
+        );
+    }
+
+    #[test]
+    fn parse_casalb_w() {
+        assert_eq!(
+            parse_inst("casalb w6, w7, [x8]"),
+            Inst::Casalb {
+                rs: W6,
+                rt: W7,
+                rn: X8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_casalh_w() {
+        assert_eq!(
+            parse_inst("casalh w9, w10, [x11]"),
+            Inst::Casalh {
+                rs: W9,
+                rt: W10,
+                rn: X11
             }
         );
     }

@@ -1078,6 +1078,72 @@ fn sys_stlr() {
     );
 }
 #[test]
+fn sys_ldaddalb() {
+    verify(
+        "ldaddalb w0, w1, [x2]",
+        Inst::Ldaddalb {
+            rs: W0,
+            rt: W1,
+            rn: X2,
+        },
+    );
+}
+#[test]
+fn sys_ldaddalh() {
+    verify(
+        "ldaddalh w3, w4, [x5]",
+        Inst::Ldaddalh {
+            rs: W3,
+            rt: W4,
+            rn: X5,
+        },
+    );
+}
+#[test]
+fn sys_ldumaxalb() {
+    verify(
+        "ldumaxalb w0, w1, [x2]",
+        Inst::Ldumaxalb {
+            rs: W0,
+            rt: W1,
+            rn: X2,
+        },
+    );
+}
+#[test]
+fn sys_ldumaxalh() {
+    verify(
+        "ldumaxalh w3, w4, [x5]",
+        Inst::Ldumaxalh {
+            rs: W3,
+            rt: W4,
+            rn: X5,
+        },
+    );
+}
+#[test]
+fn sys_ldsmaxalb() {
+    verify(
+        "ldsmaxalb w18, w19, [x20]",
+        Inst::Ldsmaxalb {
+            rs: W18,
+            rt: W19,
+            rn: X20,
+        },
+    );
+}
+#[test]
+fn sys_ldsmaxalh() {
+    verify(
+        "ldsmaxalh w24, w25, [x26]",
+        Inst::Ldsmaxalh {
+            rs: W24,
+            rt: W25,
+            rn: X26,
+        },
+    );
+}
+#[test]
 fn sys_ldaddal() {
     verify(
         "ldaddal w0, w8, [x8]",
@@ -1085,6 +1151,17 @@ fn sys_ldaddal() {
             rs: W0,
             rt: W8,
             rn: X8,
+        },
+    );
+}
+#[test]
+fn sys_ldumaxal() {
+    verify(
+        "ldumaxal x9, x10, [x11]",
+        Inst::Ldumaxal64 {
+            rs: X9,
+            rt: X10,
+            rn: X11,
         },
     );
 }
@@ -1111,6 +1188,61 @@ fn sys_ldsminal() {
     );
 }
 #[test]
+fn sys_lduminalb() {
+    verify(
+        "lduminalb w12, w13, [x14]",
+        Inst::Lduminalb {
+            rs: W12,
+            rt: W13,
+            rn: X14,
+        },
+    );
+}
+#[test]
+fn sys_lduminalh() {
+    verify(
+        "lduminalh w15, w16, [x17]",
+        Inst::Lduminalh {
+            rs: W15,
+            rt: W16,
+            rn: X17,
+        },
+    );
+}
+#[test]
+fn sys_ldsminalb() {
+    verify(
+        "ldsminalb w21, w22, [x23]",
+        Inst::Ldsminalb {
+            rs: W21,
+            rt: W22,
+            rn: X23,
+        },
+    );
+}
+#[test]
+fn sys_ldsminalh() {
+    verify(
+        "ldsminalh w27, w28, [x29]",
+        Inst::Ldsminalh {
+            rs: W27,
+            rt: W28,
+            rn: X29,
+        },
+    );
+}
+#[test]
+fn sys_lduminal() {
+    verify(
+        "lduminal w18, w19, [x20]",
+        Inst::Lduminal32 {
+            rs: W18,
+            rt: W19,
+            rn: X20,
+        },
+    );
+}
+#[test]
 fn sys_ldclral() {
     verify(
         "ldclral w12, w13, [x14]",
@@ -1118,6 +1250,28 @@ fn sys_ldclral() {
             rs: W12,
             rt: W13,
             rn: X14,
+        },
+    );
+}
+#[test]
+fn sys_ldclralb() {
+    verify(
+        "ldclralb w6, w7, [x8]",
+        Inst::Ldclralb {
+            rs: W6,
+            rt: W7,
+            rn: X8,
+        },
+    );
+}
+#[test]
+fn sys_ldclralh() {
+    verify(
+        "ldclralh w15, w16, [x17]",
+        Inst::Ldclralh {
+            rs: W15,
+            rt: W16,
+            rn: X17,
         },
     );
 }
@@ -1133,6 +1287,28 @@ fn sys_ldeoral() {
     );
 }
 #[test]
+fn sys_ldeoralb() {
+    verify(
+        "ldeoralb w3, w4, [x5]",
+        Inst::Ldeoralb {
+            rs: W3,
+            rt: W4,
+            rn: X5,
+        },
+    );
+}
+#[test]
+fn sys_ldeoralh() {
+    verify(
+        "ldeoralh w12, w13, [x14]",
+        Inst::Ldeoralh {
+            rs: W12,
+            rt: W13,
+            rn: X14,
+        },
+    );
+}
+#[test]
 fn sys_ldsetal() {
     verify(
         "ldsetal w0, w1, [x2]",
@@ -1140,6 +1316,28 @@ fn sys_ldsetal() {
             rs: W0,
             rt: W1,
             rn: X2,
+        },
+    );
+}
+#[test]
+fn sys_ldsetalb() {
+    verify(
+        "ldsetalb w0, w1, [x2]",
+        Inst::Ldsetalb {
+            rs: W0,
+            rt: W1,
+            rn: X2,
+        },
+    );
+}
+#[test]
+fn sys_ldsetalh() {
+    verify(
+        "ldsetalh w9, w10, [x11]",
+        Inst::Ldsetalh {
+            rs: W9,
+            rt: W10,
+            rn: X11,
         },
     );
 }
@@ -1173,6 +1371,84 @@ fn sys_swpalh() {
             rs: W11,
             rt: W12,
             rn: X13,
+        },
+    );
+}
+#[test]
+fn sys_casalb() {
+    verify(
+        "casalb w6, w7, [x8]",
+        Inst::Casalb {
+            rs: W6,
+            rt: W7,
+            rn: X8,
+        },
+    );
+}
+#[test]
+fn sys_casalh() {
+    verify(
+        "casalh w9, w10, [x11]",
+        Inst::Casalh {
+            rs: W9,
+            rt: W10,
+            rn: X11,
+        },
+    );
+}
+#[test]
+fn sys_subs_uxtb() {
+    verify(
+        "subs w10, w8, w9, uxtb",
+        Inst::SubsExtReg {
+            rd: W10,
+            rn: W8,
+            rm: W9,
+            extend: RegExtend::Uxtb,
+            amount: 0,
+            sf: false,
+        },
+    );
+}
+#[test]
+fn sys_subs_uxth() {
+    verify(
+        "subs w11, w12, w13, uxth",
+        Inst::SubsExtReg {
+            rd: W11,
+            rn: W12,
+            rm: W13,
+            extend: RegExtend::Uxth,
+            amount: 0,
+            sf: false,
+        },
+    );
+}
+#[test]
+fn sys_subs_sxtb() {
+    verify(
+        "subs x14, x15, w16, sxtb",
+        Inst::SubsExtReg {
+            rd: X14,
+            rn: X15,
+            rm: W16,
+            extend: RegExtend::Sxtb,
+            amount: 0,
+            sf: true,
+        },
+    );
+}
+#[test]
+fn sys_subs_sxth() {
+    verify(
+        "subs x17, x18, w19, sxth #1",
+        Inst::SubsExtReg {
+            rd: X17,
+            rn: X18,
+            rm: W19,
+            extend: RegExtend::Sxth,
+            amount: 1,
+            sf: true,
         },
     );
 }
