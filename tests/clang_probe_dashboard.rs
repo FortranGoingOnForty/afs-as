@@ -206,6 +206,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "atomic_bitops",
+        source: "atomic_bitops.c",
+        driver: "extern unsigned fetch_or_mask(unsigned);\nextern unsigned fetch_xor_mask(unsigned);\nextern unsigned fetch_and_mask(unsigned);\nint main(void) {\n    return (fetch_or_mask(3u) != 0u)\n        || (fetch_or_mask(4u) != 3u)\n        || (fetch_xor_mask(1u) != 7u)\n        || (fetch_and_mask(5u) != 6u)\n        || (fetch_and_mask(1u) != 4u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "compare_chain",
         source: "compare_chain.c",
         driver: "extern int both_small(int, int);\nint main(void) {\n    return (both_small(1, 2) != 2) || (both_small(3, 9) != 1) || (both_small(30, 40) != 0);\n}\n",
