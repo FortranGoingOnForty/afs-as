@@ -97,6 +97,29 @@ pub fn object_symbols_verbose(path: &Path) -> String {
     tool_output("nm", &["-m", path.to_str().expect("object path")])
 }
 
+pub fn object_string_table(path: &Path) -> Vec<u8> {
+    let data = fs::read(path).expect("read object");
+    let symtab = parse_symtab(&data);
+    data[symtab.stroff..symtab.stroff + symtab.strsize].to_vec()
+}
+
+pub fn object_symbol_string_offsets(path: &Path) -> Vec<(String, u32)> {
+    let data = fs::read(path).expect("read object");
+    let symtab = parse_symtab(&data);
+    let mut out = Vec::with_capacity(symtab.nsyms);
+    for index in 0..symtab.nsyms {
+        let base = symtab.symoff + index * 16;
+        let n_strx = u32::from_le_bytes(
+            data[base..base + 4]
+                .try_into()
+                .expect("n_strx bytes"),
+        );
+        let name = symbol_name_at(&data, symtab.stroff, n_strx);
+        out.push((name, n_strx));
+    }
+    out
+}
+
 pub fn link_with_system(obj_path: &Path, bin_path: &Path, entry: &str) {
     let sdk = Command::new("xcrun")
         .args(["--show-sdk-path"])
@@ -189,6 +212,64 @@ fn tool_output(tool: &str, args: &[&str]) -> String {
         .unwrap_or_else(|_| panic!("run {}", tool));
     assert!(output.status.success(), "{} failed", tool);
     String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+struct SymtabInfo {
+    symoff: usize,
+    nsyms: usize,
+    stroff: usize,
+    strsize: usize,
+}
+
+fn parse_symtab(data: &[u8]) -> SymtabInfo {
+    let ncmds = u32::from_le_bytes(data[16..20].try_into().expect("ncmds bytes")) as usize;
+    let mut offset = 32usize;
+    for _ in 0..ncmds {
+        let cmd = u32::from_le_bytes(data[offset..offset + 4].try_into().expect("cmd bytes"));
+        let cmdsize = u32::from_le_bytes(
+            data[offset + 4..offset + 8]
+                .try_into()
+                .expect("cmdsize bytes"),
+        ) as usize;
+        if cmd == 0x02 {
+            return SymtabInfo {
+                symoff: u32::from_le_bytes(
+                    data[offset + 8..offset + 12]
+                        .try_into()
+                        .expect("symoff bytes"),
+                ) as usize,
+                nsyms: u32::from_le_bytes(
+                    data[offset + 12..offset + 16]
+                        .try_into()
+                        .expect("nsyms bytes"),
+                ) as usize,
+                stroff: u32::from_le_bytes(
+                    data[offset + 16..offset + 20]
+                        .try_into()
+                        .expect("stroff bytes"),
+                ) as usize,
+                strsize: u32::from_le_bytes(
+                    data[offset + 20..offset + 24]
+                        .try_into()
+                        .expect("strsize bytes"),
+                ) as usize,
+            };
+        }
+        offset += cmdsize;
+    }
+    panic!("missing LC_SYMTAB in {}", Path::new("object").display());
+}
+
+fn symbol_name_at(data: &[u8], stroff: usize, n_strx: u32) -> String {
+    if n_strx == 0 {
+        return String::new();
+    }
+    let start = stroff + n_strx as usize;
+    let len = data[start..]
+        .iter()
+        .position(|&byte| byte == 0)
+        .expect("null-terminated symbol");
+    String::from_utf8_lossy(&data[start..start + len]).into_owned()
 }
 
 fn parse_text_bytes(text: &str) -> Vec<u8> {

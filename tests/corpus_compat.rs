@@ -229,6 +229,10 @@ fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
     let ref_symbols_raw = common::object_symbols_preserve_order(&paths.ref_obj);
     let ours_symbols_verbose = common::object_symbols_verbose(&paths.obj);
     let ref_symbols_verbose = common::object_symbols_verbose(&paths.ref_obj);
+    let ours_string_table = common::object_string_table(&paths.obj);
+    let ref_string_table = common::object_string_table(&paths.ref_obj);
+    let ours_string_offsets = common::object_symbol_string_offsets(&paths.obj);
+    let ref_string_offsets = common::object_symbol_string_offsets(&paths.ref_obj);
 
     assert!(ours_load.contains("sectname __const"), "missing __const section:\n{}", ours_load);
     assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
@@ -252,6 +256,9 @@ fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
         normalize_tool_output(&ours_symbols_verbose),
         normalize_tool_output(&ref_symbols_verbose)
     );
+    assert_eq!(ours_string_table, ref_string_table);
+    assert_eq!(ours_string_offsets, ref_string_offsets);
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
 }
 
 #[test]
@@ -270,6 +277,25 @@ fn corpus_macho_writer_mix_links_relocatable_with_support() {
         normalize_tool_output(&common::object_undefined_symbols(&ours_linked)),
         normalize_tool_output(&common::object_undefined_symbols(&ref_linked))
     );
+}
+
+#[test]
+fn corpus_string_suffixes_matches_string_table_layout() {
+    let paths = assemble_fixture("string_suffixes.s");
+
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(
+        common::object_string_table(&paths.obj),
+        common::object_string_table(&paths.ref_obj)
+    );
+    assert_eq!(
+        common::object_symbol_string_offsets(&paths.obj),
+        common::object_symbol_string_offsets(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
 }
 
 #[test]
