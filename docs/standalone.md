@@ -17,6 +17,8 @@ Supported CLI behavior:
 
 - `afs-as input.s -o output.o`
 - `afs-as input.s`
+- `afs-as - -o output.o`
+- `afs-as - -o -`
 - `afs-as --help`
 - `afs-as --version`
 
@@ -24,9 +26,18 @@ Behavior:
 
 - a single input file is accepted
 - default output path replaces the input extension with `.o`
+- `--` stops option parsing so dash-prefixed input filenames can still be assembled
+- `-` can be used as stdin input or stdout output
+- stdin input requires explicit `-o <output.o>` or `-o -`
 - usage errors exit `2`
 - parse / assembly failures exit `1`
 - diagnostics include file, line, column, source line, and caret when source text is available
+
+### Exit Status Policy
+
+- `0`: success
+- `1`: parse or assembly failure
+- `2`: command-line usage error
 
 Library entry points remain available through [`assemble::assemble_source`](../src/assemble.rs) and [`assemble::assemble_instructions`](../src/assemble.rs).
 

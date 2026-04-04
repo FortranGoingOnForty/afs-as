@@ -15,6 +15,9 @@ afs-as hello.s -o hello.o
 # Or let afs-as derive hello.o automatically
 afs-as hello.s
 
+# Assemble from stdin to stdout
+cat hello.s | afs-as - -o - > hello.o
+
 # Inspect CLI help
 afs-as --help
 
@@ -28,6 +31,9 @@ CLI behavior is intentionally small and explicit:
 - `--help` and `--version` print to stdout and exit `0`
 - usage errors exit `2`
 - parse / assembly failures exit `1` with file, line, column, source line, and caret diagnostics
+- `--` stops option parsing
+- `-` can be used for stdin input or stdout output
+- stdin input requires explicit `-o <output.o>` or `-o -`
 
 ## Standalone Support Matrix
 
