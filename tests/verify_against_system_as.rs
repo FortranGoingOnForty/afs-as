@@ -1048,8 +1048,24 @@ fn sys_ldrsw_reg() {
     );
 }
 #[test]
+fn sys_ldaprb() {
+    verify("ldaprb w0, [x1]", Inst::Ldaprb { rt: W0, rn: X1 });
+}
+#[test]
+fn sys_ldaprh() {
+    verify("ldaprh w2, [x3]", Inst::Ldaprh { rt: W2, rn: X3 });
+}
+#[test]
 fn sys_ldapr() {
     verify("ldapr w8, [x9]", Inst::Ldapr32 { rt: W8, rn: X9 });
+}
+#[test]
+fn sys_stlrb() {
+    verify("stlrb w4, [x5]", Inst::Stlrb { rt: W4, rn: X5 });
+}
+#[test]
+fn sys_stlrh() {
+    verify("stlrh w6, [x7]", Inst::Stlrh { rt: W6, rn: X7 });
 }
 #[test]
 fn sys_stlr() {
@@ -1135,6 +1151,28 @@ fn sys_swpal() {
             rs: W0,
             rt: W0,
             rn: X8,
+        },
+    );
+}
+#[test]
+fn sys_swpalb() {
+    verify(
+        "swpalb w8, w9, [x10]",
+        Inst::Swpalb {
+            rs: W8,
+            rt: W9,
+            rn: X10,
+        },
+    );
+}
+#[test]
+fn sys_swpalh() {
+    verify(
+        "swpalh w11, w12, [x13]",
+        Inst::Swpalh {
+            rs: W11,
+            rt: W12,
+            rn: X13,
         },
     );
 }

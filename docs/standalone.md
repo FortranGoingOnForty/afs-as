@@ -172,10 +172,10 @@ Major covered families include:
   - `ldp`, `stp`
   - integer, FP scalar, and FP pair forms across the supported addressing modes
 - scalar atomic memory:
-  - `ldapr`
-  - `stlr`
+  - `ldaprb`, `ldaprh`, `ldapr`
+  - `stlrb`, `stlrh`, `stlr`
   - `ldaddal`, `ldclral`, `ldeoral`, `ldsetal`, `ldsmaxal`, `ldsminal`
-  - `swpal`
+  - `swpalb`, `swpalh`, `swpal`
   - `casal`
 - floating point:
   - `fadd`, `fsub`, `fmul`, `fdiv`

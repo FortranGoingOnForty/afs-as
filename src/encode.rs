@@ -755,10 +755,18 @@ pub enum Inst {
     StrFpPost32 { rt: FpReg, rn: GpReg, offset: i16 },
 
     // ---- Atomic memory operations ----
+    /// LDAPRB Wt, [Xn]
+    Ldaprb { rt: GpReg, rn: GpReg },
+    /// LDAPRH Wt, [Xn]
+    Ldaprh { rt: GpReg, rn: GpReg },
     /// LDAPR Wt, [Xn]
     Ldapr32 { rt: GpReg, rn: GpReg },
     /// LDAPR Xt, [Xn]
     Ldapr64 { rt: GpReg, rn: GpReg },
+    /// STLRB Wt, [Xn]
+    Stlrb { rt: GpReg, rn: GpReg },
+    /// STLRH Wt, [Xn]
+    Stlrh { rt: GpReg, rn: GpReg },
     /// STLR Wt, [Xn]
     Stlr32 { rt: GpReg, rn: GpReg },
     /// STLR Xt, [Xn]
@@ -791,6 +799,10 @@ pub enum Inst {
     Swpal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// SWPAL Xs, Xt, [Xn]
     Swpal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// SWPALB Ws, Wt, [Xn]
+    Swpalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// SWPALH Ws, Wt, [Xn]
+    Swpalh { rs: GpReg, rt: GpReg, rn: GpReg },
     /// CASAL Ws, Wt, [Xn]
     Casal32 { rs: GpReg, rt: GpReg, rn: GpReg },
     /// CASAL Xs, Xt, [Xn]
@@ -1694,8 +1706,12 @@ impl Inst {
             }
 
             // ---- Atomic memory operations ----
+            Inst::Ldaprb { rt, rn } => 0x38BFC000 | (rn.enc() << 5) | rt.enc(),
+            Inst::Ldaprh { rt, rn } => 0x78BFC000 | (rn.enc() << 5) | rt.enc(),
             Inst::Ldapr32 { rt, rn } => 0xB8BFC000 | (rn.enc() << 5) | rt.enc(),
             Inst::Ldapr64 { rt, rn } => 0xF8BFC000 | (rn.enc() << 5) | rt.enc(),
+            Inst::Stlrb { rt, rn } => 0x089FFC00 | (rn.enc() << 5) | rt.enc(),
+            Inst::Stlrh { rt, rn } => 0x489FFC00 | (rn.enc() << 5) | rt.enc(),
             Inst::Stlr32 { rt, rn } => 0x889FFC00 | (rn.enc() << 5) | rt.enc(),
             Inst::Stlr64 { rt, rn } => 0xC89FFC00 | (rn.enc() << 5) | rt.enc(),
             Inst::Ldaddal32 { rs, rt, rn } => {
@@ -1739,6 +1755,12 @@ impl Inst {
             }
             Inst::Swpal64 { rs, rt, rn } => {
                 0xF8E08000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Swpalb { rs, rt, rn } => {
+                0x38E08000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Swpalh { rs, rt, rn } => {
+                0x78E08000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Casal32 { rs, rt, rn } => {
                 0x88E0FC00 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
@@ -3561,12 +3583,28 @@ mod tests {
         );
     }
     #[test]
+    fn ldaprb_w0_x1() {
+        assert_eq!(Inst::Ldaprb { rt: W0, rn: X1 }.encode(), 0x38BFC020);
+    }
+    #[test]
+    fn ldaprh_w2_x3() {
+        assert_eq!(Inst::Ldaprh { rt: W2, rn: X3 }.encode(), 0x78BFC062);
+    }
+    #[test]
     fn ldapr_w8_x9() {
         assert_eq!(Inst::Ldapr32 { rt: W8, rn: X9 }.encode(), 0xB8BFC128);
     }
     #[test]
     fn ldapr_x8_x9() {
         assert_eq!(Inst::Ldapr64 { rt: X8, rn: X9 }.encode(), 0xF8BFC128);
+    }
+    #[test]
+    fn stlrb_w4_x5() {
+        assert_eq!(Inst::Stlrb { rt: W4, rn: X5 }.encode(), 0x089FFCA4);
+    }
+    #[test]
+    fn stlrh_w6_x7() {
+        assert_eq!(Inst::Stlrh { rt: W6, rn: X7 }.encode(), 0x489FFCE6);
     }
     #[test]
     fn stlr_w10_x11() {
@@ -3688,6 +3726,30 @@ mod tests {
             }
             .encode(),
             0xF8E18062
+        );
+    }
+    #[test]
+    fn swpalb_w8_w9_x10() {
+        assert_eq!(
+            Inst::Swpalb {
+                rs: W8,
+                rt: W9,
+                rn: X10
+            }
+            .encode(),
+            0x38E88149
+        );
+    }
+    #[test]
+    fn swpalh_w11_w12_x13() {
+        assert_eq!(
+            Inst::Swpalh {
+                rs: W11,
+                rt: W12,
+                rn: X13
+            }
+            .encode(),
+            0x78EB81AC
         );
     }
     #[test]

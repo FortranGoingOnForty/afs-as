@@ -469,8 +469,24 @@ fn rt_ldrsw_reg() {
     roundtrip(".text\nldrsw x6, [x7, w8, sxtw #2]\n");
 }
 #[test]
+fn rt_ldaprb() {
+    roundtrip(".text\nldaprb w0, [x1]\n");
+}
+#[test]
+fn rt_ldaprh() {
+    roundtrip(".text\nldaprh w2, [x3]\n");
+}
+#[test]
 fn rt_ldapr() {
     roundtrip(".text\nldapr w8, [x9]\n");
+}
+#[test]
+fn rt_stlrb() {
+    roundtrip(".text\nstlrb w4, [x5]\n");
+}
+#[test]
+fn rt_stlrh() {
+    roundtrip(".text\nstlrh w6, [x7]\n");
 }
 #[test]
 fn rt_stlr() {
@@ -503,6 +519,14 @@ fn rt_ldsetal() {
 #[test]
 fn rt_swpal() {
     roundtrip(".text\nswpal w0, w0, [x8]\n");
+}
+#[test]
+fn rt_swpalb() {
+    roundtrip(".text\nswpalb w8, w9, [x10]\n");
+}
+#[test]
+fn rt_swpalh() {
+    roundtrip(".text\nswpalh w11, w12, [x13]\n");
 }
 #[test]
 fn rt_swpal_x() {

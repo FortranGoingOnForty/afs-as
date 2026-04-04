@@ -1026,8 +1026,20 @@ impl<'a> Parser<'a> {
         if mnemonic == "ldrsw" {
             return self.parse_ldrsw();
         }
+        if mnemonic == "ldaprb" {
+            return self.parse_ldapr_narrow("ldaprb");
+        }
+        if mnemonic == "ldaprh" {
+            return self.parse_ldapr_narrow("ldaprh");
+        }
         if mnemonic == "ldapr" {
             return self.parse_ldapr();
+        }
+        if mnemonic == "stlrb" {
+            return self.parse_stlr_narrow("stlrb");
+        }
+        if mnemonic == "stlrh" {
+            return self.parse_stlr_narrow("stlrh");
         }
         if mnemonic == "stlr" {
             return self.parse_stlr();
@@ -1049,6 +1061,12 @@ impl<'a> Parser<'a> {
         }
         if mnemonic == "ldsetal" {
             return self.parse_ldsetal();
+        }
+        if mnemonic == "swpalb" {
+            return self.parse_atomic_rmw_narrow("swpalb");
+        }
+        if mnemonic == "swpalh" {
+            return self.parse_atomic_rmw_narrow("swpalh");
         }
         if mnemonic == "swpal" {
             return self.parse_swpal();
@@ -1250,6 +1268,14 @@ impl<'a> Parser<'a> {
         Ok((reg, sf))
     }
 
+    fn parse_atomic_wreg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        let (reg, sf) = self.parse_atomic_data_reg(context)?;
+        if sf {
+            return Err(self.err(format!("{} requires a w-register", context)));
+        }
+        Ok(reg)
+    }
+
     fn parse_atomic_base_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
         self.expect(&Tok::LBracket)?;
         let (rn, sf, kind) = self.parse_gp_reg_with_size_kind()?;
@@ -1293,6 +1319,17 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    fn parse_ldapr_narrow(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
+        let rt = self.parse_atomic_wreg(mnemonic)?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_atomic_base_reg(mnemonic)?;
+        Ok(Stmt::Instruction(match mnemonic {
+            "ldaprb" => Inst::Ldaprb { rt, rn },
+            "ldaprh" => Inst::Ldaprh { rt, rn },
+            _ => unreachable!(),
+        }))
+    }
+
     fn parse_stlr(&mut self) -> Result<Stmt, ParseError> {
         let (rt, sf) = self.parse_atomic_data_reg("stlr")?;
         self.expect(&Tok::Comma)?;
@@ -1301,6 +1338,17 @@ impl<'a> Parser<'a> {
             Inst::Stlr64 { rt, rn }
         } else {
             Inst::Stlr32 { rt, rn }
+        }))
+    }
+
+    fn parse_stlr_narrow(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
+        let rt = self.parse_atomic_wreg(mnemonic)?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_atomic_base_reg(mnemonic)?;
+        Ok(Stmt::Instruction(match mnemonic {
+            "stlrb" => Inst::Stlrb { rt, rn },
+            "stlrh" => Inst::Stlrh { rt, rn },
+            _ => unreachable!(),
         }))
     }
 
@@ -1335,6 +1383,19 @@ impl<'a> Parser<'a> {
             ("swpal", false) => Inst::Swpal32 { rs, rt, rn },
             ("casal", true) => Inst::Casal64 { rs, rt, rn },
             ("casal", false) => Inst::Casal32 { rs, rt, rn },
+            _ => unreachable!(),
+        }))
+    }
+
+    fn parse_atomic_rmw_narrow(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
+        let rs = self.parse_atomic_wreg(mnemonic)?;
+        self.expect(&Tok::Comma)?;
+        let rt = self.parse_atomic_wreg(mnemonic)?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_atomic_base_reg(mnemonic)?;
+        Ok(Stmt::Instruction(match mnemonic {
+            "swpalb" => Inst::Swpalb { rs, rt, rn },
+            "swpalh" => Inst::Swpalh { rs, rt, rn },
             _ => unreachable!(),
         }))
     }
@@ -5298,10 +5359,42 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldaprb_w() {
+        assert_eq!(
+            parse_inst("ldaprb w0, [x1]"),
+            Inst::Ldaprb { rt: W0, rn: X1 }
+        );
+    }
+
+    #[test]
+    fn parse_ldaprh_w() {
+        assert_eq!(
+            parse_inst("ldaprh w2, [x3]"),
+            Inst::Ldaprh { rt: W2, rn: X3 }
+        );
+    }
+
+    #[test]
     fn parse_stlr_x() {
         assert_eq!(
             parse_inst("stlr x10, [x11]"),
             Inst::Stlr64 { rt: X10, rn: X11 }
+        );
+    }
+
+    #[test]
+    fn parse_stlrb_w() {
+        assert_eq!(
+            parse_inst("stlrb w4, [x5]"),
+            Inst::Stlrb { rt: W4, rn: X5 }
+        );
+    }
+
+    #[test]
+    fn parse_stlrh_w() {
+        assert_eq!(
+            parse_inst("stlrh w6, [x7]"),
+            Inst::Stlrh { rt: W6, rn: X7 }
         );
     }
 
@@ -5385,6 +5478,30 @@ mod tests {
                 rs: X1,
                 rt: X2,
                 rn: X3
+            }
+        );
+    }
+
+    #[test]
+    fn parse_swpalb_w() {
+        assert_eq!(
+            parse_inst("swpalb w8, w9, [x10]"),
+            Inst::Swpalb {
+                rs: W8,
+                rt: W9,
+                rn: X10
+            }
+        );
+    }
+
+    #[test]
+    fn parse_swpalh_w() {
+        assert_eq!(
+            parse_inst("swpalh w11, w12, [x13]"),
+            Inst::Swpalh {
+                rs: W11,
+                rt: W12,
+                rn: X13
             }
         );
     }
