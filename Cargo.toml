@@ -1,0 +1,13 @@
+[package]
+name = "afs-as"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone ARM64 assembler for macOS"
+
+[[bin]]
+name = "afs-as"
+path = "src/main.rs"
+
+[lib]
+name = "afs_as"
+path = "src/lib.rs"
