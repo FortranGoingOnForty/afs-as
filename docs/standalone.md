@@ -72,6 +72,9 @@ Supported section directives:
 - `.section __TEXT,__cstring`
 - `.section __TEXT,__const`
 - `.section __DATA,__data`
+- `.section __DATA,__thread_data`
+- `.section __DATA,__thread_vars`
+- `.section __DATA,__thread_bss`
 - `.section __DATA,__bss`
 
 Supported data / layout directives:
@@ -89,6 +92,7 @@ Supported data / layout directives:
 - `.p2align`
 - `.comm`
 - `.zerofill`
+- `.tbss`
 
 ### Metadata and Unwind Directives
 
