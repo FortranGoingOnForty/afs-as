@@ -280,7 +280,7 @@ impl<'a> Lexer<'a> {
             let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap();
             let val = u64::from_str_radix(s, 16)
                 .map_err(|e| LexError { line, col, msg: format!("invalid hex: {}", e) })?;
-            Ok(if negative { -(val as i64) } else { val as i64 })
+            to_i64(val, negative, line, col)
         } else {
             // Decimal.
             let start = self.pos;
@@ -290,7 +290,7 @@ impl<'a> Lexer<'a> {
             let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap();
             let val: u64 = s.parse()
                 .map_err(|e| LexError { line, col, msg: format!("invalid integer: {}", e) })?;
-            Ok(if negative { -(val as i64) } else { val as i64 })
+            to_i64(val, negative, line, col)
         }
     }
 
@@ -343,6 +343,25 @@ fn is_ident_start(ch: u8) -> bool {
 
 fn is_ident_cont(ch: u8) -> bool {
     ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$'
+}
+
+/// Convert a u64 magnitude + sign to i64, with overflow checking.
+fn to_i64(val: u64, negative: bool, line: u32, col: u32) -> Result<i64, LexError> {
+    if negative {
+        let min_mag = (i64::MAX as u64) + 1; // 2^63
+        if val > min_mag {
+            return Err(LexError { line, col, msg: format!("integer -{} overflows i64", val) });
+        }
+        if val == min_mag {
+            return Ok(i64::MIN); // special case: -(2^63) can't be computed via negation
+        }
+        Ok(-(val as i64))
+    } else {
+        if val > i64::MAX as u64 {
+            return Err(LexError { line, col, msg: format!("integer {} overflows i64", val) });
+        }
+        Ok(val as i64)
+    }
 }
 
 /// A lexer error with source location.
@@ -681,6 +700,30 @@ _main:
     fn bad_hex() {
         let result = Lexer::tokenize("#0x");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn overflow_positive_integer() {
+        // i64::MAX + 1 should error
+        let result = Lexer::tokenize("#9223372036854775808");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().msg.contains("overflows"));
+    }
+
+    #[test]
+    fn overflow_negative_hex() {
+        // Larger than i64::MIN magnitude should error
+        let result = Lexer::tokenize("#-0x8000000000000001");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().msg.contains("overflows"));
+    }
+
+    #[test]
+    fn i64_min_is_valid() {
+        // -9223372036854775808 = i64::MIN, should be accepted
+        let result = Lexer::tokenize("#-9223372036854775808");
+        assert!(result.is_ok());
+        assert_eq!(tok_kinds("#-9223372036854775808"), vec![Tok::Integer(i64::MIN)]);
     }
 
     // ---- Source locations ----

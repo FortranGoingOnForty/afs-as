@@ -188,18 +188,10 @@ impl Assembler {
             Directive::Text => self.section = 0,
             Directive::Data => self.section = 1,
             Directive::Global(name) => self.globals.push(name.clone()),
-            Directive::Align(n) => {
-                if self.section == 0 {
-                    self.text_align = self.text_align.max(*n);
+            Directive::Align(n) | Directive::P2Align(n) => {
+                if *n > 30 {
+                    return Err(AsmError(format!("alignment power {} too large (max 30)", n)));
                 }
-                let alignment = 1u64 << *n;
-                let current = self.current_offset();
-                let aligned = (current + alignment - 1) & !(alignment - 1);
-                let pad = (aligned - current) as usize;
-                let zeros = vec![0u8; pad];
-                self.emit_bytes(&zeros);
-            }
-            Directive::P2Align(n) => {
                 if self.section == 0 {
                     self.text_align = self.text_align.max(*n);
                 }
@@ -224,6 +216,9 @@ impl Assembler {
             Directive::Ascii(bytes) => self.emit_bytes(bytes),
             Directive::Asciz(bytes) => self.emit_bytes(bytes),
             Directive::Space(n) => {
+                if *n > 1024 * 1024 * 64 {
+                    return Err(AsmError(format!(".space size {} too large (max 64MB)", n)));
+                }
                 let zeros = vec![0u8; *n as usize];
                 self.emit_bytes(&zeros);
             }
