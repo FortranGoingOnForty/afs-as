@@ -576,16 +576,14 @@ impl<'a> Parser<'a> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         if let Tok::Integer(_) = self.peek() {
-            // MOV Xd, #imm → MOVZ
             let imm = self.expect_int()?;
-            if (0..=0xFFFF).contains(&imm) {
-                Ok(Inst::Movz { rd, imm16: imm as u16, shift: 0, sf })
-            } else if imm < 0 {
-                // MOV with negative → MOVN
-                let inverted = !imm as u16;
-                Ok(Inst::Movn { rd, imm16: inverted, shift: 0, sf })
+            if let Some(inst) = mov_alias_imm(rd, imm, sf) {
+                Ok(inst)
             } else {
-                Err(self.err(format!("immediate {} too large for MOV, use MOVZ/MOVK sequence", imm)))
+                Err(self.err(format!(
+                    "immediate {} is not encodable as a single MOV alias, use MOVZ/MOVN/MOVK sequence",
+                    imm
+                )))
             }
         } else {
             let (rm, _) = self.parse_gp_reg_with_size()?;
@@ -992,6 +990,28 @@ fn parse_condition(s: &str) -> Option<Cond> {
         "al" => Some(Cond::AL),
         _ => None,
     }
+}
+
+fn mov_alias_imm(rd: GpReg, imm: i64, sf: bool) -> Option<Inst> {
+    let mask = if sf { u64::MAX } else { u32::MAX as u64 };
+    let shifts: &[u8] = if sf { &[0, 16, 32, 48] } else { &[0, 16] };
+    let value = (imm as u64) & mask;
+    let inverted = (!value) & mask;
+
+    for &shift in shifts {
+        let shift_bits = shift as u32;
+        let movz_imm = ((value >> shift_bits) & 0xFFFF) as u16;
+        if value == ((movz_imm as u64) << shift_bits) {
+            return Some(Inst::Movz { rd, imm16: movz_imm, shift, sf });
+        }
+
+        let movn_imm = ((inverted >> shift_bits) & 0xFFFF) as u16;
+        if inverted == ((movn_imm as u64) << shift_bits) {
+            return Some(Inst::Movn { rd, imm16: movn_imm, shift, sf });
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -1428,6 +1448,16 @@ _main:
     fn parse_mov_negative_42() {
         // mov x0, #-42 → movn x0, #41
         assert_eq!(parse_inst("mov x0, #-42"), Inst::Movn { rd: X0, imm16: 41, shift: 0, sf: true });
+    }
+
+    #[test]
+    fn parse_mov_negative_65537() {
+        assert_eq!(parse_inst("mov x0, #-65537"), Inst::Movn { rd: X0, imm16: 1, shift: 16, sf: true });
+    }
+
+    #[test]
+    fn parse_mov_large_positive_shifted() {
+        assert_eq!(parse_inst("mov x0, #0x12340000"), Inst::Movz { rd: X0, imm16: 0x1234, shift: 16, sf: true });
     }
 
     #[test]

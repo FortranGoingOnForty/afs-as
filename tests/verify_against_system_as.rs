@@ -90,6 +90,7 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_movz()     { verify("movz x8, #0xBEEF",       Inst::Movz { rd: X8, imm16: 0xBEEF, shift: 0,  sf: true }); }
 #[test] fn sys_movz_hi()  { verify("movz x8, #0xCAFE, lsl #48", Inst::Movz { rd: X8, imm16: 0xCAFE, shift: 48, sf: true }); }
 #[test] fn sys_movk()     { verify("movk x9, #0x1234, lsl #16", Inst::Movk { rd: X9, imm16: 0x1234, shift: 16, sf: true }); }
+#[test] fn sys_movn_hi()  { verify("movn x0, #1, lsl #16", Inst::Movn { rd: X0, imm16: 1, shift: 16, sf: true }); }
 
 // ---- Shifts ----
 

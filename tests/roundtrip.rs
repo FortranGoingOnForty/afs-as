@@ -102,6 +102,7 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_movz()       { roundtrip(".text\nmovz x0, #0x1234\n"); }
 #[test] fn rt_movz_lsl16() { roundtrip(".text\nmovz x0, #0x5678, lsl #16\n"); }
 #[test] fn rt_movk()       { roundtrip(".text\nmovk x0, #0xABCD, lsl #32\n"); }
+#[test] fn rt_mov_neg_large() { roundtrip(".text\nmov x0, #-65537\n"); }
 #[test] fn rt_lsl()        { roundtrip(".text\nlsl x0, x1, #7\n"); }
 #[test] fn rt_lsr()        { roundtrip(".text\nlsr x0, x1, #15\n"); }
 #[test] fn rt_asr()        { roundtrip(".text\nasr x0, x1, #31\n"); }
