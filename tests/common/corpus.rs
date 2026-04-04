@@ -64,6 +64,15 @@ pub fn object_text_bytes(path: &Path) -> Vec<u8> {
     parse_text_bytes(&String::from_utf8_lossy(&output.stdout))
 }
 
+pub fn object_section_bytes(path: &Path, segment: &str, section: &str) -> Vec<u8> {
+    let output = Command::new("otool")
+        .args(["-s", segment, section, path.to_str().expect("object path")])
+        .output()
+        .expect("run otool -s");
+    assert!(output.status.success(), "otool -s failed for {}", path.display());
+    parse_section_bytes(&String::from_utf8_lossy(&output.stdout))
+}
+
 pub fn object_relocations(path: &Path) -> String {
     tool_output("otool", &["-rv", path.to_str().expect("object path")])
 }
@@ -134,6 +143,25 @@ fn parse_text_bytes(text: &str) -> Vec<u8> {
             if hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
                 let word = u32::from_str_radix(hex, 16).expect("parse hex word");
                 bytes.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+fn parse_section_bytes(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for line in text.lines().filter(|line| line.starts_with('0')) {
+        for hex in line.split_whitespace().skip(1) {
+            if !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                continue;
+            }
+            match hex.len() {
+                2 => bytes.push(u8::from_str_radix(hex, 16).expect("parse byte")),
+                4 => bytes.extend_from_slice(&u16::from_str_radix(hex, 16).expect("parse halfword").to_le_bytes()),
+                8 => bytes.extend_from_slice(&u32::from_str_radix(hex, 16).expect("parse word").to_le_bytes()),
+                16 => bytes.extend_from_slice(&u64::from_str_radix(hex, 16).expect("parse quad").to_le_bytes()),
+                other => panic!("unexpected hex chunk length {} in otool output", other),
             }
         }
     }

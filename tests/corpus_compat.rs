@@ -108,6 +108,25 @@ fn corpus_symbol_attributes_match_nm_output() {
     assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
 }
 
+#[test]
+fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
+    let paths = assemble_fixture("expression_symbols.s");
+
+    let ours_text = common::object_text_bytes(&paths.obj);
+    let ref_text = common::object_text_bytes(&paths.ref_obj);
+    let ours_data = common::object_section_bytes(&paths.obj, "__DATA", "__data");
+    let ref_data = common::object_section_bytes(&paths.ref_obj, "__DATA", "__data");
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+    let ours_symbols = common::object_symbols_verbose(&paths.obj);
+    let ref_symbols = common::object_symbols_verbose(&paths.ref_obj);
+
+    assert_eq!(ours_text, ref_text);
+    assert_eq!(ours_data, ref_data);
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+}
+
 fn normalize_tool_output(text: &str) -> String {
     text.lines()
         .filter(|line| !line.trim_end().ends_with(".o:"))
