@@ -932,6 +932,31 @@ fn sys_ldrsw_reg() {
     );
 }
 #[test]
+fn sys_ldapr() {
+    verify("ldapr w8, [x9]", Inst::Ldapr32 { rt: W8, rn: X9 });
+}
+#[test]
+fn sys_stlr() {
+    verify(
+        "stlr x10, [x11]",
+        Inst::Stlr64 {
+            rt: X10,
+            rn: X11,
+        },
+    );
+}
+#[test]
+fn sys_ldaddal() {
+    verify(
+        "ldaddal w0, w8, [x8]",
+        Inst::Ldaddal32 {
+            rs: W0,
+            rt: W8,
+            rn: X8,
+        },
+    );
+}
+#[test]
 fn sys_ldrsw_lit() {
     verify("ldrsw x1, #8", Inst::LdrswLit { rt: X1, offset: 8 });
 }

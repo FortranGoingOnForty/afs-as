@@ -165,6 +165,10 @@ Major covered families include:
   - `ldrb`, `ldrh`, `ldrsw`
   - `ldp`, `stp`
   - integer, FP scalar, and FP pair forms across the supported addressing modes
+- scalar atomic memory:
+  - `ldapr`
+  - `stlr`
+  - `ldaddal`
 - floating point:
   - `fadd`, `fsub`, `fmul`, `fdiv`
   - `fabs`, `fneg`, `fsqrt`, `fcmp`, `fmadd`
@@ -188,7 +192,6 @@ Current examples:
 - instruction mnemonics or addressing forms that have not been implemented yet
 - non-Mach-O / non-macOS targets
 - multi-input assembly jobs
-- stdout object emission
 
 If a source file currently assembles only because a directive is silently ignored, that is considered a bug in `afs-as`.
 

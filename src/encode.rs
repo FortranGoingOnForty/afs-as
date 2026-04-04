@@ -646,6 +646,20 @@ pub enum Inst {
     /// STR St, [Xn], #offset  (post-index, single)
     StrFpPost32 { rt: FpReg, rn: GpReg, offset: i16 },
 
+    // ---- Atomic memory operations ----
+    /// LDAPR Wt, [Xn]
+    Ldapr32 { rt: GpReg, rn: GpReg },
+    /// LDAPR Xt, [Xn]
+    Ldapr64 { rt: GpReg, rn: GpReg },
+    /// STLR Wt, [Xn]
+    Stlr32 { rt: GpReg, rn: GpReg },
+    /// STLR Xt, [Xn]
+    Stlr64 { rt: GpReg, rn: GpReg },
+    /// LDADDAL Ws, Wt, [Xn]
+    Ldaddal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    /// LDADDAL Xs, Xt, [Xn]
+    Ldaddal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+
     // ---- Load/Store pair ----
     /// STP Wt1, Wt2, [Xn, #offset]  (signed offset, 32-bit)
     StpOff32 {
@@ -1419,6 +1433,18 @@ impl Inst {
             }
             Inst::StrFpPost32 { rt, rn, offset } => {
                 ldst_idx_fp(0b10, 0b00, *offset, 0b01, *rn, *rt)
+            }
+
+            // ---- Atomic memory operations ----
+            Inst::Ldapr32 { rt, rn } => 0xB8BFC000 | (rn.enc() << 5) | rt.enc(),
+            Inst::Ldapr64 { rt, rn } => 0xF8BFC000 | (rn.enc() << 5) | rt.enc(),
+            Inst::Stlr32 { rt, rn } => 0x889FFC00 | (rn.enc() << 5) | rt.enc(),
+            Inst::Stlr64 { rt, rn } => 0xC89FFC00 | (rn.enc() << 5) | rt.enc(),
+            Inst::Ldaddal32 { rs, rt, rn } => {
+                0xB8E00000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Ldaddal64 { rs, rt, rn } => {
+                0xF8E00000 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
             }
 
             // ---- Load/Store pair ----
@@ -2951,6 +2977,52 @@ mod tests {
             }
             .encode(),
             0xB8A8D8E6
+        );
+    }
+    #[test]
+    fn ldapr_w8_x9() {
+        assert_eq!(Inst::Ldapr32 { rt: W8, rn: X9 }.encode(), 0xB8BFC128);
+    }
+    #[test]
+    fn ldapr_x8_x9() {
+        assert_eq!(Inst::Ldapr64 { rt: X8, rn: X9 }.encode(), 0xF8BFC128);
+    }
+    #[test]
+    fn stlr_w10_x11() {
+        assert_eq!(
+            Inst::Stlr32 { rt: W10, rn: X11 }.encode(),
+            0x889FFD6A
+        );
+    }
+    #[test]
+    fn stlr_x10_x11() {
+        assert_eq!(
+            Inst::Stlr64 { rt: X10, rn: X11 }.encode(),
+            0xC89FFD6A
+        );
+    }
+    #[test]
+    fn ldaddal_w0_w8_x8() {
+        assert_eq!(
+            Inst::Ldaddal32 {
+                rs: W0,
+                rt: W8,
+                rn: X8
+            }
+            .encode(),
+            0xB8E00108
+        );
+    }
+    #[test]
+    fn ldaddal_x0_x8_x8() {
+        assert_eq!(
+            Inst::Ldaddal64 {
+                rs: X0,
+                rt: X8,
+                rn: X8
+            }
+            .encode(),
+            0xF8E00108
         );
     }
     #[test]

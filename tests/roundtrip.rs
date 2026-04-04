@@ -429,6 +429,18 @@ fn rt_ldrsw_reg() {
     roundtrip(".text\nldrsw x6, [x7, w8, sxtw #2]\n");
 }
 #[test]
+fn rt_ldapr() {
+    roundtrip(".text\nldapr w8, [x9]\n");
+}
+#[test]
+fn rt_stlr() {
+    roundtrip(".text\nstlr x10, [x11]\n");
+}
+#[test]
+fn rt_ldaddal() {
+    roundtrip(".text\nldaddal w0, w8, [x8]\n");
+}
+#[test]
 fn rt_ldrsw_lit() {
     roundtrip(".text\nldrsw x1, #8\n");
 }

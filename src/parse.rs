@@ -1012,6 +1012,15 @@ impl<'a> Parser<'a> {
         if mnemonic == "ldrsw" {
             return self.parse_ldrsw();
         }
+        if mnemonic == "ldapr" {
+            return self.parse_ldapr();
+        }
+        if mnemonic == "stlr" {
+            return self.parse_stlr();
+        }
+        if mnemonic == "ldaddal" {
+            return self.parse_ldaddal();
+        }
         if let Some(cond) = mnemonic.strip_prefix("b.") {
             return self.parse_bcond(cond);
         }
@@ -1189,7 +1198,88 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_atomic_data_reg(&mut self, context: &str) -> Result<(GpReg, bool), ParseError> {
+        let (reg, sf, kind) = self.parse_gp_reg_with_size_kind()?;
+        if kind == GpRegKind::Sp {
+            return Err(self.err(format!(
+                "{} does not allow SP as a data register",
+                context
+            )));
+        }
+        Ok((reg, sf))
+    }
+
+    fn parse_atomic_base_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        self.expect(&Tok::LBracket)?;
+        let (rn, sf, kind) = self.parse_gp_reg_with_size_kind()?;
+        if !sf || kind == GpRegKind::Zr {
+            return Err(self.err(format!(
+                "{} expects an [Xn] or [sp] base register",
+                context
+            )));
+        }
+        if !self.eat(&Tok::RBracket) {
+            return Err(self.err(format!(
+                "{} expects a simple [Xn] memory operand",
+                context
+            )));
+        }
+        if self.eat(&Tok::Bang) {
+            return Err(self.err(format!(
+                "{} does not support pre-index addressing",
+                context
+            )));
+        }
+        if self.eat(&Tok::Comma) {
+            return Err(self.err(format!(
+                "{} does not support post-index or offset addressing",
+                context
+            )));
+        }
+        Ok(rn)
+    }
+
     // ---- Instruction-specific parsers ----
+
+    fn parse_ldapr(&mut self) -> Result<Stmt, ParseError> {
+        let (rt, sf) = self.parse_atomic_data_reg("ldapr")?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_atomic_base_reg("ldapr")?;
+        Ok(Stmt::Instruction(if sf {
+            Inst::Ldapr64 { rt, rn }
+        } else {
+            Inst::Ldapr32 { rt, rn }
+        }))
+    }
+
+    fn parse_stlr(&mut self) -> Result<Stmt, ParseError> {
+        let (rt, sf) = self.parse_atomic_data_reg("stlr")?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_atomic_base_reg("stlr")?;
+        Ok(Stmt::Instruction(if sf {
+            Inst::Stlr64 { rt, rn }
+        } else {
+            Inst::Stlr32 { rt, rn }
+        }))
+    }
+
+    fn parse_ldaddal(&mut self) -> Result<Stmt, ParseError> {
+        let (rs, sf) = self.parse_atomic_data_reg("ldaddal")?;
+        self.expect(&Tok::Comma)?;
+        let (rt, rt_sf) = self.parse_atomic_data_reg("ldaddal")?;
+        if sf != rt_sf {
+            return Err(self.err(
+                "ldaddal requires source and destination registers of the same width".into(),
+            ));
+        }
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_atomic_base_reg("ldaddal")?;
+        Ok(Stmt::Instruction(if sf {
+            Inst::Ldaddal64 { rs, rt, rn }
+        } else {
+            Inst::Ldaddal32 { rs, rt, rn }
+        }))
+    }
 
     fn parse_add_sub(&mut self, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
@@ -4699,6 +4789,34 @@ mod tests {
                 rm: W8,
                 extend: AddrExtend::Sxtw,
                 shift: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldapr_w() {
+        assert_eq!(
+            parse_inst("ldapr w8, [x9]"),
+            Inst::Ldapr32 { rt: W8, rn: X9 }
+        );
+    }
+
+    #[test]
+    fn parse_stlr_x() {
+        assert_eq!(
+            parse_inst("stlr x10, [x11]"),
+            Inst::Stlr64 { rt: X10, rn: X11 }
+        );
+    }
+
+    #[test]
+    fn parse_ldaddal_w() {
+        assert_eq!(
+            parse_inst("ldaddal w0, w8, [x8]"),
+            Inst::Ldaddal32 {
+                rs: W0,
+                rt: W8,
+                rn: X8
             }
         );
     }
