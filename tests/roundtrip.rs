@@ -205,6 +205,14 @@ fn rt_csel() {
     roundtrip(".text\ncsel w0, w0, w1, gt\n");
 }
 #[test]
+fn rt_ccmp() {
+    roundtrip(".text\nccmp w0, #3, #4, ne\n");
+}
+#[test]
+fn rt_ccmn() {
+    roundtrip(".text\nccmn x3, #9, #1, ge\n");
+}
+#[test]
 fn rt_csinc() {
     roundtrip(".text\ncsinc x2, x3, x4, ne\n");
 }

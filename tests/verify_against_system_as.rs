@@ -571,6 +571,32 @@ fn sys_csel() {
     );
 }
 #[test]
+fn sys_ccmp() {
+    verify(
+        "ccmp w0, #3, #4, ne",
+        Inst::CcmpImm {
+            rn: W0,
+            imm5: 3,
+            nzcv: 4,
+            cond: Cond::NE,
+            sf: false,
+        },
+    );
+}
+#[test]
+fn sys_ccmn() {
+    verify(
+        "ccmn x3, #9, #1, ge",
+        Inst::CcmnImm {
+            rn: X3,
+            imm5: 9,
+            nzcv: 1,
+            cond: Cond::GE,
+            sf: true,
+        },
+    );
+}
+#[test]
 fn sys_csinc() {
     verify(
         "csinc x2, x3, x3, ne",

@@ -109,6 +109,12 @@ const CASES: &[ProbeCase] = &[
         driver: "extern int add_and_fetch(int);\nextern int load_then_store(int);\nint main(void) {\n    return (add_and_fetch(4) != 4) || (load_then_store(7) != 4) || (add_and_fetch(1) != 12);\n}\n",
         support: None,
     },
+    ProbeCase {
+        name: "compare_chain",
+        source: "compare_chain.c",
+        driver: "extern int both_small(int, int);\nint main(void) {\n    return (both_small(1, 2) != 2) || (both_small(3, 9) != 1) || (both_small(30, 40) != 0);\n}\n",
+        support: None,
+    },
 ];
 
 fn probe_source_path(name: &str) -> PathBuf {
