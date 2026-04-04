@@ -691,23 +691,16 @@ impl<'a> Parser<'a> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
 
-        // Handle label references for LDR (literal pool loads)
+        // Detect label references for LDR (literal pool loads like `ldr x0, =label`).
+        // LDR-literal has a different encoding than base+offset — not yet supported.
         if let Tok::Ident(_) = self.peek() {
             if !matches!(self.peek(), Tok::Ident(ref s) if {
                 let lo = s.to_lowercase();
                 lo == "sp" || lo == "xzr" || lo == "wzr" || lo.starts_with('x') || lo.starts_with('w')
             }) {
-                // It's a label reference — skip for now.
-                self.advance();
-                if self.eat(&Tok::At) { self.advance(); }
-                let inst = if sf {
-                    if is_load { Inst::LdrImm64 { rt, rn: X0, offset: 0 } }
-                    else { Inst::StrImm64 { rt, rn: X0, offset: 0 } }
-                } else {
-                    if is_load { Inst::LdrImm32 { rt, rn: X0, offset: 0 } }
-                    else { Inst::StrImm32 { rt, rn: X0, offset: 0 } }
-                };
-                return Ok(inst);
+                return Err(self.err(
+                    "LDR/STR with label reference not yet supported; use ADRP+ADD+LDR pattern instead".into()
+                ));
             }
         }
 
@@ -1315,6 +1308,14 @@ _main:
     fn error_missing_comma() {
         let result = parse("add x0 x1 x2");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn error_ldr_literal_not_supported() {
+        let result = parse("ldr x0, some_label");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.msg.contains("not yet supported"), "got: {}", err.msg);
     }
 
     // ---- Case insensitivity ----
