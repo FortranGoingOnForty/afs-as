@@ -116,6 +116,8 @@ struct Assembler {
     absolute_defs: BTreeMap<String, Expr>,
     absolute_symbols: BTreeMap<String, i64>,
     common_symbols: BTreeMap<String, CommonSymbol>,
+    symbol_order: BTreeMap<String, usize>,
+    next_symbol_order: usize,
     section_bases: Vec<u64>,
     /// Symbol attributes declared via directives.
     symbol_attrs: BTreeMap<String, SymbolAttrs>,
@@ -353,6 +355,8 @@ impl Assembler {
             absolute_defs: BTreeMap::new(),
             absolute_symbols: BTreeMap::new(),
             common_symbols: BTreeMap::new(),
+            symbol_order: BTreeMap::from([(String::from("ltmp0"), 0)]),
+            next_symbol_order: 1,
             section_bases: Vec::new(),
             symbol_attrs: BTreeMap::new(),
             fixups: Vec::new(),
@@ -371,6 +375,19 @@ impl Assembler {
 
     fn symbol_attrs_mut(&mut self, name: &str) -> &mut SymbolAttrs {
         self.symbol_attrs.entry(name.to_string()).or_default()
+    }
+
+    fn note_symbol(&mut self, name: &str) {
+        if self.symbol_order.contains_key(name) {
+            return;
+        }
+        let order = self.next_symbol_order;
+        self.next_symbol_order += 1;
+        self.symbol_order.insert(name.to_string(), order);
+    }
+
+    fn note_section_temp(&mut self, index: usize) {
+        self.note_symbol(&format!("ltmp{}", index));
     }
 
     fn reset_for_emission(&mut self) {
@@ -404,6 +421,7 @@ impl Assembler {
                     if self.common_symbols.contains_key(name) {
                         return Err(AsmError(format!("duplicate symbol '{}'", name)));
                     }
+                    self.note_symbol(name);
                     let offset = self.current_offset();
                     if self.labels.insert(name.clone(), (self.section, offset)).is_some() {
                         return Err(AsmError(format!("duplicate label '{}'", name)));
@@ -460,26 +478,33 @@ impl Assembler {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
             Directive::Set(name, expr) => {
+                self.note_symbol(name);
                 self.absolute_defs.insert(name.clone(), expr.clone());
             }
             Directive::Comm { name, size, align_pow2 } => {
                 self.record_common_symbol(name, *size, *align_pow2)?;
             }
-            Directive::Extern(_) => {}
+            Directive::Extern(name) => {
+                self.note_symbol(name);
+            }
             Directive::Global(name) => {
+                self.note_symbol(name);
                 self.symbol_attrs_mut(name).global = true;
             }
             Directive::PrivateExtern(name) => {
+                self.note_symbol(name);
                 let attrs = self.symbol_attrs_mut(name);
                 attrs.global = true;
                 attrs.private_extern = true;
             }
             Directive::WeakReference(name) => {
+                self.note_symbol(name);
                 let attrs = self.symbol_attrs_mut(name);
                 attrs.global = true;
                 attrs.weak_ref = true;
             }
             Directive::WeakDefinition(name) => {
+                self.note_symbol(name);
                 let attrs = self.symbol_attrs_mut(name);
                 attrs.weak_def = true;
             }
@@ -1136,6 +1161,7 @@ impl Assembler {
         if self.common_symbols.insert(name.to_string(), CommonSymbol { size, align_pow2 }).is_some() {
             return Err(AsmError(format!("duplicate common symbol '{}'", name)));
         }
+        self.note_symbol(name);
         Ok(())
     }
 
@@ -1173,6 +1199,7 @@ impl Assembler {
             if self.common_symbols.contains_key(symbol) || self.absolute_defs.contains_key(symbol) {
                 return Err(AsmError(format!("duplicate symbol '{}'", symbol)));
             }
+            self.note_symbol(symbol);
             if self.labels.insert(symbol.to_string(), (target, offset)).is_some() {
                 return Err(AsmError(format!("duplicate symbol '{}'", symbol)));
             }
@@ -1230,7 +1257,9 @@ impl Assembler {
         }
         self.sections.push(Section::new(segment, name, kind));
         self.pending_relocs.push(Vec::new());
-        Ok(self.sections.len() - 1)
+        let index = self.sections.len() - 1;
+        self.note_section_temp(index);
+        Ok(index)
     }
 
     fn supported_section(seg: &str, sect: &str) -> Result<(&'static str, &'static str, SectionKind), AsmError> {
@@ -1390,6 +1419,7 @@ impl Assembler {
 
         let eh_frame_index = self.sections.len();
         let eh_frame_symbol = format!("ltmp{}", eh_frame_index);
+        self.note_section_temp(eh_frame_index);
         let mut section = Section::new("__TEXT", "__eh_frame", SectionKind::EhFrame);
         section.align_pow2 = 3;
         section.data.extend_from_slice(&[
@@ -1449,6 +1479,7 @@ impl Assembler {
         }
 
         let mut section = Section::new("__LD", "__compact_unwind", SectionKind::CompactUnwind);
+        self.note_section_temp(self.sections.len());
         section.align_pow2 = 3;
         for row in &self.compact_unwind_rows {
             let reloc_offset = section.data.len() as u32;
@@ -1657,31 +1688,57 @@ impl Assembler {
             }
         }
 
+        let mut missing_reloc_symbols = Vec::new();
         for relocs in &self.pending_relocs {
             for reloc in relocs {
-                if !self.labels.contains_key(&reloc.symbol) && !symbols.iter().any(|s| s.name == reloc.symbol) {
+                if !self.labels.contains_key(&reloc.symbol)
+                    && !symbols.iter().any(|s| s.name == reloc.symbol)
+                    && !missing_reloc_symbols.iter().any(|name| name == &reloc.symbol)
+                {
                     if is_assembler_local_symbol(&reloc.symbol) {
                         return Err(AsmError(format!(
                             "local symbol '{}' must be defined in this object",
                             reloc.symbol
                         )));
                     }
-                    symbols.push(Symbol {
-                        name: reloc.symbol.clone(),
-                        section: 0,
-                        value: 0,
-                        global: true,
-                        undefined: true,
-                        absolute: false,
-                        common: false,
-                        common_align_pow2: 0,
-                        private_extern: false,
-                        weak_ref: false,
-                        weak_def: false,
-                    });
+                    missing_reloc_symbols.push(reloc.symbol.clone());
                 }
             }
         }
+
+        for name in missing_reloc_symbols {
+            self.note_symbol(&name);
+            symbols.push(Symbol {
+                name,
+                section: 0,
+                value: 0,
+                global: true,
+                undefined: true,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            });
+        }
+
+        let symbol_order = self.symbol_order.clone();
+        symbols.sort_by(|a, b| {
+            let rank_a = symbol_class_rank(a);
+            let rank_b = symbol_class_rank(b);
+            rank_a
+                .cmp(&rank_b)
+                .then_with(|| match rank_a {
+                    0 => symbol_order
+                        .get(&a.name)
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                        .cmp(&symbol_order.get(&b.name).copied().unwrap_or(usize::MAX))
+                        .then_with(|| a.name.cmp(&b.name)),
+                    _ => a.name.cmp(&b.name),
+                })
+        });
 
         for relocs in self.pending_relocs {
             for pending in relocs {
@@ -1900,6 +1957,16 @@ fn check_pcrel_offset(offset: i64, bits: u8, context: &str) -> Result<i32, AsmEr
     Ok(offset as i32)
 }
 
+fn symbol_class_rank(symbol: &Symbol) -> u8 {
+    if symbol.undefined {
+        2
+    } else if symbol.global {
+        1
+    } else {
+        0
+    }
+}
+
 fn is_assembler_local_symbol(name: &str) -> bool {
     name.starts_with(".L")
 }
@@ -1971,6 +2038,25 @@ mod tests {
         assert!(!main.weak_def);
         assert_eq!(main.section, 1);
         assert_eq!(main.value, 0);
+    }
+
+    #[test]
+    fn assemble_symbol_order_groups_classes_with_local_source_order() {
+        let obj = assemble_source(
+            ".text\n\
+            .globl _aaa\n\
+            .weak_definition zlocal\n\
+            .weak_reference _puts\n\
+            _aaa:\n\
+            ret\n\
+            zlocal:\n\
+            ret\n\
+            bl _puts\n"
+        )
+        .unwrap();
+
+        let names: Vec<_> = obj.symbols.iter().map(|sym| sym.name.as_str()).collect();
+        assert_eq!(names, vec!["ltmp0", "zlocal", "_aaa", "_puts"]);
     }
 
     #[test]
