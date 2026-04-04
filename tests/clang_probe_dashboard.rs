@@ -104,10 +104,22 @@ const CASES: &[ProbeCase] = &[
         support: Some("unsigned char ext_storage[] = {1, 2, 3, 77, 5};\nunsigned char *ext_bytes = ext_storage;\n"),
     },
     ProbeCase {
+        name: "ext_signed_byte_ptr",
+        source: "ext_signed_byte_ptr.c",
+        driver: "extern int read_ext_sbyte3(void);\nint main(void) { return read_ext_sbyte3() != -11; }\n",
+        support: Some("signed char ext_storage[] = {1, 2, 3, -11, 5};\nsigned char *ext_sbytes = ext_storage;\n"),
+    },
+    ProbeCase {
         name: "ext_short_ptr",
         source: "ext_short_ptr.c",
         driver: "extern int read_ext_short2(void);\nint main(void) { return read_ext_short2() != 321; }\n",
         support: Some("unsigned short ext_storage[] = {7, 9, 321, 11};\nunsigned short *ext_shorts = ext_storage;\n"),
+    },
+    ProbeCase {
+        name: "ext_signed_short_ptr",
+        source: "ext_signed_short_ptr.c",
+        driver: "extern int read_ext_short_signed2(void);\nint main(void) { return read_ext_short_signed2() != -321; }\n",
+        support: Some("short ext_storage[] = {7, 9, -321, 11};\nshort *ext_shorts_signed = ext_storage;\n"),
     },
     ProbeCase {
         name: "ext_str_index",
