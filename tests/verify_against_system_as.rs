@@ -121,6 +121,11 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_blr()      { verify("blr x9",        Inst::Blr  { rn: X9 }); }
 #[test] fn sys_csel()     { verify("csel w0, w0, w1, gt", Inst::Csel { rd: W0, rn: W0, rm: W1, cond: Cond::GT, sf: false }); }
 #[test] fn sys_csinc()    { verify("csinc x2, x3, x3, ne", Inst::Csinc { rd: X2, rn: X3, rm: X3, cond: Cond::NE, sf: true }); }
+#[test] fn sys_csinv()    { verify("csinv x2, x3, x4, ne", Inst::Csinv { rd: X2, rn: X3, rm: X4, cond: Cond::NE, sf: true }); }
+#[test] fn sys_csneg()    { verify("csneg x5, x6, x7, gt", Inst::Csneg { rd: X5, rn: X6, rm: X7, cond: Cond::GT, sf: true }); }
+#[test] fn sys_csetm()    { verify("csetm w8, eq", Inst::Csinv { rd: W8, rn: XZR, rm: XZR, cond: Cond::NE, sf: false }); }
+#[test] fn sys_cinv()     { verify("cinv w9, w10, mi", Inst::Csinv { rd: W9, rn: W10, rm: W10, cond: Cond::PL, sf: false }); }
+#[test] fn sys_cneg()     { verify("cneg x11, x12, lt", Inst::Csneg { rd: X11, rn: X12, rm: X12, cond: Cond::GE, sf: true }); }
 
 // ---- Load/Store (unsigned offset) ----
 

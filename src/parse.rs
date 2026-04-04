@@ -810,8 +810,14 @@ impl<'a> Parser<'a> {
 
             // Move
             "csel" => self.parse_csel(),
+            "csinc" => self.parse_csinc(),
+            "csinv" => self.parse_csinv(),
+            "csneg" => self.parse_csneg(),
             "cset" => self.parse_cset(),
+            "csetm" => self.parse_csetm(),
             "cinc" => self.parse_cinc(),
+            "cinv" => self.parse_cinv(),
+            "cneg" => self.parse_cneg(),
             "mov" => self.parse_mov(),
             "movz" => self.parse_mov_wide("movz"),
             "movk" => self.parse_mov_wide("movk"),
@@ -1125,22 +1131,7 @@ impl<'a> Parser<'a> {
         Ok(Inst::OrnReg { rd, rn: XZR, rm, sf })
     }
 
-    fn parse_cset(&mut self) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
-        self.expect(&Tok::Comma)?;
-        let cond_name = self.expect_ident()?;
-        let cond = parse_condition(&cond_name)
-            .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
-        Ok(Inst::Csinc {
-            rd,
-            rn: XZR,
-            rm: XZR,
-            cond: invert_condition(cond),
-            sf,
-        })
-    }
-
-    fn parse_csel(&mut self) -> Result<Inst, ParseError> {
+    fn parse_cond_select(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
@@ -1150,10 +1141,30 @@ impl<'a> Parser<'a> {
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
             .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
-        Ok(Inst::Csel { rd, rn, rm, cond, sf })
+        Ok(match mnemonic {
+            "csel" => Inst::Csel { rd, rn, rm, cond, sf },
+            "csinc" => Inst::Csinc { rd, rn, rm, cond, sf },
+            "csinv" => Inst::Csinv { rd, rn, rm, cond, sf },
+            "csneg" => Inst::Csneg { rd, rn, rm, cond, sf },
+            _ => unreachable!("unsupported conditional select mnemonic"),
+        })
     }
 
-    fn parse_cinc(&mut self) -> Result<Inst, ParseError> {
+    fn parse_cond_select_set_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let cond_name = self.expect_ident()?;
+        let cond = parse_condition(&cond_name)
+            .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
+        let cond = invert_condition(cond);
+        Ok(match mnemonic {
+            "cset" => Inst::Csinc { rd, rn: XZR, rm: XZR, cond, sf },
+            "csetm" => Inst::Csinv { rd, rn: XZR, rm: XZR, cond, sf },
+            _ => unreachable!("unsupported conditional set alias"),
+        })
+    }
+
+    fn parse_cond_select_unary_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
@@ -1161,13 +1172,49 @@ impl<'a> Parser<'a> {
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
             .ok_or_else(|| self.err(format!("unknown condition: {}", cond_name)))?;
-        Ok(Inst::Csinc {
-            rd,
-            rn,
-            rm: rn,
-            cond: invert_condition(cond),
-            sf,
+        let cond = invert_condition(cond);
+        Ok(match mnemonic {
+            "cinc" => Inst::Csinc { rd, rn, rm: rn, cond, sf },
+            "cinv" => Inst::Csinv { rd, rn, rm: rn, cond, sf },
+            "cneg" => Inst::Csneg { rd, rn, rm: rn, cond, sf },
+            _ => unreachable!("unsupported conditional unary alias"),
         })
+    }
+
+    fn parse_csel(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_select("csel")
+    }
+
+    fn parse_csinc(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_select("csinc")
+    }
+
+    fn parse_csinv(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_select("csinv")
+    }
+
+    fn parse_csneg(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_select("csneg")
+    }
+
+    fn parse_cset(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_select_set_alias("cset")
+    }
+
+    fn parse_csetm(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_select_set_alias("csetm")
+    }
+
+    fn parse_cinc(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_select_unary_alias("cinc")
+    }
+
+    fn parse_cinv(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_select_unary_alias("cinv")
+    }
+
+    fn parse_cneg(&mut self) -> Result<Inst, ParseError> {
+        self.parse_cond_select_unary_alias("cneg")
     }
 
     fn parse_3reg(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -2378,10 +2425,58 @@ mod tests {
     }
 
     #[test]
+    fn parse_csinc() {
+        assert_eq!(
+            parse_inst("csinc x2, x3, x4, ne"),
+            Inst::Csinc { rd: X2, rn: X3, rm: X4, cond: Cond::NE, sf: true }
+        );
+    }
+
+    #[test]
+    fn parse_csinv() {
+        assert_eq!(
+            parse_inst("csinv x2, x3, x4, ne"),
+            Inst::Csinv { rd: X2, rn: X3, rm: X4, cond: Cond::NE, sf: true }
+        );
+    }
+
+    #[test]
+    fn parse_csneg() {
+        assert_eq!(
+            parse_inst("csneg x5, x6, x7, gt"),
+            Inst::Csneg { rd: X5, rn: X6, rm: X7, cond: Cond::GT, sf: true }
+        );
+    }
+
+    #[test]
     fn parse_cinc_alias() {
         assert_eq!(
             parse_inst("cinc w2, w3, ne"),
             Inst::Csinc { rd: W2, rn: W3, rm: W3, cond: Cond::EQ, sf: false }
+        );
+    }
+
+    #[test]
+    fn parse_csetm_alias() {
+        assert_eq!(
+            parse_inst("csetm w8, eq"),
+            Inst::Csinv { rd: W8, rn: XZR, rm: XZR, cond: Cond::NE, sf: false }
+        );
+    }
+
+    #[test]
+    fn parse_cinv_alias() {
+        assert_eq!(
+            parse_inst("cinv w9, w10, mi"),
+            Inst::Csinv { rd: W9, rn: W10, rm: W10, cond: Cond::PL, sf: false }
+        );
+    }
+
+    #[test]
+    fn parse_cneg_alias() {
+        assert_eq!(
+            parse_inst("cneg x11, x12, lt"),
+            Inst::Csneg { rd: X11, rn: X12, rm: X12, cond: Cond::GE, sf: true }
         );
     }
 

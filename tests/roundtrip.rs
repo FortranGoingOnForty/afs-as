@@ -109,8 +109,14 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_cmp_imm()    { roundtrip(".text\ncmp x5, #42\n"); }
 #[test] fn rt_tst()        { roundtrip(".text\ntst x0, x1\n"); }
 #[test] fn rt_csel()       { roundtrip(".text\ncsel w0, w0, w1, gt\n"); }
+#[test] fn rt_csinc()      { roundtrip(".text\ncsinc x2, x3, x4, ne\n"); }
+#[test] fn rt_csinv()      { roundtrip(".text\ncsinv x2, x3, x4, ne\n"); }
+#[test] fn rt_csneg()      { roundtrip(".text\ncsneg x5, x6, x7, gt\n"); }
 #[test] fn rt_cset()       { roundtrip(".text\ncset x0, eq\n"); }
+#[test] fn rt_csetm()      { roundtrip(".text\ncsetm w8, eq\n"); }
 #[test] fn rt_cinc()       { roundtrip(".text\ncinc w2, w3, ne\n"); }
+#[test] fn rt_cinv()       { roundtrip(".text\ncinv w9, w10, mi\n"); }
+#[test] fn rt_cneg()       { roundtrip(".text\ncneg x11, x12, lt\n"); }
 #[test] fn rt_movz()       { roundtrip(".text\nmovz x0, #0x1234\n"); }
 #[test] fn rt_movz_lsl16() { roundtrip(".text\nmovz x0, #0x5678, lsl #16\n"); }
 #[test] fn rt_movk()       { roundtrip(".text\nmovk x0, #0xABCD, lsl #32\n"); }

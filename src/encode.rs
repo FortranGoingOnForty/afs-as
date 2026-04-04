@@ -132,6 +132,10 @@ pub enum Inst {
     Udiv { rd: GpReg, rn: GpReg, rm: GpReg, sf: bool },
     /// CSEL Xd, Xn, Xm, cond
     Csel { rd: GpReg, rn: GpReg, rm: GpReg, cond: Cond, sf: bool },
+    /// CSINV Xd, Xn, Xm, cond
+    Csinv { rd: GpReg, rn: GpReg, rm: GpReg, cond: Cond, sf: bool },
+    /// CSNEG Xd, Xn, Xm, cond
+    Csneg { rd: GpReg, rn: GpReg, rm: GpReg, cond: Cond, sf: bool },
 
     // ---- Logic (register) ----
 
@@ -539,6 +543,8 @@ impl Inst {
             Inst::Blr { rn } => 0xD63F0000 | (rn.enc() << 5),
             Inst::Csel { rd, rn, rm, cond, sf } => csel(*sf, 0b00, *rm, *cond, *rn, *rd),
             Inst::Csinc { rd, rn, rm, cond, sf } => csel(*sf, 0b01, *rm, *cond, *rn, *rd),
+            Inst::Csinv { rd, rn, rm, cond, sf } => csel(*sf, 0b10, *rm, *cond, *rn, *rd),
+            Inst::Csneg { rd, rn, rm, cond, sf } => csel(*sf, 0b11, *rm, *cond, *rn, *rd),
 
             // ---- Address generation ----
             Inst::Adr { rd, imm } => {
@@ -768,9 +774,15 @@ fn bitfield(sf: bool, opc: u32, immr: u8, imms: u8, rn: GpReg, rd: GpReg) -> u32
         | (rn.enc() << 5) | rd.enc()
 }
 
-fn csel(sf: bool, op: u32, rm: GpReg, cond: Cond, rn: GpReg, rd: GpReg) -> u32 {
-    ((sf as u32) << 31) | (0b0011010100 << 21) | (rm.enc() << 16)
-        | (cond.enc() << 12) | (op << 10) | (rn.enc() << 5) | rd.enc()
+fn csel(sf: bool, variant: u32, rm: GpReg, cond: Cond, rn: GpReg, rd: GpReg) -> u32 {
+    ((sf as u32) << 31)
+        | (((variant >> 1) & 0x1) << 30)
+        | (0b0011010100 << 21)
+        | (rm.enc() << 16)
+        | (cond.enc() << 12)
+        | ((variant & 0x1) << 10)
+        | (rn.enc() << 5)
+        | rd.enc()
 }
 
 fn ldst_idx(size: u32, opc: u32, offset: i16, idx: u32, rn: GpReg, rt: GpReg) -> u32 {
@@ -941,6 +953,8 @@ mod tests {
     #[test] fn blr_x17()        { assert_eq!(Inst::Blr { rn: X17 }.encode(), 0xD63F0220); }
     #[test] fn csel_w0_w0_w1_gt() { assert_eq!(Inst::Csel { rd: W0, rn: W0, rm: W1, cond: Cond::GT, sf: false }.encode(), 0x1A81C000); }
     #[test] fn csinc_x2_x3_x3_ne() { assert_eq!(Inst::Csinc { rd: X2, rn: X3, rm: X3, cond: Cond::NE, sf: true }.encode(), 0x9A831462); }
+    #[test] fn csinv_x2_x3_x4_ne() { assert_eq!(Inst::Csinv { rd: X2, rn: X3, rm: X4, cond: Cond::NE, sf: true }.encode(), 0xDA841062); }
+    #[test] fn csneg_x5_x6_x7_gt() { assert_eq!(Inst::Csneg { rd: X5, rn: X6, rm: X7, cond: Cond::GT, sf: true }.encode(), 0xDA87C4C5); }
 
     // ---- Address generation ----
 
