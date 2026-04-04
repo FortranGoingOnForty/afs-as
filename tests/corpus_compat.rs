@@ -258,6 +258,27 @@ fn corpus_alignment_directives_match_text_data_and_section_alignment() {
     assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
 }
 
+#[test]
+fn corpus_metadata_directives_match_header_and_load_commands() {
+    let paths = assemble_fixture("metadata_directives.s");
+
+    let ours_header = common::object_header(&paths.obj);
+    let ref_header = common::object_header(&paths.ref_obj);
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+
+    assert!(
+        ours_header.contains("SUBSECTIONS_VIA_SYMBOLS"),
+        "missing subsections flag:\n{}",
+        ours_header
+    );
+    assert!(ours_load.contains("minos 11.0"), "missing minos:\n{}", ours_load);
+    assert!(ours_load.contains("sdk 15.5"), "missing sdk:\n{}", ours_load);
+
+    assert_eq!(normalize_tool_output(&ours_header), normalize_tool_output(&ref_header));
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+}
+
 fn normalize_tool_output(text: &str) -> String {
     text.lines()
         .filter(|line| !line.trim_end().ends_with(".o:"))
