@@ -1079,6 +1079,12 @@ impl Assembler {
         for relocs in &self.pending_relocs {
             for reloc in relocs {
                 if !self.labels.contains_key(&reloc.symbol) && !symbols.iter().any(|s| s.name == reloc.symbol) {
+                    if is_assembler_local_symbol(&reloc.symbol) {
+                        return Err(AsmError(format!(
+                            "local symbol '{}' must be defined in this object",
+                            reloc.symbol
+                        )));
+                    }
                     symbols.push(Symbol {
                         name: reloc.symbol.clone(),
                         section: 0,
@@ -1223,6 +1229,10 @@ fn check_branch_offset(offset: i64, bits: u8) -> Result<i32, AsmError> {
     }
 
     Ok(offset as i32)
+}
+
+fn is_assembler_local_symbol(name: &str) -> bool {
+    name.starts_with(".L")
 }
 
 #[cfg(test)]
@@ -1701,6 +1711,12 @@ mod tests {
         let reloc_name = &obj.symbols[text_relocs(&obj)[0].symbol_idx as usize].name;
         assert_eq!(reloc_name, "_exit");
         assert!(obj.symbols.iter().any(|sym| sym.name == "_exit" && sym.undefined));
+    }
+
+    #[test]
+    fn assemble_missing_numeric_local_label_is_rejected() {
+        let err = assemble_source(".text\nb 1f\n").unwrap_err();
+        assert!(err.0.contains("local symbol '.Ltmp$1$1'"), "got: {}", err.0);
     }
 
     #[test]

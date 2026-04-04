@@ -110,6 +110,13 @@ struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     absolute_symbols: BTreeMap<String, i64>,
+    numeric_labels: BTreeMap<u32, u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumericLabelDirection {
+    Forward,
+    Backward,
 }
 
 impl<'a> Parser<'a> {
@@ -118,6 +125,7 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             absolute_symbols: BTreeMap::new(),
+            numeric_labels: BTreeMap::new(),
         }
     }
 
@@ -125,8 +133,12 @@ impl<'a> Parser<'a> {
         if self.pos < self.tokens.len() { &self.tokens[self.pos].kind } else { &Tok::Eof }
     }
 
+    fn token_at(&self, pos: usize) -> &Token {
+        &self.tokens[pos.min(self.tokens.len() - 1)]
+    }
+
     fn cur(&self) -> &Token {
-        &self.tokens[self.pos.min(self.tokens.len() - 1)]
+        self.token_at(self.pos)
     }
 
     fn advance(&mut self) -> &Token {
@@ -209,6 +221,15 @@ impl<'a> Parser<'a> {
                     stmts.push(self.parse_instruction(&mnemonic)?);
                 }
             }
+            Tok::Integer(_) if self.numeric_label_definition_number().is_some() => {
+                let number = self.numeric_label_definition_number().unwrap();
+                self.advance();
+                self.expect(&Tok::Colon)?;
+                stmts.push(Stmt::Label(self.define_numeric_label(number)));
+                if !self.at_end_of_stmt() {
+                    self.parse_line(stmts)?;
+                }
+            }
             Tok::Newline | Tok::Eof => {}
             _ => return Err(self.err(format!("unexpected token: {}", self.peek()))),
         }
@@ -221,8 +242,11 @@ impl<'a> Parser<'a> {
         if lower == "b" {
             // Check for .cond suffix (e.g., B.EQ, b.ne)
             if let Tok::Ident(ref cond) = self.peek().clone() {
-                if cond.starts_with('.') {
-                    let full = format!("b{}", cond.to_lowercase());
+                if let Some(cond_name) = cond.strip_prefix('.') {
+                    if parse_condition(cond_name).is_none() {
+                        return Ok(lower);
+                    }
+                    let full = format!("b.{}", cond_name.to_lowercase());
                     self.advance();
                     return Ok(full);
                 }
@@ -420,6 +444,9 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_const_expr(&self) -> bool {
+        if self.numeric_label_ref_at(self.pos).is_some() {
+            return false;
+        }
         matches!(self.peek(), Tok::Integer(_) | Tok::Minus | Tok::LParen)
     }
 
@@ -461,6 +488,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_primary_expr(&mut self) -> Result<Expr, ParseError> {
+        if let Some(symbol) = self.parse_numeric_label_ref()? {
+            return Ok(Expr::Symbol(symbol));
+        }
         match self.peek().clone() {
             Tok::Integer(value) => {
                 self.advance();
@@ -477,6 +507,88 @@ impl<'a> Parser<'a> {
                 Ok(expr)
             }
             other => Err(self.err(format!("expected expression, got {}", other))),
+        }
+    }
+
+    fn numeric_label_definition_number(&self) -> Option<u32> {
+        match self.peek() {
+            Tok::Integer(value) if *value >= 0 && matches!(&self.token_at(self.pos + 1).kind, Tok::Colon) => {
+                u32::try_from(*value).ok()
+            }
+            _ => None,
+        }
+    }
+
+    fn numeric_label_ref_at(&self, pos: usize) -> Option<(u32, NumericLabelDirection)> {
+        let int_tok = self.token_at(pos);
+        let value = match &int_tok.kind {
+            Tok::Integer(value) if *value >= 0 => u32::try_from(*value).ok()?,
+            _ => return None,
+        };
+        let suffix_tok = self.token_at(pos + 1);
+        if suffix_tok.line != int_tok.line {
+            return None;
+        }
+        if suffix_tok.col != int_tok.col + decimal_width(value) {
+            return None;
+        }
+        match &suffix_tok.kind {
+            Tok::Ident(suffix) if suffix.eq_ignore_ascii_case("f") => {
+                Some((value, NumericLabelDirection::Forward))
+            }
+            Tok::Ident(suffix) if suffix.eq_ignore_ascii_case("b") => {
+                Some((value, NumericLabelDirection::Backward))
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_numeric_label_ref(&mut self) -> Result<Option<String>, ParseError> {
+        let Some((number, direction)) = self.numeric_label_ref_at(self.pos) else {
+            return Ok(None);
+        };
+        self.advance();
+        self.advance();
+        Ok(Some(self.resolve_numeric_label_ref(number, direction)?))
+    }
+
+    fn parse_label_reference(&mut self) -> Result<String, ParseError> {
+        if let Some(symbol) = self.parse_numeric_label_ref()? {
+            Ok(symbol)
+        } else {
+            self.expect_ident()
+        }
+    }
+
+    fn starts_non_register_symbol_reference(&self) -> bool {
+        if self.numeric_label_ref_at(self.pos).is_some() {
+            return true;
+        }
+        match self.peek() {
+            Tok::Ident(name) => !looks_like_gp_register_name(name),
+            _ => false,
+        }
+    }
+
+    fn define_numeric_label(&mut self, number: u32) -> String {
+        let ordinal = self.numeric_labels.entry(number).or_insert(0);
+        *ordinal += 1;
+        numeric_label_symbol(number, *ordinal)
+    }
+
+    fn resolve_numeric_label_ref(
+        &self,
+        number: u32,
+        direction: NumericLabelDirection,
+    ) -> Result<String, ParseError> {
+        let current = self.numeric_labels.get(&number).copied().unwrap_or(0);
+        match direction {
+            NumericLabelDirection::Forward => Ok(numeric_label_symbol(number, current + 1)),
+            NumericLabelDirection::Backward if current > 0 => Ok(numeric_label_symbol(number, current)),
+            NumericLabelDirection::Backward => Err(self.err(format!(
+                "numeric label '{}' has no previous definition",
+                number
+            ))),
         }
     }
 
@@ -657,25 +769,21 @@ impl<'a> Parser<'a> {
         let (rn, _) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
 
-        // Check for label@PAGEOFF (identifier followed by @)
-        if let Tok::Ident(ref name) = self.peek().clone() {
-            let lower = name.to_lowercase();
-            if !lower.starts_with('x') && !lower.starts_with('w') && lower != "sp" && lower != "xzr" && lower != "wzr" {
-                let label = name.clone();
-                self.advance();
-                let kind = if self.eat(&Tok::At) {
-                    let modifier = self.expect_ident()?;
-                    match modifier.to_uppercase().as_str() {
-                        "PAGEOFF" => RelocKind::PageOff12,
-                        "PAGE" => RelocKind::Page21,
-                        _ => RelocKind::PageOff12,
-                    }
-                } else {
-                    RelocKind::PageOff12
-                };
-                let inst = Inst::AddImm { rd, rn, imm12: 0, shift: false, sf };
-                return Ok(Stmt::InstructionWithReloc(inst, LabelRef { symbol: label, kind }));
-            }
+        // Check for label@PAGEOFF (identifier or numeric local reference followed by @).
+        if self.starts_non_register_symbol_reference() {
+            let label = self.parse_label_reference()?;
+            let kind = if self.eat(&Tok::At) {
+                let modifier = self.expect_ident()?;
+                match modifier.to_uppercase().as_str() {
+                    "PAGEOFF" => RelocKind::PageOff12,
+                    "PAGE" => RelocKind::Page21,
+                    _ => RelocKind::PageOff12,
+                }
+            } else {
+                RelocKind::PageOff12
+            };
+            let inst = Inst::AddImm { rd, rn, imm12: 0, shift: false, sf };
+            return Ok(Stmt::InstructionWithReloc(inst, LabelRef { symbol: label, kind }));
         }
 
         // Normal add/sub (immediate or register).
@@ -818,7 +926,7 @@ impl<'a> Parser<'a> {
             let offset = self.parse_immediate_const_expr("branch offset")? as i32;
             Ok(Stmt::Instruction(Inst::B { offset }))
         } else {
-            let label = self.expect_ident()?;
+            let label = self.parse_label_reference()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::B { offset: 0 },
                 LabelRef { symbol: label, kind: RelocKind::Branch26 },
@@ -831,7 +939,7 @@ impl<'a> Parser<'a> {
             let offset = self.parse_immediate_const_expr("branch offset")? as i32;
             Ok(Stmt::Instruction(Inst::Bl { offset }))
         } else {
-            let label = self.expect_ident()?;
+            let label = self.parse_label_reference()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Bl { offset: 0 },
                 LabelRef { symbol: label, kind: RelocKind::Branch26 },
@@ -846,7 +954,7 @@ impl<'a> Parser<'a> {
             let offset = self.parse_immediate_const_expr("branch offset")? as i32;
             Ok(Stmt::Instruction(Inst::BCond { cond, offset }))
         } else {
-            let label = self.expect_ident()?;
+            let label = self.parse_label_reference()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::BCond { cond, offset: 0 },
                 LabelRef { symbol: label, kind: RelocKind::Branch19 },
@@ -866,7 +974,7 @@ impl<'a> Parser<'a> {
             };
             Ok(Stmt::Instruction(inst))
         } else {
-            let label = self.expect_ident()?;
+            let label = self.parse_label_reference()?;
             let inst = if is_nz {
                 Inst::Cbnz { rt, offset: 0, sf }
             } else {
@@ -895,7 +1003,7 @@ impl<'a> Parser<'a> {
             let imm = self.parse_immediate_const_expr("adrp immediate")? as i32;
             Ok(Stmt::Instruction(Inst::Adrp { rd, imm }))
         } else {
-            let label = self.expect_ident()?;
+            let label = self.parse_label_reference()?;
             let kind = if self.eat(&Tok::At) {
                 let modifier = self.expect_ident()?;
                 match modifier.to_uppercase().as_str() {
@@ -919,15 +1027,10 @@ impl<'a> Parser<'a> {
 
         // Detect label references for LDR (literal pool loads like `ldr x0, =label`).
         // LDR-literal has a different encoding than base+offset — not yet supported.
-        if let Tok::Ident(_) = self.peek() {
-            if !matches!(self.peek(), Tok::Ident(ref s) if {
-                let lo = s.to_lowercase();
-                lo == "sp" || lo == "xzr" || lo == "wzr" || lo.starts_with('x') || lo.starts_with('w')
-            }) {
-                return Err(self.err(
-                    "LDR/STR with label reference not yet supported; use ADRP+ADD+LDR pattern instead".into()
-                ));
-            }
+        if self.starts_non_register_symbol_reference() {
+            return Err(self.err(
+                "LDR/STR with label reference not yet supported; use ADRP+ADD+LDR pattern instead".into()
+            ));
         }
 
         self.expect(&Tok::LBracket)?;
@@ -1170,6 +1273,19 @@ impl<'a> Parser<'a> {
 
 // ---- Name resolution helpers ----
 
+fn numeric_label_symbol(number: u32, ordinal: u32) -> String {
+    format!(".Ltmp${number}${ordinal}")
+}
+
+fn decimal_width(mut value: u32) -> u32 {
+    let mut width = 1;
+    while value >= 10 {
+        value /= 10;
+        width += 1;
+    }
+    width
+}
+
 fn parse_gp_reg_name(name: &str) -> Option<GpReg> {
     let lower = name.to_lowercase();
     match lower.as_str() {
@@ -1187,6 +1303,11 @@ fn parse_gp_reg_name(name: &str) -> Option<GpReg> {
             Some(GpReg::new(num))
         }
     }
+}
+
+fn looks_like_gp_register_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower == "sp" || lower == "xzr" || lower == "wzr" || lower.starts_with('x') || lower.starts_with('w')
 }
 
 fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
@@ -1258,6 +1379,10 @@ mod tests {
 
     fn parse_stmts(src: &str) -> Vec<Stmt> {
         parse(src).unwrap()
+    }
+
+    fn parse_err(src: &str) -> String {
+        parse(src).unwrap_err().to_string()
     }
 
     // ---- Data processing ----
@@ -1997,6 +2122,17 @@ _main:
     }
 
     #[test]
+    fn parse_b_named_local_label() {
+        assert_eq!(
+            parse_stmts("b .Ldone"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::B { offset: 0 },
+                LabelRef { symbol: ".Ldone".into(), kind: RelocKind::Branch26 },
+            )]
+        );
+    }
+
+    #[test]
     fn parse_cbz_label() {
         assert_eq!(
             parse_stmts("cbz x0, done"),
@@ -2005,5 +2141,85 @@ _main:
                 LabelRef { symbol: "done".into(), kind: RelocKind::Branch19 },
             )]
         );
+    }
+
+    #[test]
+    fn parse_numeric_local_label_definition_and_backward_branch() {
+        assert_eq!(
+            parse_stmts("1:\nb 1b\n"),
+            vec![
+                Stmt::Label(".Ltmp$1$1".into()),
+                Stmt::InstructionWithReloc(
+                    Inst::B { offset: 0 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch26 },
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_numeric_local_forward_reference() {
+        assert_eq!(
+            parse_stmts("b 2f\n2:\n"),
+            vec![
+                Stmt::InstructionWithReloc(
+                    Inst::B { offset: 0 },
+                    LabelRef { symbol: ".Ltmp$2$1".into(), kind: RelocKind::Branch26 },
+                ),
+                Stmt::Label(".Ltmp$2$1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_numeric_local_label_on_same_line() {
+        assert_eq!(
+            parse_stmts("1: cbz x0, 1b"),
+            vec![
+                Stmt::Label(".Ltmp$1$1".into()),
+                Stmt::InstructionWithReloc(
+                    Inst::Cbz { rt: X0, offset: 0, sf: true },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Branch19 },
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_numeric_local_in_expression() {
+        assert_eq!(
+            parse_stmts("1:\n.quad 1b + 4\n"),
+            vec![
+                Stmt::Label(".Ltmp$1$1".into()),
+                Stmt::Directive(Directive::Quad(vec![Expr::Add(
+                    Box::new(Expr::Symbol(".Ltmp$1$1".into())),
+                    Box::new(Expr::Int(4)),
+                )])),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_numeric_local_adrp_and_add_operands() {
+        assert_eq!(
+            parse_stmts("adrp x0, 1f@PAGE\nadd x0, x0, 1f@PAGEOFF\n1:\n"),
+            vec![
+                Stmt::InstructionWithReloc(
+                    Inst::Adrp { rd: X0, imm: 0 },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::Page21 },
+                ),
+                Stmt::InstructionWithReloc(
+                    Inst::AddImm { rd: X0, rn: X0, imm12: 0, shift: false, sf: true },
+                    LabelRef { symbol: ".Ltmp$1$1".into(), kind: RelocKind::PageOff12 },
+                ),
+                Stmt::Label(".Ltmp$1$1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_numeric_local_requires_previous_definition_for_backward_ref() {
+        let err = parse_err("b 1b\n");
+        assert!(err.contains("numeric label '1' has no previous definition"), "got: {}", err);
     }
 }
