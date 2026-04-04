@@ -79,8 +79,22 @@ pub enum Directive {
     },
     Section(String, String),
     SubsectionsViaSymbols,
-    BuildVersion { platform: String, version: String },
+    BuildVersion(BuildVersionDirective),
     Ignored(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VersionTriple {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildVersionDirective {
+    pub platform: String,
+    pub minos: VersionTriple,
+    pub sdk: Option<VersionTriple>,
 }
 
 /// Parse error with source location.
@@ -411,15 +425,25 @@ impl<'a> Parser<'a> {
             }
             ".subsections_via_symbols" => Directive::SubsectionsViaSymbols,
             ".build_version" => {
-                let platform = self.expect_ident()?;
+                let platform = self.expect_ident()?.to_ascii_lowercase();
                 self.expect(&Tok::Comma)?;
-                // Version can be complex — just collect tokens until newline.
-                let mut ver = String::new();
-                while !self.at_end_of_stmt() {
-                    ver.push_str(&format!("{}", self.peek()));
-                    self.advance();
+                let minos = self.parse_version_triple("build version minimum OS")?;
+                let sdk = if self.at_end_of_stmt() {
+                    None
+                } else {
+                    let keyword = self.expect_ident()?;
+                    if !keyword.eq_ignore_ascii_case("sdk_version") {
+                        return Err(self.err(format!(
+                            "expected sdk_version after .build_version, got {}",
+                            keyword
+                        )));
+                    }
+                    Some(self.parse_version_triple("build version SDK")?)
+                };
+                if !self.at_end_of_stmt() {
+                    return Err(self.err("unexpected tokens after .build_version".into()));
                 }
-                Directive::BuildVersion { platform, version: ver }
+                Directive::BuildVersion(BuildVersionDirective { platform, minos, sdk })
             }
             _ => {
                 // Unknown directive — skip to end of line.
@@ -453,6 +477,37 @@ impl<'a> Parser<'a> {
         }
 
         Ok((power, fill, max_skip))
+    }
+
+    fn parse_version_triple(&mut self, context: &str) -> Result<VersionTriple, ParseError> {
+        let major = self.parse_version_component(context)?;
+        self.expect(&Tok::Comma)?;
+        let minor = self.parse_version_component(context)?;
+        let patch = if self.eat(&Tok::Comma) {
+            self.parse_version_component(context)?
+        } else {
+            0
+        };
+        Ok(VersionTriple { major, minor, patch })
+    }
+
+    fn parse_version_component(&mut self, context: &str) -> Result<u32, ParseError> {
+        match self.peek().clone() {
+            Tok::Integer(value) if value >= 0 => {
+                self.advance();
+                u32::try_from(value).map_err(|_| {
+                    self.err(format!("{} component {} does not fit in u32", context, value))
+                })
+            }
+            Tok::Integer(value) => Err(self.err(format!(
+                "{} component must be non-negative, got {}",
+                context, value
+            ))),
+            other => Err(self.err(format!(
+                "expected integer for {}, got {}",
+                context, other
+            ))),
+        }
     }
 
     fn parse_const_expr(&mut self, context: &str) -> Result<i64, ParseError> {
@@ -3034,6 +3089,32 @@ mod tests {
     fn parse_unknown_directive_is_ignored() {
         let stmts = parse_stmts(".cfi_startproc");
         assert_eq!(stmts, vec![Stmt::Directive(Directive::Ignored(".cfi_startproc".into()))]);
+    }
+
+    #[test]
+    fn parse_build_version_with_sdk_version() {
+        let stmts = parse_stmts(".build_version macos, 11, 0 sdk_version 15, 5");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::BuildVersion(BuildVersionDirective {
+                platform: "macos".into(),
+                minos: VersionTriple { major: 11, minor: 0, patch: 0 },
+                sdk: Some(VersionTriple { major: 15, minor: 5, patch: 0 }),
+            }))]
+        );
+    }
+
+    #[test]
+    fn parse_build_version_without_sdk_version() {
+        let stmts = parse_stmts(".build_version macos, 14, 1");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::BuildVersion(BuildVersionDirective {
+                platform: "macos".into(),
+                minos: VersionTriple { major: 14, minor: 1, patch: 0 },
+                sdk: None,
+            }))]
+        );
     }
 
     // ---- Multi-line programs ----

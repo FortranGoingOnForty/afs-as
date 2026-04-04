@@ -13,8 +13,8 @@ use std::path::Path;
 
 use crate::encode::Inst;
 use crate::expr::{self, ClassifiedExpr, Expr, SymbolValue};
-use crate::macho::{self, ObjectFile, Relocation, Section, SectionKind, Symbol};
-use crate::parse::{self, Stmt, Directive, RelocKind};
+use crate::macho::{self, BuildVersion, ObjectFile, Relocation, Section, SectionKind, Symbol};
+use crate::parse::{self, BuildVersionDirective, Directive, RelocKind, Stmt};
 
 /// Assemble a source file to a Mach-O object file.
 pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
@@ -122,6 +122,8 @@ struct Assembler {
     fixups: Vec<Fixup>,
     /// Pending relocations for each section.
     pending_relocs: Vec<Vec<PendingReloc>>,
+    subsections_via_symbols: bool,
+    build_version: Option<BuildVersionDirective>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -180,6 +182,8 @@ impl Assembler {
             symbol_attrs: BTreeMap::new(),
             fixups: Vec::new(),
             pending_relocs: vec![Vec::new()],
+            subsections_via_symbols: false,
+            build_version: None,
         }
     }
 
@@ -327,7 +331,13 @@ impl Assembler {
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
-            Directive::Ignored(_) | Directive::SubsectionsViaSymbols | Directive::BuildVersion { .. } => {}
+            Directive::SubsectionsViaSymbols => {
+                self.subsections_via_symbols = true;
+            }
+            Directive::BuildVersion(build_version) => {
+                self.record_build_version(build_version)?;
+            }
+            Directive::Ignored(_) => {}
         }
         Ok(())
     }
@@ -394,9 +404,29 @@ impl Assembler {
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
-            Directive::Ignored(_) | Directive::SubsectionsViaSymbols | Directive::BuildVersion { .. } => {}
+            Directive::SubsectionsViaSymbols => {
+                self.subsections_via_symbols = true;
+            }
+            Directive::BuildVersion(build_version) => {
+                self.record_build_version(build_version)?;
+            }
+            Directive::Ignored(_) => {}
         }
         Ok(())
+    }
+
+    fn record_build_version(&mut self, build_version: &BuildVersionDirective) -> Result<(), AsmError> {
+        match &self.build_version {
+            Some(existing) if existing == build_version => Ok(()),
+            Some(existing) => Err(AsmError(format!(
+                "conflicting .build_version directives: already saw {:?}, then {:?}",
+                existing, build_version
+            ))),
+            None => {
+                self.build_version = Some(build_version.clone());
+                Ok(())
+            }
+        }
     }
 
     fn reserve_initialized_bytes(&mut self, amount: u64, context: &str) -> Result<(), AsmError> {
@@ -966,10 +996,49 @@ impl Assembler {
         }
     }
 
+    fn metadata_flags(&self) -> u32 {
+        if self.subsections_via_symbols {
+            macho::MH_SUBSECTIONS_VIA_SYMBOLS
+        } else {
+            0
+        }
+    }
+
+    fn build_version_command(&self) -> Result<BuildVersion, AsmError> {
+        let Some(build_version) = &self.build_version else {
+            return Ok(BuildVersion::default());
+        };
+
+        let platform = match build_version.platform.as_str() {
+            "macos" => macho::PLATFORM_MACOS,
+            other => {
+                return Err(AsmError(format!(
+                    "unsupported .build_version platform '{}' (supported: macos)",
+                    other
+                )));
+            }
+        };
+
+        Ok(BuildVersion {
+            platform,
+            minos: macho::pack_version(
+                build_version.minos.major,
+                build_version.minos.minor,
+                build_version.minos.patch,
+            ),
+            sdk: build_version
+                .sdk
+                .map(|sdk| macho::pack_version(sdk.major, sdk.minor, sdk.patch))
+                .unwrap_or(0),
+        })
+    }
+
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
         let section_bases = self.section_bases.clone();
         let absolute_symbols = self.absolute_symbols.clone();
         let mut symbols: Vec<Symbol> = Vec::new();
+        let flags = self.metadata_flags();
+        let build_version = self.build_version_command()?;
 
         for name in absolute_symbols.keys() {
             if self.labels.contains_key(name) {
@@ -1186,7 +1255,12 @@ impl Assembler {
             }
         }
 
-        Ok(ObjectFile { sections: self.sections, symbols })
+        Ok(ObjectFile {
+            sections: self.sections,
+            symbols,
+            flags,
+            build_version,
+        })
     }
 
     fn resolve_absolute_symbols(&self) -> Result<BTreeMap<String, i64>, AsmError> {
@@ -1639,6 +1713,34 @@ mod tests {
         let obj = assemble_source(".data\n.byte 1\n.cfi_startproc\n.byte 2\n").unwrap();
         assert_eq!(text_bytes(&obj), Vec::<u8>::new());
         assert_eq!(data_bytes(&obj), vec![1, 2]);
+    }
+
+    #[test]
+    fn assemble_subsections_via_symbols_sets_object_flag() {
+        let obj = assemble_source(".text\nret\n.subsections_via_symbols\n").unwrap();
+        assert_eq!(obj.flags, macho::MH_SUBSECTIONS_VIA_SYMBOLS);
+    }
+
+    #[test]
+    fn assemble_build_version_sets_object_metadata() {
+        let obj = assemble_source(
+            ".text\nret\n.build_version macos, 11, 0 sdk_version 15, 5\n"
+        )
+        .unwrap();
+
+        assert_eq!(obj.build_version.platform, macho::PLATFORM_MACOS);
+        assert_eq!(obj.build_version.minos, macho::pack_version(11, 0, 0));
+        assert_eq!(obj.build_version.sdk, macho::pack_version(15, 5, 0));
+    }
+
+    #[test]
+    fn assemble_rejects_unsupported_build_version_platform() {
+        let err = assemble_source(".build_version ios, 11, 0\n").unwrap_err();
+        assert!(
+            err.0.contains("unsupported .build_version platform"),
+            "got: {}",
+            err.0
+        );
     }
 
     #[test]
