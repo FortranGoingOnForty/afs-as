@@ -12,7 +12,7 @@
 use std::io::Write;
 use std::process::Command;
 
-use afs_as::encode::{AddrExtend, Inst};
+use afs_as::encode::{AddrExtend, Inst, RegExtend, RegShift};
 use afs_as::reg::*;
 
 /// Assemble a single ARM64 instruction with Apple `as` and return its 4-byte encoding.
@@ -72,9 +72,13 @@ fn verify(asm: &str, inst: Inst) {
 #[test] fn sys_add_reg()  { verify("add x5, x6, x7",  Inst::AddReg  { rd: X5,  rn: X6,  rm: X7,  sf: true }); }
 #[test] fn sys_sub_reg()  { verify("sub x10, x11, x12", Inst::SubReg { rd: X10, rn: X11, rm: X12, sf: true }); }
 #[test] fn sys_add_w()    { verify("add w3, w4, w5",  Inst::AddReg  { rd: W3, rn: W4, rm: W5, sf: false }); }
-#[test] fn sys_add_shift_reg() { verify("add x0, x1, x2, lsl #3", Inst::AddShiftReg { rd: X0, rn: X1, rm: X2, shift: afs_as::encode::RegShift::Lsl, amount: 3, sf: true }); }
-#[test] fn sys_sub_shift_reg() { verify("sub w3, w4, w5, asr #7", Inst::SubShiftReg { rd: W3, rn: W4, rm: W5, shift: afs_as::encode::RegShift::Asr, amount: 7, sf: false }); }
-#[test] fn sys_cmp_shift_reg() { verify("cmp x6, x7, lsr #4", Inst::SubsShiftReg { rd: XZR, rn: X6, rm: X7, shift: afs_as::encode::RegShift::Lsr, amount: 4, sf: true }); }
+#[test] fn sys_add_shift_reg() { verify("add x0, x1, x2, lsl #3", Inst::AddShiftReg { rd: X0, rn: X1, rm: X2, shift: RegShift::Lsl, amount: 3, sf: true }); }
+#[test] fn sys_sub_shift_reg() { verify("sub w3, w4, w5, asr #7", Inst::SubShiftReg { rd: W3, rn: W4, rm: W5, shift: RegShift::Asr, amount: 7, sf: false }); }
+#[test] fn sys_cmp_shift_reg() { verify("cmp x6, x7, lsr #4", Inst::SubsShiftReg { rd: XZR, rn: X6, rm: X7, shift: RegShift::Lsr, amount: 4, sf: true }); }
+#[test] fn sys_add_ext_reg() { verify("add x0, x0, w1, sxtw #3", Inst::AddExtReg { rd: X0, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 3, sf: true }); }
+#[test] fn sys_add_ext_reg_sp_base() { verify("add x11, sp, w12, sxtw #2", Inst::AddExtReg { rd: X11, rn: SP, rm: W12, extend: RegExtend::Sxtw, amount: 2, sf: true }); }
+#[test] fn sys_sub_ext_reg() { verify("sub x2, x3, w4, uxtw #2", Inst::SubExtReg { rd: X2, rn: X3, rm: W4, extend: RegExtend::Uxtw, amount: 2, sf: true }); }
+#[test] fn sys_cmp_ext_reg() { verify("cmp x0, w1, sxtw", Inst::SubsExtReg { rd: XZR, rn: X0, rm: W1, extend: RegExtend::Sxtw, amount: 0, sf: true }); }
 #[test] fn sys_mul()      { verify("mul x0, x1, x2",  Inst::Mul     { rd: X0, rn: X1, rm: X2, sf: true }); }
 #[test] fn sys_sdiv()     { verify("sdiv x3, x4, x5", Inst::Sdiv    { rd: X3, rn: X4, rm: X5, sf: true }); }
 #[test] fn sys_udiv()     { verify("udiv x3, x4, x5", Inst::Udiv    { rd: X3, rn: X4, rm: X5, sf: true }); }

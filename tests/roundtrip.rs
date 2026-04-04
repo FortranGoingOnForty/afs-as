@@ -91,6 +91,10 @@ fn roundtrip(asm: &str) {
 #[test] fn rt_add_shift_reg() { roundtrip(".text\nadd x0, x1, x2, lsl #3\n"); }
 #[test] fn rt_sub_shift_reg() { roundtrip(".text\nsub w3, w4, w5, asr #7\n"); }
 #[test] fn rt_cmp_shift_reg() { roundtrip(".text\ncmp x6, x7, lsr #4\n"); }
+#[test] fn rt_add_ext_reg() { roundtrip(".text\nadd x0, x0, w1, sxtw #3\n"); }
+#[test] fn rt_add_ext_reg_sp_base() { roundtrip(".text\nadd x11, sp, w12, sxtw #2\n"); }
+#[test] fn rt_sub_ext_reg() { roundtrip(".text\nsub x2, x3, w4, uxtw #2\n"); }
+#[test] fn rt_cmp_ext_reg() { roundtrip(".text\ncmp x0, w1, sxtw\n"); }
 #[test] fn rt_add_imm()    { roundtrip(".text\nadd x0, x1, #100\n"); }
 #[test] fn rt_sub_imm()    { roundtrip(".text\nsub x3, x4, #200\n"); }
 #[test] fn rt_mul()        { roundtrip(".text\nmul x0, x1, x2\n"); }
