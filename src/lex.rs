@@ -233,7 +233,8 @@ impl<'a> Lexer<'a> {
             return Ok(self.make_tok(Tok::Hash, line, col));
         }
 
-        // Dot-prefixed directive or local label.
+        // Names that begin with '.' remain special so directives and
+        // local labels keep their existing token shape.
         if ch == b'.' {
             self.advance();
             if self.pos < self.src.len() && is_ident_start(self.peek()) {
@@ -258,9 +259,6 @@ impl<'a> Lexer<'a> {
         // Identifier (mnemonic, register, label, etc.).
         if is_ident_start(ch) {
             let name = self.read_ident_body();
-            // Check for dot-suffixed condition codes like "b.eq" —
-            // We return "b" as ident, then "." and "eq" separately.
-            // The parser handles combining them.
             return Ok(self.make_tok(Tok::Ident(name), line, col));
         }
 
@@ -352,7 +350,7 @@ fn is_ident_start(ch: u8) -> bool {
 }
 
 fn is_ident_cont(ch: u8) -> bool {
-    ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$'
+    ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$' || ch == b'.'
 }
 
 /// Convert a u64 magnitude + sign to i64, with overflow checking.
@@ -510,6 +508,13 @@ mod tests {
     fn local_label() {
         assert_eq!(tok_kinds(".Lloop:"), vec![
             Tok::Ident(".Lloop".into()), Tok::Colon,
+        ]);
+    }
+
+    #[test]
+    fn embedded_dot_symbol_label() {
+        assert_eq!(tok_kinds("l_.str:"), vec![
+            Tok::Ident("l_.str".into()), Tok::Colon,
         ]);
     }
 
@@ -787,16 +792,9 @@ _main:
 
     #[test]
     fn b_dot_eq() {
-        // "b.eq" lexes as "b", ".", "eq" — parser combines them.
-        // But actually our lexer doesn't emit Dot for b.eq because the '.' is between ident chars.
-        // Let's verify what actually happens:
         let kinds = tok_kinds("b.eq #8");
-        // "b" then dot-ident ".eq" would be wrong since b isn't followed by dot...
-        // Actually: 'b' is an ident, then '.' is followed by 'e' which is ident_start,
-        // so it becomes ".eq" as a separate token.
         assert_eq!(kinds, vec![
-            Tok::Ident("b".into()),
-            Tok::Ident(".eq".into()),
+            Tok::Ident("b.eq".into()),
             Tok::Integer(8),
         ]);
     }

@@ -287,6 +287,11 @@ impl<'a> Parser<'a> {
     /// Handle conditional branch mnemonics: "b" followed by ".eq", ".ne", etc.
     fn resolve_mnemonic(&mut self, name: &str) -> Result<String, ParseError> {
         let lower = name.to_lowercase();
+        if let Some(cond_name) = lower.strip_prefix("b.") {
+            if parse_condition(cond_name).is_some() {
+                return Ok(format!("b.{}", cond_name));
+            }
+        }
         if lower == "b" {
             // Check for .cond suffix (e.g., B.EQ, b.ne)
             if let Tok::Ident(ref cond) = self.peek().clone() {
@@ -3449,6 +3454,24 @@ _main:
                 Inst::BCond { cond: Cond::EQ, offset: 0 },
                 LabelRef { symbol: "done".into(), kind: RelocKind::Branch19 },
             )]
+        );
+    }
+
+    #[test]
+    fn parse_dotted_symbol_label_and_page_refs() {
+        assert_eq!(
+            parse_stmts("l_.str:\nadrp x0, l_.str@PAGE\nadd x0, x0, l_.str@PAGEOFF\n"),
+            vec![
+                Stmt::Label("l_.str".into()),
+                Stmt::InstructionWithReloc(
+                    Inst::Adrp { rd: X0, imm: 0 },
+                    LabelRef { symbol: "l_.str".into(), kind: RelocKind::Page21 },
+                ),
+                Stmt::InstructionWithReloc(
+                    Inst::AddImm { rd: X0, rn: X0, imm12: 0, shift: false, sf: true },
+                    LabelRef { symbol: "l_.str".into(), kind: RelocKind::PageOff12 },
+                ),
+            ]
         );
     }
 
