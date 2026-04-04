@@ -86,10 +86,34 @@ const CASES: &[ProbeCase] = &[
         support: Some("int ext_array[4] = {11, 22, 33, 44};\n"),
     },
     ProbeCase {
+        name: "ext_struct_field",
+        source: "ext_struct_field.c",
+        driver: "extern int read_ext_pair_b(void);\nint main(void) { return read_ext_pair_b() != 17; }\n",
+        support: Some("struct Pair { int a; int b; };\nstruct Pair ext_pair = {3, 17};\n"),
+    },
+    ProbeCase {
+        name: "ext_ptr_deref",
+        source: "ext_ptr_deref.c",
+        driver: "extern int read_ext_ptr(void);\nint main(void) { return read_ext_ptr() != 29; }\n",
+        support: Some("int ext_value = 29;\nint *ext_ptr = &ext_value;\n"),
+    },
+    ProbeCase {
+        name: "ext_str_index",
+        source: "ext_str_index.c",
+        driver: "extern int second_ext_char(void);\nint main(void) { return second_ext_char() != 'Q'; }\n",
+        support: Some("const char *ext_str = \"zQ\";\n"),
+    },
+    ProbeCase {
         name: "func_ptr",
         source: "func_ptr.c",
         driver: "extern int call_helper_ptr(int);\nint main(void) {\n    return (call_helper_ptr(4) != 15) || (call_helper_ptr(-1) != 0);\n}\n",
         support: Some("int helper(int x) { return x * 3; }\n"),
+    },
+    ProbeCase {
+        name: "func_slot",
+        source: "func_slot.c",
+        driver: "extern int call_helper_slot(int);\nint main(void) {\n    return (call_helper_slot(4) != 30) || (call_helper_slot(-2) != 0);\n}\n",
+        support: Some("int helper_impl(int x) { return x * 5; }\nint (*helper_slot)(int) = helper_impl;\n"),
     },
     ProbeCase {
         name: "float_branch",
