@@ -276,6 +276,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fp_recip",
+        source: "vector_fp_recip.c",
+        driver: "#include <arm_neon.h>\nextern float32x4_t recip_est(float32x4_t);\nextern float32x4_t recip_step(float32x4_t, float32x4_t);\nextern float32x4_t rsqrt_est(float32x4_t);\nextern float32x4_t rsqrt_step(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t ones = {1.0f, 1.0f, 1.0f, 1.0f};\n    float32x4_t re = recip_est(ones);\n    float32x4_t rs = recip_step(ones, ones);\n    float32x4_t se = rsqrt_est(ones);\n    float32x4_t ss = rsqrt_step(ones, ones);\n    return (re[0] < 0.99f) || (re[0] > 1.01f) || (re[1] < 0.99f) || (re[1] > 1.01f)\n        || (re[2] < 0.99f) || (re[2] > 1.01f) || (re[3] < 0.99f) || (re[3] > 1.01f)\n        || (rs[0] != 1.0f) || (rs[1] != 1.0f) || (rs[2] != 1.0f) || (rs[3] != 1.0f)\n        || (se[0] < 0.99f) || (se[0] > 1.01f) || (se[1] < 0.99f) || (se[1] > 1.01f)\n        || (se[2] < 0.99f) || (se[2] > 1.01f) || (se[3] < 0.99f) || (se[3] > 1.01f)\n        || (ss[0] != 1.0f) || (ss[1] != 1.0f) || (ss[2] != 1.0f) || (ss[3] != 1.0f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp",
         source: "vector_fcmp.c",
         driver: "#include <arm_neon.h>\nextern uint32x4_t eq_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t ge_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t gt_mask_f32(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {1.0f, 7.0f, -5.0f, 8.0f};\n    uint32x4_t eq = eq_mask_f32(a, b);\n    uint32x4_t ge = ge_mask_f32(a, b);\n    uint32x4_t gt = gt_mask_f32(a, b);\n    return (eq[0] != 0xFFFFFFFFu) || (eq[1] != 0u) || (eq[2] != 0u) || (eq[3] != 0u)\n        || (ge[0] != 0xFFFFFFFFu) || (ge[1] != 0xFFFFFFFFu) || (ge[2] != 0xFFFFFFFFu) || (ge[3] != 0u)\n        || (gt[0] != 0u) || (gt[1] != 0xFFFFFFFFu) || (gt[2] != 0xFFFFFFFFu) || (gt[3] != 0u);\n}\n",
