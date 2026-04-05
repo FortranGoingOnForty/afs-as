@@ -1193,6 +1193,14 @@ pub enum Inst {
     FcvtzsV4S { rd: FpReg, rn: FpReg },
     /// FCVTZU.4S Vd, Vn
     FcvtzuV4S { rd: FpReg, rn: FpReg },
+    /// FRECPE.4S Vd, Vn
+    FrecpeV4S { rd: FpReg, rn: FpReg },
+    /// FRECPS.4S Vd, Vn, Vm
+    FrecpsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FRSQRTE.4S Vd, Vn
+    FrsqrteV4S { rd: FpReg, rn: FpReg },
+    /// FRSQRTS.4S Vd, Vn, Vm
+    FrsqrtsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FDIV Sd, Sn, Sm  (single)
     FdivS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMOV Dd, Dn
@@ -2420,6 +2428,10 @@ impl Inst {
             Inst::UcvtfV4S { rd, rn } => simd_unary(0x6E21D800, *rn, *rd),
             Inst::FcvtzsV4S { rd, rn } => simd_unary(0x4EA1B800, *rn, *rd),
             Inst::FcvtzuV4S { rd, rn } => simd_unary(0x6EA1B800, *rn, *rd),
+            Inst::FrecpeV4S { rd, rn } => simd_unary(0x4EA1D800, *rn, *rd),
+            Inst::FrecpsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20FC00, *rm, *rn, *rd),
+            Inst::FrsqrteV4S { rd, rn } => simd_unary(0x6EA1D800, *rn, *rd),
+            Inst::FrsqrtsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0FC00, *rm, *rn, *rd),
             Inst::FdivS { rd, rn, rm } => fp_arith(0b00, 0b0001, *rm, *rn, *rd),
             Inst::FmovRegD { rd, rn } => fp_mov_reg(0x1E604000, *rn, *rd),
             Inst::FmovRegS { rd, rn } => fp_mov_reg(0x1E204000, *rn, *rd),
@@ -5793,6 +5805,52 @@ mod tests {
             }
             .encode(),
             0x6EA1B8E6
+        );
+    }
+    #[test]
+    fn frecpe_4s_v0_v1() {
+        assert_eq!(
+            Inst::FrecpeV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1)
+            }
+            .encode(),
+            0x4EA1D820
+        );
+    }
+    #[test]
+    fn frecps_4s_v2_v3_v4() {
+        assert_eq!(
+            Inst::FrecpsV4S {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3),
+                rm: FpReg::new(4)
+            }
+            .encode(),
+            0x4E24FC62
+        );
+    }
+    #[test]
+    fn frsqrte_4s_v5_v6() {
+        assert_eq!(
+            Inst::FrsqrteV4S {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6)
+            }
+            .encode(),
+            0x6EA1D8C5
+        );
+    }
+    #[test]
+    fn frsqrts_4s_v7_v8_v9() {
+        assert_eq!(
+            Inst::FrsqrtsV4S {
+                rd: FpReg::new(7),
+                rn: FpReg::new(8),
+                rm: FpReg::new(9)
+            }
+            .encode(),
+            0x4EA9FD07
         );
     }
     #[test]

@@ -2319,6 +2319,48 @@ fn sys_fcvtzu_4s() {
     );
 }
 #[test]
+fn sys_frecpe_4s() {
+    verify(
+        "frecpe.4s v0, v1",
+        Inst::FrecpeV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_frecps_4s() {
+    verify(
+        "frecps.4s v2, v3, v4",
+        Inst::FrecpsV4S {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+            rm: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_frsqrte_4s() {
+    verify(
+        "frsqrte.4s v5, v6",
+        Inst::FrsqrteV4S {
+            rd: FpReg::new(5),
+            rn: FpReg::new(6),
+        },
+    );
+}
+#[test]
+fn sys_frsqrts_4s() {
+    verify(
+        "frsqrts.4s v7, v8, v9",
+        Inst::FrsqrtsV4S {
+            rd: FpReg::new(7),
+            rn: FpReg::new(8),
+            rm: FpReg::new(9),
+        },
+    );
+}
+#[test]
 fn sys_and_16b() {
     verify(
         "and.16b v6, v7, v8",

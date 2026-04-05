@@ -946,6 +946,22 @@ fn rt_fcvtzu_4s() {
     roundtrip(".text\nfcvtzu.4s v6, v7\n");
 }
 #[test]
+fn rt_frecpe_4s() {
+    roundtrip(".text\nfrecpe.4s v0, v1\n");
+}
+#[test]
+fn rt_frecps_4s() {
+    roundtrip(".text\nfrecps.4s v2, v3, v4\n");
+}
+#[test]
+fn rt_frsqrte_4s() {
+    roundtrip(".text\nfrsqrte.4s v5, v6\n");
+}
+#[test]
+fn rt_frsqrts_4s() {
+    roundtrip(".text\nfrsqrts.4s v7, v8, v9\n");
+}
+#[test]
 fn rt_and_16b() {
     roundtrip(".text\nand.16b v6, v7, v8\n");
 }

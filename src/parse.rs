@@ -1276,11 +1276,12 @@ impl<'a> Parser<'a> {
                 self.parse_simd_compare_4s(mnemonic)
             }
             "fadd.4s" | "faddp.4s" | "fmla.4s" | "fmls.4s" | "fsub.4s" | "fmul.4s"
-            | "fdiv.4s" | "fmax.4s" | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" => {
+            | "fdiv.4s" | "fmax.4s" | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s"
+            | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
             "fabs.4s" | "fneg.4s" | "fsqrt.4s" | "scvtf.4s" | "ucvtf.4s" | "fcvtzs.4s"
-            | "fcvtzu.4s" => self.parse_simd_fp_unary_4s(mnemonic),
+            | "fcvtzu.4s" | "frecpe.4s" | "frsqrte.4s" => self.parse_simd_fp_unary_4s(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -3922,6 +3923,8 @@ impl<'a> Parser<'a> {
             "fsub.4s" => Inst::FsubV4S { rd, rn, rm },
             "fmul.4s" => Inst::FmulV4S { rd, rn, rm },
             "fdiv.4s" => Inst::FdivV4S { rd, rn, rm },
+            "frecps.4s" => Inst::FrecpsV4S { rd, rn, rm },
+            "frsqrts.4s" => Inst::FrsqrtsV4S { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -3938,6 +3941,8 @@ impl<'a> Parser<'a> {
             "ucvtf.4s" => Inst::UcvtfV4S { rd, rn },
             "fcvtzs.4s" => Inst::FcvtzsV4S { rd, rn },
             "fcvtzu.4s" => Inst::FcvtzuV4S { rd, rn },
+            "frecpe.4s" => Inst::FrecpeV4S { rd, rn },
+            "frsqrte.4s" => Inst::FrsqrteV4S { rd, rn },
             _ => unreachable!(),
         })
     }
