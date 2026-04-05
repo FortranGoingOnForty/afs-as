@@ -200,6 +200,7 @@ Major covered families include:
   - `scvtf.4s`, `ucvtf.4s`, `fcvtzs.4s`, `fcvtzu.4s`
   - `frecpe.4s`, `frecps.4s`, `frsqrte.4s`, `frsqrts.4s`
   - `frintn.4s`, `frintm.4s`, `frintp.4s`, `frintz.4s`
+  - `frinta.4s`, `frinti.4s`
   - `and.16b`, `bic.16b`, `orr.16b`, `eor.16b`
   - `bif.16b`, `bit.16b`, `bsl.16b`
   - `cmeq.4s`, `cmhs.4s`, `cmhi.4s`, `cmge.4s`, `cmgt.4s`
