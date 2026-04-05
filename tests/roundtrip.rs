@@ -841,6 +841,30 @@ fn rt_trn2_4s() {
     roundtrip(".text\ntrn2.4s v3, v4, v5\n");
 }
 #[test]
+fn rt_tbl_16b_single() {
+    roundtrip(".text\ntbl.16b v0, { v1 }, v2\n");
+}
+#[test]
+fn rt_tbl_16b_pair() {
+    roundtrip(".text\ntbl.16b v3, { v4, v5 }, v6\n");
+}
+#[test]
+fn rt_tbl_16b_triple() {
+    roundtrip(".text\ntbl.16b v7, { v8, v9, v10 }, v11\n");
+}
+#[test]
+fn rt_tbl_16b_quad() {
+    roundtrip(".text\ntbl.16b v12, { v13, v14, v15, v16 }, v17\n");
+}
+#[test]
+fn rt_tbx_16b_single() {
+    roundtrip(".text\ntbx.16b v18, { v19 }, v20\n");
+}
+#[test]
+fn rt_tbx_16b_pair() {
+    roundtrip(".text\ntbx.16b v21, { v22, v23 }, v24\n");
+}
+#[test]
 fn rt_mov_16b() {
     roundtrip(".text\nmov.16b v0, v2\n");
 }

@@ -405,9 +405,6 @@ impl CfiProcState {
         }
 
         if self.cfa_register == SP {
-            if !self.saved_gp_offsets.is_empty() {
-                return Ok(None);
-            }
             if self.cfa_offset < 0 {
                 return Err(AsmError(
                     "compact unwind stack size must be non-negative".into(),
@@ -427,7 +424,38 @@ impl CfiProcState {
                     stack_size
                 )));
             }
-            return Ok(Some(UNWIND_ARM64_MODE_FRAMELESS | ((scaled as u32) << 12)));
+            let mut encoding = UNWIND_ARM64_MODE_FRAMELESS | ((scaled as u32) << 12);
+            let mut next_low_offset = -8;
+            for (low, high, bit) in [
+                (19u8, 20u8, UNWIND_ARM64_FRAME_X19_X20_PAIR),
+                (21u8, 22u8, UNWIND_ARM64_FRAME_X21_X22_PAIR),
+                (23u8, 24u8, UNWIND_ARM64_FRAME_X23_X24_PAIR),
+                (25u8, 26u8, UNWIND_ARM64_FRAME_X25_X26_PAIR),
+                (27u8, 28u8, UNWIND_ARM64_FRAME_X27_X28_PAIR),
+            ] {
+                match (
+                    self.saved_gp_offsets.get(&low),
+                    self.saved_gp_offsets.get(&high),
+                ) {
+                    (None, None) => {}
+                    (Some(&low_offset), Some(&high_offset))
+                        if low_offset == next_low_offset && high_offset == next_low_offset - 8 =>
+                    {
+                        encoding |= bit;
+                        next_low_offset -= 16;
+                    }
+                    (Some(_), Some(_)) => return Ok(None),
+                    _ => return Ok(None),
+                }
+            }
+
+            for reg in self.saved_gp_offsets.keys() {
+                if !matches!(*reg, 19..=28) {
+                    return Ok(None);
+                }
+            }
+
+            return Ok(Some(encoding));
         }
 
         if self.cfa_register.num() != 29 {
@@ -1743,6 +1771,8 @@ impl Assembler {
             Ok(("__TEXT", "__text", SectionKind::Text))
         } else if seg_lower == "__text" && sect_lower == "__cstring" {
             Ok(("__TEXT", "__cstring", SectionKind::CStringLiterals))
+        } else if seg_lower == "__text" && sect_lower == "__literal16" {
+            Ok(("__TEXT", "__literal16", SectionKind::Literal16))
         } else if seg_lower == "__text" && sect_lower == "__const" {
             Ok(("__TEXT", "__const", SectionKind::ConstData))
         } else if seg_lower == "__data" && sect_lower == "__data" {
@@ -1757,7 +1787,7 @@ impl Assembler {
             Ok(("__DATA", "__bss", SectionKind::ZeroFill))
         } else {
             Err(AsmError(format!(
-                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__const, __DATA,__data, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__thread_bss, __DATA,__bss)",
+                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__literal16, __TEXT,__const, __DATA,__data, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__thread_bss, __DATA,__bss)",
                 seg, sect
             )))
         }
@@ -2276,7 +2306,10 @@ impl Assembler {
                 let PendingRelocTarget::Symbol(symbol) = &reloc.target else {
                     return None;
                 };
-                let (_, offset) = self.labels.get(symbol)?;
+                let (target_section, offset) = self.labels.get(symbol)?;
+                if self.sections[*target_section].kind == SectionKind::Literal16 {
+                    return None;
+                }
                 if *offset != 0 {
                     return None;
                 }
@@ -2330,6 +2363,37 @@ impl Assembler {
                 PendingRelocTarget::Raw(_) => None,
             })
             .collect();
+        let section_temp_trailing_order: BTreeMap<usize, usize> = self
+            .sections
+            .iter()
+            .enumerate()
+            .filter_map(|(section, _)| {
+                if self.sections[section].kind == SectionKind::Literal16 {
+                    return None;
+                }
+                let has_page_target_at_base = self.labels.iter().any(|(name, (label_section, offset))| {
+                    *label_section == section
+                        && *offset == 0
+                        && page_reloc_targets.contains(name)
+                        && !name.starts_with("ltmp")
+                        && !is_hidden_local_object_symbol(name)
+                });
+                if !has_page_target_at_base {
+                    return None;
+                }
+                let trailing = self
+                    .labels
+                    .iter()
+                    .filter(|(name, (label_section, _))| {
+                        *label_section == section
+                            && !name.starts_with("ltmp")
+                            && !is_hidden_local_object_symbol(name)
+                    })
+                    .filter_map(|(name, _)| symbol_order.get(name).copied())
+                    .max()?;
+                Some((section, trailing))
+            })
+            .collect();
         symbols.sort_by(|a, b| {
             let rank_a = symbol_class_rank(a);
             let rank_b = symbol_class_rank(b);
@@ -2345,16 +2409,32 @@ impl Assembler {
                         .get(&b.name)
                         .copied()
                         .unwrap_or(usize::MAX);
-                    let a_order = symbol_order
-                        .get(&a.name)
-                        .copied()
-                        .unwrap_or(usize::MAX)
-                        .min(a_anchor);
-                    let b_order = symbol_order
-                        .get(&b.name)
-                        .copied()
-                        .unwrap_or(usize::MAX)
-                        .min(b_anchor);
+                    let a_base_order = symbol_order.get(&a.name).copied().unwrap_or(usize::MAX);
+                    let b_base_order = symbol_order.get(&b.name).copied().unwrap_or(usize::MAX);
+                    let a_order = if let Some(section) =
+                        a.name.strip_prefix("ltmp").and_then(|s| s.parse::<usize>().ok())
+                    {
+                        a_base_order.max(
+                            section_temp_trailing_order
+                                .get(&section)
+                                .copied()
+                                .unwrap_or(0),
+                        )
+                    } else {
+                        a_base_order.min(a_anchor)
+                    };
+                    let b_order = if let Some(section) =
+                        b.name.strip_prefix("ltmp").and_then(|s| s.parse::<usize>().ok())
+                    {
+                        b_base_order.max(
+                            section_temp_trailing_order
+                                .get(&section)
+                                .copied()
+                                .unwrap_or(0),
+                        )
+                    } else {
+                        b_base_order.min(b_anchor)
+                    };
                     a_is_primary_text_temp
                         .cmp(&b_is_primary_text_temp)
                         .reverse()
@@ -2362,17 +2442,31 @@ impl Assembler {
                     a_order
                         .cmp(&b_order)
                         .then_with(|| {
-                    if a.section == b.section && a.value == b.value {
-                        let a_is_section_temp = a.name.starts_with("ltmp");
-                        let b_is_section_temp = b.name.starts_with("ltmp");
-                        if a_is_section_temp != b_is_section_temp {
-                            let a_prefers_front =
-                                !a_is_section_temp && page_reloc_targets.contains(&a.name);
-                            let b_prefers_front =
-                                !b_is_section_temp && page_reloc_targets.contains(&b.name);
-                            if a_prefers_front != b_prefers_front {
-                                return b_prefers_front.cmp(&a_prefers_front);
-                            }
+                    let a_is_section_temp = a.name.starts_with("ltmp");
+                    let b_is_section_temp = b.name.starts_with("ltmp");
+                    let prefer_temp_first =
+                        a.section > 0
+                            && a.section == b.section
+                            && self.sections[(a.section - 1) as usize].kind == SectionKind::Literal16;
+                    let temp_cmp = if prefer_temp_first {
+                        b_is_section_temp.cmp(&a_is_section_temp)
+                    } else {
+                        a_is_section_temp.cmp(&b_is_section_temp)
+                    };
+                    temp_cmp
+                        .then_with(|| {
+                    if a.section == b.section
+                        && a.value == b.value
+                        && a.section > 0
+                        && self.sections[(a.section - 1) as usize].kind != SectionKind::Literal16
+                        && a_is_section_temp != b_is_section_temp
+                    {
+                        let a_prefers_front =
+                            !a_is_section_temp && page_reloc_targets.contains(&a.name);
+                        let b_prefers_front =
+                            !b_is_section_temp && page_reloc_targets.contains(&b.name);
+                        if a_prefers_front != b_prefers_front {
+                            return b_prefers_front.cmp(&a_prefers_front);
                         }
                     }
                     symbol_order
@@ -2381,6 +2475,7 @@ impl Assembler {
                         .unwrap_or(usize::MAX)
                         .cmp(&symbol_order.get(&b.name).copied().unwrap_or(usize::MAX))
                         .then_with(|| a.name.cmp(&b.name))
+                        })
                         })
                         })
                 }
@@ -3129,6 +3224,29 @@ mod tests {
     }
 
     #[test]
+    fn assemble_frameless_saved_pair_cfi_emits_compact_unwind() {
+        let obj = assemble_source(
+            ".text\n\
+            frameless_pair_target:\n\
+            .cfi_startproc\n\
+            sub sp, sp, #32\n\
+            .cfi_def_cfa_offset 32\n\
+            .cfi_offset w27, -8\n\
+            .cfi_offset w28, -16\n\
+            add sp, sp, #32\n\
+            ret\n\
+            .cfi_endproc\n",
+        )
+        .unwrap();
+        let compact = compact_unwind_section(&obj);
+        assert_eq!(
+            u32::from_le_bytes(compact.data[12..16].try_into().unwrap()),
+            UNWIND_ARM64_MODE_FRAMELESS | (2 << 12) | UNWIND_ARM64_FRAME_X27_X28_PAIR
+        );
+        assert!(obj.section("__TEXT", "__eh_frame").is_none());
+    }
+
+    #[test]
     fn assemble_frame_cfi_emits_compact_unwind() {
         let obj = assemble_source(
             ".text\n\
@@ -3279,12 +3397,24 @@ mod tests {
     #[test]
     fn assemble_supported_text_sections() {
         let obj = assemble_source(
-            ".section __TEXT,__cstring\nmsg: .asciz \"hello\"\n.section __TEXT,__const\nvalue: .quad 42\n"
+            ".section __TEXT,__cstring\n\
+             msg: .asciz \"hello\"\n\
+             .section __TEXT,__literal16\n\
+             .p2align 4\n\
+             lit:\n\
+             .byte 1\n\
+             .space 15\n\
+             .section __TEXT,__const\n\
+             value: .quad 42\n"
         ).unwrap();
 
         let cstring = obj.section("__TEXT", "__cstring").unwrap();
+        let literal16 = obj.section("__TEXT", "__literal16").unwrap();
         let const_data = obj.section("__TEXT", "__const").unwrap();
         assert_eq!(cstring.data, b"hello\0");
+        assert_eq!(literal16.kind, SectionKind::Literal16);
+        assert_eq!(literal16.align_pow2, 4);
+        assert_eq!(literal16.data.len(), 16);
         assert_eq!(const_data.data, 42u64.to_le_bytes());
         assert_eq!(
             obj.symbols
@@ -3297,10 +3427,18 @@ mod tests {
         assert_eq!(
             obj.symbols
                 .iter()
+                .find(|sym| sym.name == "lit")
+                .unwrap()
+                .value,
+            16
+        );
+        assert_eq!(
+            obj.symbols
+                .iter()
                 .find(|sym| sym.name == "value")
                 .unwrap()
                 .value,
-            6
+            32
         );
     }
 
@@ -4002,6 +4140,55 @@ mod tests {
             .expect("const1_1 symbol");
         assert!(const0_index < data0_index, "symbols: {:?}", names);
         assert!(data0_index < const1_index, "symbols: {:?}", names);
+    }
+
+    #[test]
+    fn assemble_const_section_temp_sorts_after_later_const_labels() {
+        let obj = assemble_source(
+            ".text\n\
+             _f:\n\
+               adrp x0, const0@PAGE\n\
+               add x0, x0, const0@PAGEOFF\n\
+               ret\n\
+             .section __TEXT,__const\n\
+             const0:\n\
+               .quad 1\n\
+             const1:\n\
+               .quad 2\n",
+        )
+        .unwrap();
+        let names: Vec<_> = obj.symbols.iter().map(|sym| sym.name.as_str()).collect();
+        let const0_index = names.iter().position(|name| *name == "const0").unwrap();
+        let const1_index = names.iter().position(|name| *name == "const1").unwrap();
+        let ltmp1_index = names.iter().position(|name| *name == "ltmp1").unwrap();
+        assert!(const0_index < const1_index, "symbols: {:?}", names);
+        assert!(const1_index < ltmp1_index, "symbols: {:?}", names);
+    }
+
+    #[test]
+    fn assemble_literal16_section_temp_stays_before_literal_labels() {
+        let obj = assemble_source(
+            ".text\n\
+             _f:\n\
+               adrp x0, lit0@PAGE\n\
+               ldr q0, [x0, lit0@PAGEOFF]\n\
+               ret\n\
+             .section __TEXT,__literal16\n\
+             .p2align 4\n\
+             lit0:\n\
+               .byte 1\n\
+             .space 15\n\
+             lit1:\n\
+               .byte 2\n\
+             .space 15\n",
+        )
+        .unwrap();
+        let names: Vec<_> = obj.symbols.iter().map(|sym| sym.name.as_str()).collect();
+        let ltmp1_index = names.iter().position(|name| *name == "ltmp1").unwrap();
+        let lit0_index = names.iter().position(|name| *name == "lit0").unwrap();
+        let lit1_index = names.iter().position(|name| *name == "lit1").unwrap();
+        assert!(ltmp1_index < lit0_index, "symbols: {:?}", names);
+        assert!(lit0_index < lit1_index, "symbols: {:?}", names);
     }
 
     #[test]

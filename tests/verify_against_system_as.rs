@@ -2055,6 +2055,78 @@ fn sys_trn2_4s() {
     );
 }
 #[test]
+fn sys_tbl_16b_single() {
+    verify(
+        "tbl.16b v0, { v1 }, v2",
+        Inst::TblV16B {
+            rd: FpReg::new(0),
+            table: FpReg::new(1),
+            table_len: 1,
+            index: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_tbl_16b_pair() {
+    verify(
+        "tbl.16b v3, { v4, v5 }, v6",
+        Inst::TblV16B {
+            rd: FpReg::new(3),
+            table: FpReg::new(4),
+            table_len: 2,
+            index: FpReg::new(6),
+        },
+    );
+}
+#[test]
+fn sys_tbl_16b_triple() {
+    verify(
+        "tbl.16b v7, { v8, v9, v10 }, v11",
+        Inst::TblV16B {
+            rd: FpReg::new(7),
+            table: FpReg::new(8),
+            table_len: 3,
+            index: FpReg::new(11),
+        },
+    );
+}
+#[test]
+fn sys_tbl_16b_quad() {
+    verify(
+        "tbl.16b v12, { v13, v14, v15, v16 }, v17",
+        Inst::TblV16B {
+            rd: FpReg::new(12),
+            table: FpReg::new(13),
+            table_len: 4,
+            index: FpReg::new(17),
+        },
+    );
+}
+#[test]
+fn sys_tbx_16b_single() {
+    verify(
+        "tbx.16b v18, { v19 }, v20",
+        Inst::TbxV16B {
+            rd: FpReg::new(18),
+            table: FpReg::new(19),
+            table_len: 1,
+            index: FpReg::new(20),
+        },
+    );
+}
+#[test]
+fn sys_tbx_16b_pair() {
+    verify(
+        "tbx.16b v21, { v22, v23 }, v24",
+        Inst::TbxV16B {
+            rd: FpReg::new(21),
+            table: FpReg::new(22),
+            table_len: 2,
+            index: FpReg::new(24),
+        },
+    );
+}
+#[test]
 fn sys_mov_16b() {
     verify(
         "mov.16b v0, v2",

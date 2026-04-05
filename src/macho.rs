@@ -24,6 +24,7 @@ const LC_LINKER_OPTIMIZATION_HINT: u32 = 0x2E;
 const S_REGULAR: u32 = 0x0;
 const S_ZEROFILL: u32 = 0x1;
 const S_CSTRING_LITERALS: u32 = 0x2;
+const S_16BYTE_LITERALS: u32 = 0xE;
 const S_COALESCED: u32 = 0x0B;
 const S_THREAD_LOCAL_REGULAR: u32 = 0x11;
 const S_THREAD_LOCAL_ZEROFILL: u32 = 0x12;
@@ -121,6 +122,7 @@ pub enum SectionKind {
     Text,
     Data,
     CStringLiterals,
+    Literal16,
     ConstData,
     ThreadLocalData,
     ThreadLocalZeroFill,
@@ -139,6 +141,7 @@ impl SectionKind {
             Self::Text if size == 0 => S_ATTR_PURE_INSTRUCTIONS,
             Self::Text => S_ATTR_PURE_INSTRUCTIONS,
             Self::CStringLiterals => S_CSTRING_LITERALS,
+            Self::Literal16 => S_16BYTE_LITERALS,
             Self::CompactUnwind => S_REGULAR | S_ATTR_DEBUG,
             Self::EhFrame => {
                 S_COALESCED | S_ATTR_NO_TOC | S_ATTR_STRIP_STATIC_SYMS | S_ATTR_LIVE_SUPPORT
@@ -272,7 +275,6 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     let mut layouts = vec![SectionLayout::default(); obj.sections.len()];
     let mut file_cursor = content_offset;
     let mut vm_cursor = 0u64;
-    let mut saw_file_backed_section = false;
 
     let mut allocation_order: Vec<_> = (0..obj.sections.len()).collect();
     allocation_order.sort_by_key(|&index| obj.sections[index].kind.is_zerofill());
@@ -299,12 +301,8 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         let offset = if section.kind.is_zerofill() {
             0
         } else {
-            if saw_file_backed_section {
-                file_cursor = align_to(file_cursor, 1 << section.align_pow2);
-            }
-            let offset = file_cursor;
-            file_cursor = file_cursor.saturating_add(section.file_size() as u32);
-            saw_file_backed_section = true;
+            let offset = content_offset.saturating_add(addr as u32);
+            file_cursor = file_cursor.max(offset.saturating_add(section.file_size() as u32));
             offset
         };
 
@@ -1293,5 +1291,36 @@ mod tests {
             SectionKind::ThreadLocalVariables.flags(24, false),
             S_THREAD_LOCAL_VARIABLES
         );
+    }
+
+    #[test]
+    fn literal16_section_uses_literal_flags() {
+        assert_eq!(SectionKind::Literal16.flags(16, false), S_16BYTE_LITERALS);
+    }
+
+    #[test]
+    fn file_backed_section_offsets_preserve_vm_gaps() {
+        let mut obj = ObjectFile::new();
+        {
+            let text = obj.text_section_mut();
+            text.data = vec![0; 0x24];
+            text.size = 0x24;
+            text.has_instructions = true;
+        }
+        let mut literal = Section::new("__TEXT", "__literal16", SectionKind::Literal16);
+        literal.align_pow2 = 4;
+        literal.data = vec![0; 0x20];
+        literal.size = 0x20;
+        obj.sections.push(literal);
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let first_section = HEADER_SIZE as usize + SEGMENT_CMD_SIZE as usize;
+        let second_section = first_section + SECTION_SIZE as usize;
+        let text_offset = u32::from_le_bytes(buf[first_section + 48..first_section + 52].try_into().unwrap());
+        let literal_offset =
+            u32::from_le_bytes(buf[second_section + 48..second_section + 52].try_into().unwrap());
+        assert_eq!(literal_offset - text_offset, 0x30);
     }
 }

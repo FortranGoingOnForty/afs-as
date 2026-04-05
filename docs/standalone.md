@@ -193,6 +193,7 @@ Major covered families include:
   - `add.4s`, `sub.4s`
   - `and.16b`, `orr.16b`, `eor.16b`
   - `ext.16b`, `rev64.4s`, `trn2.4s`
+  - `tbl.16b`, `tbx.16b`
   - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`
   - `mov.8b`, `mov.16b`, `mov.4s`, `mov.2d`
   - `mov sN, vM[idx]`, `mov dN, vM[idx]`

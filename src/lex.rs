@@ -27,8 +27,8 @@ pub enum Tok {
     /// Floating-point literal used by instructions like `fmov d0, #3.5`.
     Float(String),
 
-    /// String literal (in .ascii/.asciz directives): `"hello\n"`
-    StringLit(String),
+    /// String literal bytes (in .ascii/.asciz directives): `"hello\n"`
+    StringLit(Vec<u8>),
 
     /// `#` — immediate prefix
     Hash,
@@ -48,6 +48,10 @@ pub enum Tok {
     LBracket,
     /// `]` — addressing mode close
     RBracket,
+    /// `{` — register list open
+    LBrace,
+    /// `}` — register list close
+    RBrace,
     /// `!` — pre-index writeback marker
     Bang,
     /// `.` — directive prefix or label component
@@ -69,7 +73,7 @@ impl fmt::Display for Tok {
             Tok::Ident(s) => write!(f, "{}", s),
             Tok::Integer(n) => write!(f, "{}", n),
             Tok::Float(s) => write!(f, "{}", s),
-            Tok::StringLit(s) => write!(f, "\"{}\"", s),
+            Tok::StringLit(bytes) => write!(f, "\"{}\"", String::from_utf8_lossy(bytes).escape_default()),
             Tok::Hash => write!(f, "#"),
             Tok::Comma => write!(f, ","),
             Tok::Plus => write!(f, "+"),
@@ -79,6 +83,8 @@ impl fmt::Display for Tok {
             Tok::RParen => write!(f, ")"),
             Tok::LBracket => write!(f, "["),
             Tok::RBracket => write!(f, "]"),
+            Tok::LBrace => write!(f, "{{"),
+            Tok::RBrace => write!(f, "}}"),
             Tok::Bang => write!(f, "!"),
             Tok::Dot => write!(f, "."),
             Tok::At => write!(f, "@"),
@@ -262,6 +268,14 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 return Ok(self.make_tok(Tok::RBracket, line, col));
             }
+            b'{' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::LBrace, line, col));
+            }
+            b'}' => {
+                self.advance();
+                return Ok(self.make_tok(Tok::RBrace, line, col));
+            }
             b'!' => {
                 self.advance();
                 return Ok(self.make_tok(Tok::Bang, line, col));
@@ -395,7 +409,7 @@ impl<'a> Lexer<'a> {
         String::from_utf8_lossy(&self.src[start..self.pos]).into_owned()
     }
 
-    fn read_string_literal(&mut self) -> Result<String, LexError> {
+    fn read_string_literal(&mut self) -> Result<Vec<u8>, LexError> {
         let line = self.line;
         let col = self.col;
         self.advance(); // skip opening "
@@ -413,12 +427,49 @@ impl<'a> Lexer<'a> {
                 break;
             }
             if ch == b'\\' {
+                if self.pos >= self.src.len() || self.peek() == b'\n' {
+                    return Err(LexError {
+                        line,
+                        col,
+                        msg: "unterminated string escape".into(),
+                    });
+                }
                 let esc = self.advance();
                 match esc {
+                    b'a' => buf.push(0x07),
+                    b'b' => buf.push(0x08),
+                    b'f' => buf.push(0x0c),
                     b'n' => buf.push(b'\n'),
                     b't' => buf.push(b'\t'),
                     b'r' => buf.push(b'\r'),
-                    b'0' => buf.push(0),
+                    b'v' => buf.push(0x0b),
+                    b'0'..=b'7' => {
+                        let mut value = (esc - b'0') as u16;
+                        for _ in 0..2 {
+                            if self.pos < self.src.len() && matches!(self.peek(), b'0'..=b'7') {
+                                value = (value << 3) | (self.advance() - b'0') as u16;
+                            } else {
+                                break;
+                            }
+                        }
+                        buf.push(value as u8);
+                    }
+                    b'x' => {
+                        let start = self.pos;
+                        let mut value = 0u16;
+                        while self.pos < self.src.len() && self.peek().is_ascii_hexdigit() {
+                            value = (value << 4)
+                                | (self.advance() as char).to_digit(16).unwrap() as u16;
+                        }
+                        if self.pos == start {
+                            return Err(LexError {
+                                line,
+                                col,
+                                msg: "expected hex digits after \\x in string literal".into(),
+                            });
+                        }
+                        buf.push(value as u8);
+                    }
                     b'\\' => buf.push(b'\\'),
                     b'"' => buf.push(b'"'),
                     _ => {
@@ -430,7 +481,7 @@ impl<'a> Lexer<'a> {
                 buf.push(ch);
             }
         }
-        Ok(String::from_utf8_lossy(&buf).into_owned())
+        Ok(buf)
     }
 }
 
@@ -537,6 +588,20 @@ mod tests {
     #[test]
     fn immediate_decimal() {
         assert_eq!(tok_kinds("#42"), vec![Tok::Integer(42)]);
+    }
+
+    #[test]
+    fn braces_tokenize() {
+        assert_eq!(
+            tok_kinds("{ v0, v1 }"),
+            vec![
+                Tok::LBrace,
+                Tok::Ident("v0".into()),
+                Tok::Comma,
+                Tok::Ident("v1".into()),
+                Tok::RBrace,
+            ]
+        );
     }
 
     #[test]
@@ -681,7 +746,18 @@ mod tests {
             tok_kinds(".asciz \"Hello, World!\\n\""),
             vec![
                 Tok::Ident(".asciz".into()),
-                Tok::StringLit("Hello, World!\n".into()),
+                Tok::StringLit(b"Hello, World!\n".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn directive_ascii_octal_and_c_escapes() {
+        assert_eq!(
+            tok_kinds(".ascii \"\\b\\t\\n\\013\\f\\r\\016\\017\""),
+            vec![
+                Tok::Ident(".ascii".into()),
+                Tok::StringLit(vec![0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f]),
             ]
         );
     }

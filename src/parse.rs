@@ -518,7 +518,7 @@ impl<'a> Parser<'a> {
             ".ascii" => {
                 if let Tok::StringLit(s) = self.peek().clone() {
                     self.advance();
-                    Directive::Ascii(s.into_bytes())
+                    Directive::Ascii(s)
                 } else {
                     return Err(self.err("expected string after .ascii".into()));
                 }
@@ -526,7 +526,7 @@ impl<'a> Parser<'a> {
             ".asciz" | ".string" => {
                 if let Tok::StringLit(s) = self.peek().clone() {
                     self.advance();
-                    let mut bytes = s.into_bytes();
+                    let mut bytes = s;
                     bytes.push(0); // null terminator
                     Directive::Asciz(bytes)
                 } else {
@@ -1212,6 +1212,8 @@ impl<'a> Parser<'a> {
             "mov" => self.parse_mov(),
             "mov.s" | "mov.d" => self.parse_simd_lane_insert(mnemonic),
             "mov.8b" | "mov.16b" | "mov.4s" | "mov.2d" => self.parse_simd_mov(mnemonic),
+            "tbl.16b" => self.parse_simd_table_lookup("tbl.16b"),
+            "tbx.16b" => self.parse_simd_table_lookup("tbx.16b"),
             "ext.16b" => self.parse_simd_ext_16b(),
             "rev64.4s" => self.parse_simd_rev64_4s(),
             "trn2.4s" => self.parse_simd_trn2_4s(),
@@ -2927,6 +2929,33 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
+        if self.starts_non_register_symbol_reference() {
+            let label = self.parse_label_reference()?;
+            let kind = self.parse_symbol_reloc_modifier(
+                None,
+                &[("PAGEOFF", RelocKind::PageOff12)],
+                "FP/SIMD memory symbol operand",
+            )?;
+            let addend = self.parse_optional_symbol_addend()?;
+            self.expect(&Tok::RBracket)?;
+            let inst = match (is_load, width) {
+                (true, FpMemWidth::D64) => Inst::LdrFpImm64 { rt, rn, offset: 0 },
+                (false, FpMemWidth::D64) => Inst::StrFpImm64 { rt, rn, offset: 0 },
+                (true, FpMemWidth::S32) => Inst::LdrFpImm32 { rt, rn, offset: 0 },
+                (false, FpMemWidth::S32) => Inst::StrFpImm32 { rt, rn, offset: 0 },
+                (true, FpMemWidth::Q128) => Inst::LdrFpImm128 { rt, rn, offset: 0 },
+                (false, FpMemWidth::Q128) => Inst::StrFpImm128 { rt, rn, offset: 0 },
+            };
+            return Ok(Stmt::InstructionWithReloc(
+                inst,
+                LabelRef {
+                    symbol: label,
+                    kind,
+                    addend,
+                },
+            ));
+        }
+
         if self.starts_register_like_operand() {
             let (rm, extend, shift) = self.parse_reg_offset_operand(width.scale())?;
             self.expect(&Tok::RBracket)?;
@@ -3786,6 +3815,51 @@ impl<'a> Parser<'a> {
             )));
         }
         Ok(Inst::ExtV16B { rd, rn, rm, index })
+    }
+
+    fn parse_simd_table_lookup(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let (table, table_len) = self.parse_simd_table_list()?;
+        self.expect(&Tok::Comma)?;
+        let index = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "tbl.16b" => Inst::TblV16B {
+                rd,
+                table,
+                table_len,
+                index,
+            },
+            "tbx.16b" => Inst::TbxV16B {
+                rd,
+                table,
+                table_len,
+                index,
+            },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_table_list(&mut self) -> Result<(FpReg, u8), ParseError> {
+        self.expect(&Tok::LBrace)?;
+        let first = self.parse_simd_reg()?;
+        let mut prev = first;
+        let mut count = 1u8;
+        while self.eat(&Tok::Comma) {
+            let next = self.parse_simd_reg()?;
+            if next.num() != prev.num() + 1 {
+                return Err(self.err("SIMD table register list must be consecutive".to_string()));
+            }
+            count += 1;
+            if count > 4 {
+                return Err(self.err(
+                    "SIMD table register list supports at most 4 registers".to_string(),
+                ));
+            }
+            prev = next;
+        }
+        self.expect(&Tok::RBrace)?;
+        Ok((first, count))
     }
 
     fn parse_simd_rev64_4s(&mut self) -> Result<Inst, ParseError> {
@@ -5702,6 +5776,25 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldr_q_pageoff_memory_operand() {
+        assert_eq!(
+            parse_stmts("ldr q2, [x8, lCPI0_0@PAGEOFF]"),
+            vec![Stmt::InstructionWithReloc(
+                Inst::LdrFpImm128 {
+                    rt: FpReg::new(2),
+                    rn: X8,
+                    offset: 0
+                },
+                LabelRef {
+                    symbol: "lCPI0_0".into(),
+                    kind: RelocKind::PageOff12,
+                    addend: 0
+                },
+            )]
+        );
+    }
+
+    #[test]
     fn parse_str_q_register_offset_with_extend() {
         assert_eq!(
             parse_inst("str q1, [x3, w4, uxtw #4]"),
@@ -6890,6 +6983,51 @@ mod tests {
                 rm: FpReg::new(5)
             }
         );
+    }
+
+    #[test]
+    fn parse_tbl_16b_single() {
+        assert_eq!(
+            parse_inst("tbl.16b v0, { v1 }, v2"),
+            Inst::TblV16B {
+                rd: FpReg::new(0),
+                table: FpReg::new(1),
+                table_len: 1,
+                index: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tbl_16b_pair() {
+        assert_eq!(
+            parse_inst("tbl.16b v3, { v4, v5 }, v6"),
+            Inst::TblV16B {
+                rd: FpReg::new(3),
+                table: FpReg::new(4),
+                table_len: 2,
+                index: FpReg::new(6)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tbx_16b_pair() {
+        assert_eq!(
+            parse_inst("tbx.16b v21, { v22, v23 }, v24"),
+            Inst::TbxV16B {
+                rd: FpReg::new(21),
+                table: FpReg::new(22),
+                table_len: 2,
+                index: FpReg::new(24)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tbl_16b_requires_consecutive_table_regs() {
+        let err = parse("tbl.16b v0, { v1, v3 }, v2").unwrap_err();
+        assert!(err.msg.contains("consecutive"), "got: {}", err);
     }
 
     #[test]

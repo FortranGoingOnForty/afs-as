@@ -1160,6 +1160,20 @@ pub enum Inst {
     Rev64V4S { rd: FpReg, rn: FpReg },
     /// TRN2.4S Vd, Vn, Vm
     Trn2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// TBL.16B Vd, { Vn... }, Vm
+    TblV16B {
+        rd: FpReg,
+        table: FpReg,
+        table_len: u8,
+        index: FpReg,
+    },
+    /// TBX.16B Vd, { Vn... }, Vm
+    TbxV16B {
+        rd: FpReg,
+        table: FpReg,
+        table_len: u8,
+        index: FpReg,
+    },
     /// MOV Sd, Vn[index]
     MovFromLaneS { rd: FpReg, rn: FpReg, index: u8 },
     /// MOV Dd, Vn[index]
@@ -2260,6 +2274,18 @@ impl Inst {
             Inst::ExtV16B { rd, rn, rm, index } => simd_ext_16b(*rm, *rn, *rd, *index),
             Inst::Rev64V4S { rd, rn } => simd_unary(0x4EA00800, *rn, *rd),
             Inst::Trn2V4S { rd, rn, rm } => simd_binary(0x4E806800, *rm, *rn, *rd),
+            Inst::TblV16B {
+                rd,
+                table,
+                table_len,
+                index,
+            } => simd_table_lookup(0x4E000000, *index, *table, *table_len, *rd),
+            Inst::TbxV16B {
+                rd,
+                table,
+                table_len,
+                index,
+            } => simd_table_lookup(0x4E001000, *index, *table, *table_len, *rd),
             Inst::MovFromLaneS { rd, rn, index } => simd_extract_lane_s(*rn, *index, *rd),
             Inst::MovFromLaneD { rd, rn, index } => simd_extract_lane_d(*rn, *index, *rd),
             Inst::MovLaneS {
@@ -2693,6 +2719,11 @@ fn simd_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
 
 fn simd_ext_16b(rm: FpReg, rn: FpReg, rd: FpReg, index: u8) -> u32 {
     0x6E000000 | (rm.enc() << 16) | ((index as u32) << 11) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_table_lookup(base: u32, index: FpReg, table: FpReg, table_len: u8, rd: FpReg) -> u32 {
+    assert!((1..=4).contains(&table_len), "table length must be 1..=4");
+    base | (index.enc() << 16) | (((table_len as u32) - 1) << 13) | (table.enc() << 5) | rd.enc()
 }
 
 fn fp_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
@@ -5282,6 +5313,84 @@ mod tests {
             }
             .encode(),
             0x4E856883
+        );
+    }
+    #[test]
+    fn tbl_16b_v0_v1_v2() {
+        assert_eq!(
+            Inst::TblV16B {
+                rd: FpReg::new(0),
+                table: FpReg::new(1),
+                table_len: 1,
+                index: FpReg::new(2)
+            }
+            .encode(),
+            0x4E020020
+        );
+    }
+    #[test]
+    fn tbl_16b_v3_v4_v5_v6() {
+        assert_eq!(
+            Inst::TblV16B {
+                rd: FpReg::new(3),
+                table: FpReg::new(4),
+                table_len: 2,
+                index: FpReg::new(6)
+            }
+            .encode(),
+            0x4E062083
+        );
+    }
+    #[test]
+    fn tbl_16b_v7_v8_v9_v10_v11() {
+        assert_eq!(
+            Inst::TblV16B {
+                rd: FpReg::new(7),
+                table: FpReg::new(8),
+                table_len: 3,
+                index: FpReg::new(11)
+            }
+            .encode(),
+            0x4E0B4107
+        );
+    }
+    #[test]
+    fn tbl_16b_v12_v13_v14_v15_v16_v17() {
+        assert_eq!(
+            Inst::TblV16B {
+                rd: FpReg::new(12),
+                table: FpReg::new(13),
+                table_len: 4,
+                index: FpReg::new(17)
+            }
+            .encode(),
+            0x4E1161AC
+        );
+    }
+    #[test]
+    fn tbx_16b_v18_v19_v20() {
+        assert_eq!(
+            Inst::TbxV16B {
+                rd: FpReg::new(18),
+                table: FpReg::new(19),
+                table_len: 1,
+                index: FpReg::new(20)
+            }
+            .encode(),
+            0x4E141272
+        );
+    }
+    #[test]
+    fn tbx_16b_v21_v22_v23_v24() {
+        assert_eq!(
+            Inst::TbxV16B {
+                rd: FpReg::new(21),
+                table: FpReg::new(22),
+                table_len: 2,
+                index: FpReg::new(24)
+            }
+            .encode(),
+            0x4E1832D5
         );
     }
     #[test]
