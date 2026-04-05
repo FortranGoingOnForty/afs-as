@@ -191,6 +191,7 @@ Major covered families include:
   - `fcvtzs`, `scvtf`, `fmov`
 - SIMD / vector:
   - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`
+  - `mov.8b`, `mov.16b`, `mov.4s`, `mov.2d`
 - system / hint:
   - `svc`, `brk`, `nop`
   - `yield`, `wfe`, `wfi`, `sev`, `sevl`

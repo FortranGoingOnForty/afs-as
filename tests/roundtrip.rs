@@ -809,6 +809,22 @@ fn rt_fdiv_4s() {
     roundtrip(".text\nfdiv.4s v9, v10, v11\n");
 }
 #[test]
+fn rt_mov_16b() {
+    roundtrip(".text\nmov.16b v0, v2\n");
+}
+#[test]
+fn rt_mov_8b() {
+    roundtrip(".text\nmov.8b v1, v3\n");
+}
+#[test]
+fn rt_mov_4s() {
+    roundtrip(".text\nmov.4s v4, v5\n");
+}
+#[test]
+fn rt_mov_2d() {
+    roundtrip(".text\nmov.2d v6, v7\n");
+}
+#[test]
 fn rt_fneg_d() {
     roundtrip(".text\nfneg d3, d4\n");
 }

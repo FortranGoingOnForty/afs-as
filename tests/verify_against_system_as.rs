@@ -1967,6 +1967,46 @@ fn sys_fdiv_4s() {
     );
 }
 #[test]
+fn sys_mov_16b() {
+    verify(
+        "mov.16b v0, v2",
+        Inst::MovV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_mov_8b() {
+    verify(
+        "mov.8b v1, v3",
+        Inst::MovV8B {
+            rd: FpReg::new(1),
+            rn: FpReg::new(3),
+        },
+    );
+}
+#[test]
+fn sys_mov_4s() {
+    verify(
+        "mov.4s v4, v5",
+        Inst::MovV4S {
+            rd: FpReg::new(4),
+            rn: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_mov_2d() {
+    verify(
+        "mov.2d v6, v7",
+        Inst::MovV2D {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+        },
+    );
+}
+#[test]
 fn sys_fneg_d() {
     verify("fneg d3, d4", Inst::FnegD { rd: D3, rn: D4 });
 }

@@ -1192,6 +1192,7 @@ impl<'a> Parser<'a> {
             "cinv" => self.parse_cinv(),
             "cneg" => self.parse_cneg(),
             "mov" => self.parse_mov(),
+            "mov.8b" | "mov.16b" | "mov.4s" | "mov.2d" => self.parse_simd_mov(mnemonic),
             "movz" => self.parse_mov_wide("movz"),
             "movk" => self.parse_mov_wide("movk"),
             "movn" => self.parse_mov_wide("movn"),
@@ -3671,6 +3672,19 @@ impl<'a> Parser<'a> {
             "fsub.4s" => Inst::FsubV4S { rd, rn, rm },
             "fmul.4s" => Inst::FmulV4S { rd, rn, rm },
             "fdiv.4s" => Inst::FdivV4S { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_mov(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "mov.8b" => Inst::MovV8B { rd, rn },
+            "mov.16b" => Inst::MovV16B { rd, rn },
+            "mov.4s" => Inst::MovV4S { rd, rn },
+            "mov.2d" => Inst::MovV2D { rd, rn },
             _ => unreachable!(),
         })
     }
@@ -6602,6 +6616,50 @@ mod tests {
                 rd: FpReg::new(9),
                 rn: FpReg::new(10),
                 rm: FpReg::new(11)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_16b() {
+        assert_eq!(
+            parse_inst("mov.16b v0, v2"),
+            Inst::MovV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_8b() {
+        assert_eq!(
+            parse_inst("mov.8b v1, v3"),
+            Inst::MovV8B {
+                rd: FpReg::new(1),
+                rn: FpReg::new(3)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_4s() {
+        assert_eq!(
+            parse_inst("mov.4s v4, v5"),
+            Inst::MovV4S {
+                rd: FpReg::new(4),
+                rn: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_2d() {
+        assert_eq!(
+            parse_inst("mov.2d v6, v7"),
+            Inst::MovV2D {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7)
             }
         );
     }

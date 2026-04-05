@@ -1127,6 +1127,14 @@ pub enum Inst {
     FdivV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FDIV Sd, Sn, Sm  (single)
     FdivS { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// MOV.8B Vd, Vn
+    MovV8B { rd: FpReg, rn: FpReg },
+    /// MOV.16B Vd, Vn
+    MovV16B { rd: FpReg, rn: FpReg },
+    /// MOV.4S Vd, Vn
+    MovV4S { rd: FpReg, rn: FpReg },
+    /// MOV.2D Vd, Vn
+    MovV2D { rd: FpReg, rn: FpReg },
     /// FNEG Dd, Dn
     FnegD { rd: FpReg, rn: FpReg },
     /// FNEG Sd, Sn
@@ -2195,6 +2203,10 @@ impl Inst {
             Inst::FmulS { rd, rn, rm } => fp_arith(0b00, 0b0000, *rm, *rn, *rd),
             Inst::FdivV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20FC00, *rm, *rn, *rd),
             Inst::FdivS { rd, rn, rm } => fp_arith(0b00, 0b0001, *rm, *rn, *rd),
+            Inst::MovV8B { rd, rn } => simd_mov_reg(0x0EA01C00, *rn, *rd),
+            Inst::MovV16B { rd, rn } => simd_mov_reg(0x4EA01C00, *rn, *rd),
+            Inst::MovV4S { rd, rn } => simd_mov_reg(0x4EA01C00, *rn, *rd),
+            Inst::MovV2D { rd, rn } => simd_mov_reg(0x4EA01C00, *rn, *rd),
 
             Inst::FnegD { rd, rn } => fp_unary(0b01, 0b0000_10, *rn, *rd),
             Inst::FnegS { rd, rn } => fp_unary(0b00, 0b0000_10, *rn, *rd),
@@ -2598,6 +2610,10 @@ fn fp_arith(ftype: u32, opcode: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
 
 fn simd_fp_arith_4s(base: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
     base | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
+    base | (rn.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
 #[cfg(test)]
@@ -5019,6 +5035,50 @@ mod tests {
             }
             .encode(),
             0x6E21FC00
+        );
+    }
+    #[test]
+    fn mov_16b_v0_v2() {
+        assert_eq!(
+            Inst::MovV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x4EA21C40
+        );
+    }
+    #[test]
+    fn mov_8b_v1_v3() {
+        assert_eq!(
+            Inst::MovV8B {
+                rd: FpReg::new(1),
+                rn: FpReg::new(3)
+            }
+            .encode(),
+            0x0EA31C61
+        );
+    }
+    #[test]
+    fn mov_4s_v4_v5() {
+        assert_eq!(
+            Inst::MovV4S {
+                rd: FpReg::new(4),
+                rn: FpReg::new(5)
+            }
+            .encode(),
+            0x4EA51CA4
+        );
+    }
+    #[test]
+    fn mov_2d_v6_v7() {
+        assert_eq!(
+            Inst::MovV2D {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7)
+            }
+            .encode(),
+            0x4EA71CE6
         );
     }
     #[test]
