@@ -837,6 +837,26 @@ fn rt_rev64_4s() {
     roundtrip(".text\nrev64.4s v1, v2\n");
 }
 #[test]
+fn rt_zip1_4s() {
+    roundtrip(".text\nzip1.4s v0, v0, v1\n");
+}
+#[test]
+fn rt_zip2_4s() {
+    roundtrip(".text\nzip2.4s v2, v3, v4\n");
+}
+#[test]
+fn rt_uzp1_4s() {
+    roundtrip(".text\nuzp1.4s v5, v6, v7\n");
+}
+#[test]
+fn rt_uzp2_4s() {
+    roundtrip(".text\nuzp2.4s v8, v9, v10\n");
+}
+#[test]
+fn rt_trn1_4s() {
+    roundtrip(".text\ntrn1.4s v11, v12, v13\n");
+}
+#[test]
 fn rt_trn2_4s() {
     roundtrip(".text\ntrn2.4s v3, v4, v5\n");
 }

@@ -2044,6 +2044,61 @@ fn sys_rev64_4s() {
     );
 }
 #[test]
+fn sys_zip1_4s() {
+    verify(
+        "zip1.4s v0, v0, v1",
+        Inst::Zip1V4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+            rm: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_zip2_4s() {
+    verify(
+        "zip2.4s v2, v3, v4",
+        Inst::Zip2V4S {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+            rm: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_uzp1_4s() {
+    verify(
+        "uzp1.4s v5, v6, v7",
+        Inst::Uzp1V4S {
+            rd: FpReg::new(5),
+            rn: FpReg::new(6),
+            rm: FpReg::new(7),
+        },
+    );
+}
+#[test]
+fn sys_uzp2_4s() {
+    verify(
+        "uzp2.4s v8, v9, v10",
+        Inst::Uzp2V4S {
+            rd: FpReg::new(8),
+            rn: FpReg::new(9),
+            rm: FpReg::new(10),
+        },
+    );
+}
+#[test]
+fn sys_trn1_4s() {
+    verify(
+        "trn1.4s v11, v12, v13",
+        Inst::Trn1V4S {
+            rd: FpReg::new(11),
+            rn: FpReg::new(12),
+            rm: FpReg::new(13),
+        },
+    );
+}
+#[test]
 fn sys_trn2_4s() {
     verify(
         "trn2.4s v3, v4, v5",

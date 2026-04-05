@@ -1216,7 +1216,9 @@ impl<'a> Parser<'a> {
             "tbx.16b" => self.parse_simd_table_lookup("tbx.16b"),
             "ext.16b" => self.parse_simd_ext_16b(),
             "rev64.4s" => self.parse_simd_rev64_4s(),
-            "trn2.4s" => self.parse_simd_trn2_4s(),
+            "zip1.4s" | "zip2.4s" | "uzp1.4s" | "uzp2.4s" | "trn1.4s" | "trn2.4s" => {
+                self.parse_simd_shuffle_4s(mnemonic)
+            }
             "movz" => self.parse_mov_wide("movz"),
             "movk" => self.parse_mov_wide("movk"),
             "movn" => self.parse_mov_wide("movn"),
@@ -3869,13 +3871,21 @@ impl<'a> Parser<'a> {
         Ok(Inst::Rev64V4S { rd, rn })
     }
 
-    fn parse_simd_trn2_4s(&mut self) -> Result<Inst, ParseError> {
+    fn parse_simd_shuffle_4s(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let rd = self.parse_simd_reg()?;
         self.expect(&Tok::Comma)?;
         let rn = self.parse_simd_reg()?;
         self.expect(&Tok::Comma)?;
         let rm = self.parse_simd_reg()?;
-        Ok(Inst::Trn2V4S { rd, rn, rm })
+        Ok(match mnemonic {
+            "zip1.4s" => Inst::Zip1V4S { rd, rn, rm },
+            "zip2.4s" => Inst::Zip2V4S { rd, rn, rm },
+            "uzp1.4s" => Inst::Uzp1V4S { rd, rn, rm },
+            "uzp2.4s" => Inst::Uzp2V4S { rd, rn, rm },
+            "trn1.4s" => Inst::Trn1V4S { rd, rn, rm },
+            "trn2.4s" => Inst::Trn2V4S { rd, rn, rm },
+            _ => unreachable!(),
+        })
     }
 
     fn parse_simd_mov(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -6969,6 +6979,66 @@ mod tests {
             Inst::Rev64V4S {
                 rd: FpReg::new(1),
                 rn: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_zip1_4s() {
+        assert_eq!(
+            parse_inst("zip1.4s v0, v0, v1"),
+            Inst::Zip1V4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_zip2_4s() {
+        assert_eq!(
+            parse_inst("zip2.4s v2, v3, v4"),
+            Inst::Zip2V4S {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3),
+                rm: FpReg::new(4)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_uzp1_4s() {
+        assert_eq!(
+            parse_inst("uzp1.4s v5, v6, v7"),
+            Inst::Uzp1V4S {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6),
+                rm: FpReg::new(7)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_uzp2_4s() {
+        assert_eq!(
+            parse_inst("uzp2.4s v8, v9, v10"),
+            Inst::Uzp2V4S {
+                rd: FpReg::new(8),
+                rn: FpReg::new(9),
+                rm: FpReg::new(10)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_trn1_4s() {
+        assert_eq!(
+            parse_inst("trn1.4s v11, v12, v13"),
+            Inst::Trn1V4S {
+                rd: FpReg::new(11),
+                rn: FpReg::new(12),
+                rm: FpReg::new(13)
             }
         );
     }

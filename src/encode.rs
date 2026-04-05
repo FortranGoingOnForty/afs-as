@@ -1158,6 +1158,16 @@ pub enum Inst {
     },
     /// REV64.4S Vd, Vn
     Rev64V4S { rd: FpReg, rn: FpReg },
+    /// ZIP1.4S Vd, Vn, Vm
+    Zip1V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// ZIP2.4S Vd, Vn, Vm
+    Zip2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// UZP1.4S Vd, Vn, Vm
+    Uzp1V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// UZP2.4S Vd, Vn, Vm
+    Uzp2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// TRN1.4S Vd, Vn, Vm
+    Trn1V4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// TRN2.4S Vd, Vn, Vm
     Trn2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// TBL.16B Vd, { Vn... }, Vm
@@ -2273,6 +2283,11 @@ impl Inst {
             Inst::EorV16B { rd, rn, rm } => simd_binary(0x6E201C00, *rm, *rn, *rd),
             Inst::ExtV16B { rd, rn, rm, index } => simd_ext_16b(*rm, *rn, *rd, *index),
             Inst::Rev64V4S { rd, rn } => simd_unary(0x4EA00800, *rn, *rd),
+            Inst::Zip1V4S { rd, rn, rm } => simd_binary(0x4E803800, *rm, *rn, *rd),
+            Inst::Zip2V4S { rd, rn, rm } => simd_binary(0x4E807800, *rm, *rn, *rd),
+            Inst::Uzp1V4S { rd, rn, rm } => simd_binary(0x4E801800, *rm, *rn, *rd),
+            Inst::Uzp2V4S { rd, rn, rm } => simd_binary(0x4E805800, *rm, *rn, *rd),
+            Inst::Trn1V4S { rd, rn, rm } => simd_binary(0x4E802800, *rm, *rn, *rd),
             Inst::Trn2V4S { rd, rn, rm } => simd_binary(0x4E806800, *rm, *rn, *rd),
             Inst::TblV16B {
                 rd,
@@ -5301,6 +5316,66 @@ mod tests {
             }
             .encode(),
             0x4EA00841
+        );
+    }
+    #[test]
+    fn zip1_4s_v0_v0_v1() {
+        assert_eq!(
+            Inst::Zip1V4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+            .encode(),
+            0x4E813800
+        );
+    }
+    #[test]
+    fn zip2_4s_v2_v3_v4() {
+        assert_eq!(
+            Inst::Zip2V4S {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3),
+                rm: FpReg::new(4)
+            }
+            .encode(),
+            0x4E847862
+        );
+    }
+    #[test]
+    fn uzp1_4s_v5_v6_v7() {
+        assert_eq!(
+            Inst::Uzp1V4S {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6),
+                rm: FpReg::new(7)
+            }
+            .encode(),
+            0x4E8718C5
+        );
+    }
+    #[test]
+    fn uzp2_4s_v8_v9_v10() {
+        assert_eq!(
+            Inst::Uzp2V4S {
+                rd: FpReg::new(8),
+                rn: FpReg::new(9),
+                rm: FpReg::new(10)
+            }
+            .encode(),
+            0x4E8A5928
+        );
+    }
+    #[test]
+    fn trn1_4s_v11_v12_v13() {
+        assert_eq!(
+            Inst::Trn1V4S {
+                rd: FpReg::new(11),
+                rn: FpReg::new(12),
+                rm: FpReg::new(13)
+            }
+            .encode(),
+            0x4E8D298B
         );
     }
     #[test]
