@@ -2401,6 +2401,26 @@ fn sys_frintz_4s() {
     );
 }
 #[test]
+fn sys_frinta_4s() {
+    verify(
+        "frinta.4s v0, v1",
+        Inst::FrintaV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_frinti_4s() {
+    verify(
+        "frinti.4s v2, v3",
+        Inst::FrintiV4S {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+        },
+    );
+}
+#[test]
 fn sys_and_16b() {
     verify(
         "and.16b v6, v7, v8",

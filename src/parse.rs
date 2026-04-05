@@ -1282,7 +1282,9 @@ impl<'a> Parser<'a> {
             }
             "fabs.4s" | "fneg.4s" | "fsqrt.4s" | "scvtf.4s" | "ucvtf.4s" | "fcvtzs.4s"
             | "fcvtzu.4s" | "frecpe.4s" | "frsqrte.4s" | "frintn.4s" | "frintm.4s"
-            | "frintp.4s" | "frintz.4s" => self.parse_simd_fp_unary_4s(mnemonic),
+            | "frintp.4s" | "frintz.4s" | "frinta.4s" | "frinti.4s" => {
+                self.parse_simd_fp_unary_4s(mnemonic)
+            }
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -3948,6 +3950,8 @@ impl<'a> Parser<'a> {
             "frintm.4s" => Inst::FrintmV4S { rd, rn },
             "frintp.4s" => Inst::FrintpV4S { rd, rn },
             "frintz.4s" => Inst::FrintzV4S { rd, rn },
+            "frinta.4s" => Inst::FrintaV4S { rd, rn },
+            "frinti.4s" => Inst::FrintiV4S { rd, rn },
             _ => unreachable!(),
         })
     }

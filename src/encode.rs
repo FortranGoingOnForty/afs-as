@@ -1209,6 +1209,10 @@ pub enum Inst {
     FrintpV4S { rd: FpReg, rn: FpReg },
     /// FRINTZ.4S Vd, Vn
     FrintzV4S { rd: FpReg, rn: FpReg },
+    /// FRINTA.4S Vd, Vn
+    FrintaV4S { rd: FpReg, rn: FpReg },
+    /// FRINTI.4S Vd, Vn
+    FrintiV4S { rd: FpReg, rn: FpReg },
     /// FDIV Sd, Sn, Sm  (single)
     FdivS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMOV Dd, Dn
@@ -2444,6 +2448,8 @@ impl Inst {
             Inst::FrintmV4S { rd, rn } => simd_unary(0x4E219800, *rn, *rd),
             Inst::FrintpV4S { rd, rn } => simd_unary(0x4EA18800, *rn, *rd),
             Inst::FrintzV4S { rd, rn } => simd_unary(0x4EA19800, *rn, *rd),
+            Inst::FrintaV4S { rd, rn } => simd_unary(0x6E218800, *rn, *rd),
+            Inst::FrintiV4S { rd, rn } => simd_unary(0x6EA19800, *rn, *rd),
             Inst::FdivS { rd, rn, rm } => fp_arith(0b00, 0b0001, *rm, *rn, *rd),
             Inst::FmovRegD { rd, rn } => fp_mov_reg(0x1E604000, *rn, *rd),
             Inst::FmovRegS { rd, rn } => fp_mov_reg(0x1E204000, *rn, *rd),
@@ -5907,6 +5913,28 @@ mod tests {
             }
             .encode(),
             0x4EA198E6
+        );
+    }
+    #[test]
+    fn frinta_4s_v0_v1() {
+        assert_eq!(
+            Inst::FrintaV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1)
+            }
+            .encode(),
+            0x6E218820
+        );
+    }
+    #[test]
+    fn frinti_4s_v2_v3() {
+        assert_eq!(
+            Inst::FrintiV4S {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3)
+            }
+            .encode(),
+            0x6EA19862
         );
     }
     #[test]

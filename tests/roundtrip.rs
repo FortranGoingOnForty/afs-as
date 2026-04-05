@@ -978,6 +978,14 @@ fn rt_frintz_4s() {
     roundtrip(".text\nfrintz.4s v6, v7\n");
 }
 #[test]
+fn rt_frinta_4s() {
+    roundtrip(".text\nfrinta.4s v0, v1\n");
+}
+#[test]
+fn rt_frinti_4s() {
+    roundtrip(".text\nfrinti.4s v2, v3\n");
+}
+#[test]
 fn rt_and_16b() {
     roundtrip(".text\nand.16b v6, v7, v8\n");
 }
