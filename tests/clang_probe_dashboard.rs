@@ -210,6 +210,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_zip_uzp",
+        source: "vector_zip_uzp.c",
+        driver: "typedef float v4f __attribute__((vector_size(16)));\nextern v4f zip_lo(v4f, v4f);\nextern v4f zip_hi(v4f, v4f);\nextern v4f uzp_lo(v4f, v4f);\nextern v4f uzp_hi(v4f, v4f);\nextern v4f trn_lo(v4f, v4f);\nextern v4f trn_hi(v4f, v4f);\nint main(void) {\n    v4f a = {1.0f, 2.0f, 3.0f, 4.0f};\n    v4f b = {10.0f, 20.0f, 30.0f, 40.0f};\n    v4f zl = zip_lo(a, b);\n    v4f zh = zip_hi(a, b);\n    v4f ul = uzp_lo(a, b);\n    v4f uh = uzp_hi(a, b);\n    v4f tl = trn_lo(a, b);\n    v4f th = trn_hi(a, b);\n    return (zl[0] != 1.0f) || (zl[1] != 10.0f) || (zl[2] != 2.0f) || (zl[3] != 20.0f)\n        || (zh[0] != 3.0f) || (zh[1] != 30.0f) || (zh[2] != 4.0f) || (zh[3] != 40.0f)\n        || (ul[0] != 1.0f) || (ul[1] != 3.0f) || (ul[2] != 10.0f) || (ul[3] != 30.0f)\n        || (uh[0] != 2.0f) || (uh[1] != 4.0f) || (uh[2] != 20.0f) || (uh[3] != 40.0f)\n        || (tl[0] != 1.0f) || (tl[1] != 10.0f) || (tl[2] != 3.0f) || (tl[3] != 30.0f)\n        || (th[0] != 2.0f) || (th[1] != 20.0f) || (th[2] != 4.0f) || (th[3] != 40.0f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "bitops",
         source: "bitops.c",
         driver: "extern unsigned bit_mix(unsigned);\nint main(void) { return bit_mix(0xABu) != 117u; }\n",
