@@ -757,6 +757,18 @@ fn rt_ldp_s_pre() {
     roundtrip(".text\nldp s2, s3, [sp, #-8]!\n");
 }
 #[test]
+fn rt_stp_q_pre() {
+    roundtrip(".text\nstp q0, q1, [sp, #-32]!\n");
+}
+#[test]
+fn rt_ldp_q_post() {
+    roundtrip(".text\nldp q2, q3, [sp], #32\n");
+}
+#[test]
+fn rt_ldp_q_off() {
+    roundtrip(".text\nldp q4, q5, [sp, #64]\n");
+}
+#[test]
 fn rt_ldp_s_off() {
     roundtrip(".text\nldp s4, s5, [sp, #16]\n");
 }

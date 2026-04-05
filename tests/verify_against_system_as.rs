@@ -1817,6 +1817,42 @@ fn sys_ldp_s_pre() {
     );
 }
 #[test]
+fn sys_stp_q_pre() {
+    verify(
+        "stp q0, q1, [sp, #-32]!",
+        Inst::StpFpPre128 {
+            rt1: FpReg::new(0),
+            rt2: FpReg::new(1),
+            rn: SP,
+            offset: -32,
+        },
+    );
+}
+#[test]
+fn sys_ldp_q_post() {
+    verify(
+        "ldp q2, q3, [sp], #32",
+        Inst::LdpFpPost128 {
+            rt1: FpReg::new(2),
+            rt2: FpReg::new(3),
+            rn: SP,
+            offset: 32,
+        },
+    );
+}
+#[test]
+fn sys_ldp_q_off() {
+    verify(
+        "ldp q4, q5, [sp, #64]",
+        Inst::LdpFpOff128 {
+            rt1: FpReg::new(4),
+            rt2: FpReg::new(5),
+            rn: SP,
+            offset: 64,
+        },
+    );
+}
+#[test]
 fn sys_ldp_s_off() {
     verify(
         "ldp s4, s5, [sp, #16]",

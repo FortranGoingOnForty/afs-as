@@ -1059,6 +1059,48 @@ pub enum Inst {
         rn: GpReg,
         offset: i16,
     },
+    /// STP Qt1, Qt2, [Xn, #offset]  (signed offset, 128-bit)
+    StpFpOff128 {
+        rt1: FpReg,
+        rt2: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
+    /// LDP Qt1, Qt2, [Xn, #offset]  (signed offset, 128-bit)
+    LdpFpOff128 {
+        rt1: FpReg,
+        rt2: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
+    /// STP Qt1, Qt2, [Xn, #offset]!  (pre-index, 128-bit)
+    StpFpPre128 {
+        rt1: FpReg,
+        rt2: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
+    /// STP Qt1, Qt2, [Xn], #offset  (post-index, 128-bit)
+    StpFpPost128 {
+        rt1: FpReg,
+        rt2: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
+    /// LDP Qt1, Qt2, [Xn, #offset]!  (pre-index, 128-bit)
+    LdpFpPre128 {
+        rt1: FpReg,
+        rt2: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
+    /// LDP Qt1, Qt2, [Xn], #offset  (post-index, 128-bit)
+    LdpFpPost128 {
+        rt1: FpReg,
+        rt2: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
 
     // ---- Floating point arithmetic ----
     /// FADD Dd, Dn, Dm  (double)
@@ -2103,6 +2145,42 @@ impl Inst {
                 rn,
                 offset,
             } => ldp_stp_fp(0b00, 0b001, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpOff128 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            } => ldp_stp_fp(0b10, 0b010, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpOff128 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            } => ldp_stp_fp(0b10, 0b010, 1, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPre128 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            } => ldp_stp_fp(0b10, 0b011, 0, *offset, *rt2, *rn, *rt1),
+            Inst::StpFpPost128 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            } => ldp_stp_fp(0b10, 0b001, 0, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPre128 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            } => ldp_stp_fp(0b10, 0b011, 1, *offset, *rt2, *rn, *rt1),
+            Inst::LdpFpPost128 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            } => ldp_stp_fp(0b10, 0b001, 1, *offset, *rt2, *rn, *rt1),
 
             // ---- FP arithmetic ----
             Inst::FaddD { rd, rn, rm } => fp_arith(0b01, 0b0010, *rm, *rn, *rd),
@@ -2431,7 +2509,12 @@ fn ldp_stp(opc: u32, mode: u32, l: u32, offset: i16, rt2: GpReg, rn: GpReg, rt1:
 }
 
 fn ldp_stp_fp(opc: u32, mode: u32, l: u32, offset: i16, rt2: FpReg, rn: GpReg, rt1: FpReg) -> u32 {
-    let scale = if opc == 0b00 { 2 } else { 3 };
+    let scale = match opc {
+        0b00 => 2,
+        0b01 => 3,
+        0b10 => 4,
+        _ => unreachable!("invalid FP pair opc"),
+    };
     let imm7 = ((offset >> scale) as u32) & 0x7F;
     (opc << 30)
         | (0b101 << 27)
@@ -4735,6 +4818,45 @@ mod tests {
             }
             .encode(),
             0x2D4217E4
+        );
+    }
+    #[test]
+    fn stp_q0_q1_sp_pre_m32() {
+        assert_eq!(
+            Inst::StpFpPre128 {
+                rt1: FpReg::new(0),
+                rt2: FpReg::new(1),
+                rn: SP,
+                offset: -32
+            }
+            .encode(),
+            0xADBF07E0
+        );
+    }
+    #[test]
+    fn ldp_q2_q3_sp_post_32() {
+        assert_eq!(
+            Inst::LdpFpPost128 {
+                rt1: FpReg::new(2),
+                rt2: FpReg::new(3),
+                rn: SP,
+                offset: 32
+            }
+            .encode(),
+            0xACC10FE2
+        );
+    }
+    #[test]
+    fn ldp_q4_q5_sp_64() {
+        assert_eq!(
+            Inst::LdpFpOff128 {
+                rt1: FpReg::new(4),
+                rt2: FpReg::new(5),
+                rn: SP,
+                offset: 64
+            }
+            .encode(),
+            0xAD4217E4
         );
     }
 

@@ -3459,10 +3459,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldp_stp_fp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
-        let (rt1, is_double) = self.parse_fp_reg_with_size()?;
+        let (rt1, width) = self.parse_fp_mem_reg_with_width()?;
         self.expect(&Tok::Comma)?;
-        let (rt2, second_is_double) = self.parse_fp_reg_with_size()?;
-        if is_double != second_is_double {
+        let (rt2, second_width) = self.parse_fp_mem_reg_with_width()?;
+        if width != second_width {
             return Err(
                 self.err("ldp/stp FP register pair must use matching register widths".into())
             );
@@ -3474,26 +3474,38 @@ impl<'a> Parser<'a> {
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
                 let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
-                return Ok(match (is_load, is_double) {
-                    (true, true) => Inst::LdpFpPost64 {
+                return Ok(match (is_load, width) {
+                    (true, FpMemWidth::D64) => Inst::LdpFpPost64 {
                         rt1,
                         rt2,
                         rn,
                         offset,
                     },
-                    (false, true) => Inst::StpFpPost64 {
+                    (false, FpMemWidth::D64) => Inst::StpFpPost64 {
                         rt1,
                         rt2,
                         rn,
                         offset,
                     },
-                    (true, false) => Inst::LdpFpPost32 {
+                    (true, FpMemWidth::S32) => Inst::LdpFpPost32 {
                         rt1,
                         rt2,
                         rn,
                         offset,
                     },
-                    (false, false) => Inst::StpFpPost32 {
+                    (false, FpMemWidth::S32) => Inst::StpFpPost32 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                    (true, FpMemWidth::Q128) => Inst::LdpFpPost128 {
+                        rt1,
+                        rt2,
+                        rn,
+                        offset,
+                    },
+                    (false, FpMemWidth::Q128) => Inst::StpFpPost128 {
                         rt1,
                         rt2,
                         rn,
@@ -3502,26 +3514,38 @@ impl<'a> Parser<'a> {
                 });
             }
 
-            return Ok(match (is_load, is_double) {
-                (true, true) => Inst::LdpFpOff64 {
+            return Ok(match (is_load, width) {
+                (true, FpMemWidth::D64) => Inst::LdpFpOff64 {
                     rt1,
                     rt2,
                     rn,
                     offset: 0,
                 },
-                (false, true) => Inst::StpFpOff64 {
+                (false, FpMemWidth::D64) => Inst::StpFpOff64 {
                     rt1,
                     rt2,
                     rn,
                     offset: 0,
                 },
-                (true, false) => Inst::LdpFpOff32 {
+                (true, FpMemWidth::S32) => Inst::LdpFpOff32 {
                     rt1,
                     rt2,
                     rn,
                     offset: 0,
                 },
-                (false, false) => Inst::StpFpOff32 {
+                (false, FpMemWidth::S32) => Inst::StpFpOff32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
+                (true, FpMemWidth::Q128) => Inst::LdpFpOff128 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset: 0,
+                },
+                (false, FpMemWidth::Q128) => Inst::StpFpOff128 {
                     rt1,
                     rt2,
                     rn,
@@ -3535,26 +3559,38 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
-            return Ok(match (is_load, is_double) {
-                (true, true) => Inst::LdpFpPre64 {
+            return Ok(match (is_load, width) {
+                (true, FpMemWidth::D64) => Inst::LdpFpPre64 {
                     rt1,
                     rt2,
                     rn,
                     offset,
                 },
-                (false, true) => Inst::StpFpPre64 {
+                (false, FpMemWidth::D64) => Inst::StpFpPre64 {
                     rt1,
                     rt2,
                     rn,
                     offset,
                 },
-                (true, false) => Inst::LdpFpPre32 {
+                (true, FpMemWidth::S32) => Inst::LdpFpPre32 {
                     rt1,
                     rt2,
                     rn,
                     offset,
                 },
-                (false, false) => Inst::StpFpPre32 {
+                (false, FpMemWidth::S32) => Inst::StpFpPre32 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
+                (true, FpMemWidth::Q128) => Inst::LdpFpPre128 {
+                    rt1,
+                    rt2,
+                    rn,
+                    offset,
+                },
+                (false, FpMemWidth::Q128) => Inst::StpFpPre128 {
                     rt1,
                     rt2,
                     rn,
@@ -3563,26 +3599,38 @@ impl<'a> Parser<'a> {
             });
         }
 
-        Ok(match (is_load, is_double) {
-            (true, true) => Inst::LdpFpOff64 {
+        Ok(match (is_load, width) {
+            (true, FpMemWidth::D64) => Inst::LdpFpOff64 {
                 rt1,
                 rt2,
                 rn,
                 offset,
             },
-            (false, true) => Inst::StpFpOff64 {
+            (false, FpMemWidth::D64) => Inst::StpFpOff64 {
                 rt1,
                 rt2,
                 rn,
                 offset,
             },
-            (true, false) => Inst::LdpFpOff32 {
+            (true, FpMemWidth::S32) => Inst::LdpFpOff32 {
                 rt1,
                 rt2,
                 rn,
                 offset,
             },
-            (false, false) => Inst::StpFpOff32 {
+            (false, FpMemWidth::S32) => Inst::StpFpOff32 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
+            (true, FpMemWidth::Q128) => Inst::LdpFpOff128 {
+                rt1,
+                rt2,
+                rn,
+                offset,
+            },
+            (false, FpMemWidth::Q128) => Inst::StpFpOff128 {
                 rt1,
                 rt2,
                 rn,
@@ -6325,6 +6373,45 @@ mod tests {
                 rt2: S3,
                 rn: SP,
                 offset: -8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_stp_q_pre() {
+        assert_eq!(
+            parse_inst("stp q0, q1, [sp, #-32]!"),
+            Inst::StpFpPre128 {
+                rt1: FpReg::new(0),
+                rt2: FpReg::new(1),
+                rn: SP,
+                offset: -32
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldp_q_post() {
+        assert_eq!(
+            parse_inst("ldp q2, q3, [sp], #32"),
+            Inst::LdpFpPost128 {
+                rt1: FpReg::new(2),
+                rt2: FpReg::new(3),
+                rn: SP,
+                offset: 32
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldp_q_offset() {
+        assert_eq!(
+            parse_inst("ldp q4, q5, [sp, #64]"),
+            Inst::LdpFpOff128 {
+                rt1: FpReg::new(4),
+                rt2: FpReg::new(5),
+                rn: SP,
+                offset: 64
             }
         );
     }

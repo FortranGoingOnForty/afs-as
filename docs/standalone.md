@@ -171,7 +171,7 @@ Major covered families include:
   - `strb`, `strh`
   - `ldp`, `stp`
   - integer, FP scalar, and `q` vector forms across the supported addressing modes
-  - FP pair forms across the supported addressing modes
+  - FP/SIMD pair forms across the supported addressing modes
 - scalar atomic memory:
   - `ldaprb`, `ldaprh`, `ldapr`
   - `stlrb`, `stlrh`, `stlr`
