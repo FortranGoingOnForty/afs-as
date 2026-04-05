@@ -2249,12 +2249,32 @@ fn sys_fdiv_4s() {
     );
 }
 #[test]
+fn sys_fabs_4s() {
+    verify(
+        "fabs.4s v0, v0",
+        Inst::FabsV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
 fn sys_fneg_4s() {
     verify(
         "fneg.4s v6, v7",
         Inst::FnegV4S {
             rd: FpReg::new(6),
             rn: FpReg::new(7),
+        },
+    );
+}
+#[test]
+fn sys_fsqrt_4s() {
+    verify(
+        "fsqrt.4s v1, v2",
+        Inst::FsqrtV4S {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
         },
     );
 }

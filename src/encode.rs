@@ -1179,8 +1179,12 @@ pub enum Inst {
     FmulS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FDIV.4S Vd, Vn, Vm
     FdivV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FABS.4S Vd, Vn
+    FabsV4S { rd: FpReg, rn: FpReg },
     /// FNEG.4S Vd, Vn
     FnegV4S { rd: FpReg, rn: FpReg },
+    /// FSQRT.4S Vd, Vn
+    FsqrtV4S { rd: FpReg, rn: FpReg },
     /// FDIV Sd, Sn, Sm  (single)
     FdivS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMOV Dd, Dn
@@ -2401,7 +2405,9 @@ impl Inst {
             Inst::FmulV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20DC00, *rm, *rn, *rd),
             Inst::FmulS { rd, rn, rm } => fp_arith(0b00, 0b0000, *rm, *rn, *rd),
             Inst::FdivV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20FC00, *rm, *rn, *rd),
+            Inst::FabsV4S { rd, rn } => simd_unary(0x4EA0F800, *rn, *rd),
             Inst::FnegV4S { rd, rn } => simd_unary(0x6EA0F800, *rn, *rd),
+            Inst::FsqrtV4S { rd, rn } => simd_unary(0x6EA1F800, *rn, *rd),
             Inst::FdivS { rd, rn, rm } => fp_arith(0b00, 0b0001, *rm, *rn, *rd),
             Inst::FmovRegD { rd, rn } => fp_mov_reg(0x1E604000, *rn, *rd),
             Inst::FmovRegS { rd, rn } => fp_mov_reg(0x1E204000, *rn, *rd),
@@ -5701,6 +5707,17 @@ mod tests {
         );
     }
     #[test]
+    fn fabs_4s_v0_v0() {
+        assert_eq!(
+            Inst::FabsV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4EA0F800
+        );
+    }
+    #[test]
     fn fneg_4s_v6_v7() {
         assert_eq!(
             Inst::FnegV4S {
@@ -5709,6 +5726,17 @@ mod tests {
             }
             .encode(),
             0x6EA0F8E6
+        );
+    }
+    #[test]
+    fn fsqrt_4s_v1_v2() {
+        assert_eq!(
+            Inst::FsqrtV4S {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x6EA1F841
         );
     }
     #[test]

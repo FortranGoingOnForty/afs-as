@@ -918,8 +918,16 @@ fn rt_fdiv_4s() {
     roundtrip(".text\nfdiv.4s v9, v10, v11\n");
 }
 #[test]
+fn rt_fabs_4s() {
+    roundtrip(".text\nfabs.4s v0, v0\n");
+}
+#[test]
 fn rt_fneg_4s() {
     roundtrip(".text\nfneg.4s v6, v7\n");
+}
+#[test]
+fn rt_fsqrt_4s() {
+    roundtrip(".text\nfsqrt.4s v1, v2\n");
 }
 #[test]
 fn rt_and_16b() {

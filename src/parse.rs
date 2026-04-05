@@ -1279,7 +1279,7 @@ impl<'a> Parser<'a> {
             | "fdiv.4s" | "fmax.4s" | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
-            "fneg.4s" => self.parse_simd_fp_unary_4s(mnemonic),
+            "fabs.4s" | "fneg.4s" | "fsqrt.4s" => self.parse_simd_fp_unary_4s(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -3930,7 +3930,9 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let rn = self.parse_simd_reg()?;
         Ok(match mnemonic {
+            "fabs.4s" => Inst::FabsV4S { rd, rn },
             "fneg.4s" => Inst::FnegV4S { rd, rn },
+            "fsqrt.4s" => Inst::FsqrtV4S { rd, rn },
             _ => unreachable!(),
         })
     }
