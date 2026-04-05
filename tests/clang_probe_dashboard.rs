@@ -210,6 +210,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_cmp_more",
+        source: "vector_cmp_more.c",
+        driver: "typedef unsigned v4u __attribute__((vector_size(16)));\ntypedef int v4i __attribute__((vector_size(16)));\nextern v4u ge_mask_u32(v4u, v4u);\nextern v4u gt_mask_u32(v4u, v4u);\nextern v4i ge_mask_s32(v4i, v4i);\nint main(void) {\n    v4u au = {5u, 2u, 7u, 4u};\n    v4u bu = {5u, 3u, 6u, 9u};\n    v4i as = {-1, 5, 7, -3};\n    v4i bs = {-2, 5, 6, 4};\n    v4u geu = ge_mask_u32(au, bu);\n    v4u gtu = gt_mask_u32(au, bu);\n    v4i ges = ge_mask_s32(as, bs);\n    return (geu[0] != 0xFFFFFFFFu) || (geu[1] != 0u) || (geu[2] != 0xFFFFFFFFu) || (geu[3] != 0u)\n        || (gtu[0] != 0u) || (gtu[1] != 0u) || (gtu[2] != 0xFFFFFFFFu) || (gtu[3] != 0u)\n        || ((unsigned)ges[0] != 0xFFFFFFFFu) || ((unsigned)ges[1] != 0xFFFFFFFFu) || ((unsigned)ges[2] != 0xFFFFFFFFu) || ((unsigned)ges[3] != 0u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_shuffle",
         source: "vector_shuffle.c",
         driver: "typedef float v4f __attribute__((vector_size(16)));\nextern v4f swap_halves(v4f);\nextern v4f blend_even(v4f, v4f);\nint main(void) {\n    v4f a = {1.0f, 2.0f, 3.0f, 4.0f};\n    v4f b = {10.0f, 20.0f, 30.0f, 40.0f};\n    v4f s = swap_halves(a);\n    v4f t = blend_even(a, b);\n    return (s[0] != 3.0f) || (s[1] != 4.0f) || (s[2] != 1.0f) || (s[3] != 2.0f)\n        || (t[0] != 1.0f) || (t[1] != 20.0f) || (t[2] != 3.0f) || (t[3] != 40.0f);\n}\n",
