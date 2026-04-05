@@ -1073,10 +1073,16 @@ pub enum Inst {
     FaddS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FADD.4S Vd, Vn, Vm
     FaddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FSUB.4S Vd, Vn, Vm
+    FsubV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FSUB Sd, Sn, Sm  (single)
     FsubS { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FMUL.4S Vd, Vn, Vm
+    FmulV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMUL Sd, Sn, Sm  (single)
     FmulS { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FDIV.4S Vd, Vn, Vm
+    FdivV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FDIV Sd, Sn, Sm  (single)
     FdivS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FNEG Dd, Dn
@@ -2104,9 +2110,12 @@ impl Inst {
             Inst::FmulD { rd, rn, rm } => fp_arith(0b01, 0b0000, *rm, *rn, *rd),
             Inst::FdivD { rd, rn, rm } => fp_arith(0b01, 0b0001, *rm, *rn, *rd),
             Inst::FaddS { rd, rn, rm } => fp_arith(0b00, 0b0010, *rm, *rn, *rd),
-            Inst::FaddV4S { rd, rn, rm } => simd_fadd_4s(*rm, *rn, *rd),
+            Inst::FaddV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20D400, *rm, *rn, *rd),
+            Inst::FsubV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0D400, *rm, *rn, *rd),
             Inst::FsubS { rd, rn, rm } => fp_arith(0b00, 0b0011, *rm, *rn, *rd),
+            Inst::FmulV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20DC00, *rm, *rn, *rd),
             Inst::FmulS { rd, rn, rm } => fp_arith(0b00, 0b0000, *rm, *rn, *rd),
+            Inst::FdivV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20FC00, *rm, *rn, *rd),
             Inst::FdivS { rd, rn, rm } => fp_arith(0b00, 0b0001, *rm, *rn, *rd),
 
             Inst::FnegD { rd, rn } => fp_unary(0b01, 0b0000_10, *rn, *rd),
@@ -2504,8 +2513,8 @@ fn fp_arith(ftype: u32, opcode: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
         | rd.enc()
 }
 
-fn simd_fadd_4s(rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
-    0x4E20D400 | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
+fn simd_fp_arith_4s(base: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
+    base | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
 #[cfg(test)]
@@ -4852,6 +4861,42 @@ mod tests {
             }
             .encode(),
             0x4E21D400
+        );
+    }
+    #[test]
+    fn fsub_4s_v0_v0_v1() {
+        assert_eq!(
+            Inst::FsubV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+            .encode(),
+            0x4EA1D400
+        );
+    }
+    #[test]
+    fn fmul_4s_v0_v0_v1() {
+        assert_eq!(
+            Inst::FmulV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+            .encode(),
+            0x6E21DC00
+        );
+    }
+    #[test]
+    fn fdiv_4s_v0_v0_v1() {
+        assert_eq!(
+            Inst::FdivV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+            .encode(),
+            0x6E21FC00
         );
     }
     #[test]

@@ -1898,6 +1898,39 @@ fn sys_fadd_4s() {
     );
 }
 #[test]
+fn sys_fsub_4s() {
+    verify(
+        "fsub.4s v3, v4, v5",
+        Inst::FsubV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_fmul_4s() {
+    verify(
+        "fmul.4s v6, v7, v8",
+        Inst::FmulV4S {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
+fn sys_fdiv_4s() {
+    verify(
+        "fdiv.4s v9, v10, v11",
+        Inst::FdivV4S {
+            rd: FpReg::new(9),
+            rn: FpReg::new(10),
+            rm: FpReg::new(11),
+        },
+    );
+}
+#[test]
 fn sys_fneg_d() {
     verify("fneg d3, d4", Inst::FnegD { rd: D3, rn: D4 });
 }

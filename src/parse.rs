@@ -1227,7 +1227,9 @@ impl<'a> Parser<'a> {
 
             // FP arithmetic (double)
             "fadd" => self.parse_fp_arith("fadd"),
-            "fadd.4s" => self.parse_simd_fp_arith_4s("fadd.4s"),
+            "fadd.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" => {
+                self.parse_simd_fp_arith_4s(mnemonic)
+            }
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -3618,6 +3620,9 @@ impl<'a> Parser<'a> {
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
             "fadd.4s" => Inst::FaddV4S { rd, rn, rm },
+            "fsub.4s" => Inst::FsubV4S { rd, rn, rm },
+            "fmul.4s" => Inst::FmulV4S { rd, rn, rm },
+            "fdiv.4s" => Inst::FdivV4S { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -6474,6 +6479,42 @@ mod tests {
                 rd: FpReg::new(0),
                 rn: FpReg::new(1),
                 rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fsub_4s() {
+        assert_eq!(
+            parse_inst("fsub.4s v3, v4, v5"),
+            Inst::FsubV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fmul_4s() {
+        assert_eq!(
+            parse_inst("fmul.4s v6, v7, v8"),
+            Inst::FmulV4S {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fdiv_4s() {
+        assert_eq!(
+            parse_inst("fdiv.4s v9, v10, v11"),
+            Inst::FdivV4S {
+                rd: FpReg::new(9),
+                rn: FpReg::new(10),
+                rm: FpReg::new(11)
             }
         );
     }

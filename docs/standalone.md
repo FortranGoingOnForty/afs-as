@@ -190,7 +190,7 @@ Major covered families include:
   - `fabs`, `fneg`, `fsqrt`, `fcmp`, `fmadd`
   - `fcvtzs`, `scvtf`, `fmov`
 - SIMD / vector:
-  - `fadd.4s`
+  - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`
 - system / hint:
   - `svc`, `brk`, `nop`
   - `yield`, `wfe`, `wfi`, `sev`, `sevl`

@@ -785,6 +785,18 @@ fn rt_fadd_4s() {
     roundtrip(".text\nfadd.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_fsub_4s() {
+    roundtrip(".text\nfsub.4s v3, v4, v5\n");
+}
+#[test]
+fn rt_fmul_4s() {
+    roundtrip(".text\nfmul.4s v6, v7, v8\n");
+}
+#[test]
+fn rt_fdiv_4s() {
+    roundtrip(".text\nfdiv.4s v9, v10, v11\n");
+}
+#[test]
 fn rt_fneg_d() {
     roundtrip(".text\nfneg d3, d4\n");
 }
