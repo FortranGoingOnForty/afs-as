@@ -252,6 +252,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_pairwise_fp",
+        source: "vector_pairwise_fp.c",
+        driver: "#include <arm_neon.h>\nextern float32x4_t pairwise_max(float32x4_t, float32x4_t);\nextern float32x4_t pairwise_min(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {2.0f, 7.0f, -5.0f, 8.0f};\n    float32x4_t x = pairwise_max(a, b);\n    float32x4_t y = pairwise_min(a, b);\n    return (x[0] != 9.0f) || (x[1] != 4.0f) || (x[2] != 7.0f) || (x[3] != 8.0f)\n        || (y[0] != 1.0f) || (y[1] != -3.0f) || (y[2] != 2.0f) || (y[3] != -5.0f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_reduce_nm",
         source: "vector_reduce_nm.c",
         driver: "#include <arm_neon.h>\nextern float maxnm4f_reduce(float32x4_t);\nextern float minnm4f_reduce(float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    return (maxnm4f_reduce(a) != 9.0f) || (minnm4f_reduce(a) != -3.0f);\n}\n",

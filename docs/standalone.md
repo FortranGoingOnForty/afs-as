@@ -194,6 +194,7 @@ Major covered families include:
   - `addv.4s`, `smaxv.4s`, `umaxv.4s`
   - `sminv.4s`, `uminv.4s`
   - `faddp.4s`, `faddp.2s`, `fmaxv.4s`, `fminv.4s`
+  - `fmaxp.4s`, `fminp.4s`
   - `fmaxnmv.4s`, `fminnmv.4s`
   - `fmla.4s`, `fmls.4s`, `fneg.4s`
   - `fabs.4s`, `fsqrt.4s`
