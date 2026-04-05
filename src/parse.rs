@@ -1275,9 +1275,9 @@ impl<'a> Parser<'a> {
             | "fcmge.4s" | "fcmgt.4s" => {
                 self.parse_simd_compare_4s(mnemonic)
             }
-            "fadd.4s" | "faddp.4s" | "fmla.4s" | "fmls.4s" | "fsub.4s" | "fmul.4s"
-            | "fdiv.4s" | "fmax.4s" | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s"
-            | "frsqrts.4s" => {
+            "fadd.4s" | "faddp.4s" | "fmaxp.4s" | "fminp.4s" | "fmla.4s" | "fmls.4s"
+            | "fsub.4s" | "fmul.4s" | "fdiv.4s" | "fmax.4s" | "fmin.4s" | "fmaxnm.4s"
+            | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
             "fabs.4s" | "fneg.4s" | "fsqrt.4s" | "scvtf.4s" | "ucvtf.4s" | "fcvtzs.4s"
@@ -3917,6 +3917,8 @@ impl<'a> Parser<'a> {
         Ok(match mnemonic {
             "fadd.4s" => Inst::FaddV4S { rd, rn, rm },
             "faddp.4s" => Inst::FaddpV4S { rd, rn, rm },
+            "fmaxp.4s" => Inst::FmaxpV4S { rd, rn, rm },
+            "fminp.4s" => Inst::FminpV4S { rd, rn, rm },
             "fmla.4s" => Inst::FmlaV4S { rd, rn, rm },
             "fmls.4s" => Inst::FmlsV4S { rd, rn, rm },
             "fmax.4s" => Inst::FmaxV4S { rd, rn, rm },
@@ -7216,6 +7218,30 @@ mod tests {
                 rd: FpReg::new(0),
                 rn: FpReg::new(1),
                 rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fmaxp_4s() {
+        assert_eq!(
+            parse_inst("fmaxp.4s v0, v1, v2"),
+            Inst::FmaxpV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fminp_4s() {
+        assert_eq!(
+            parse_inst("fminp.4s v3, v4, v5"),
+            Inst::FminpV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
             }
         );
     }
