@@ -962,6 +962,22 @@ fn rt_frsqrts_4s() {
     roundtrip(".text\nfrsqrts.4s v7, v8, v9\n");
 }
 #[test]
+fn rt_frintn_4s() {
+    roundtrip(".text\nfrintn.4s v0, v1\n");
+}
+#[test]
+fn rt_frintm_4s() {
+    roundtrip(".text\nfrintm.4s v2, v3\n");
+}
+#[test]
+fn rt_frintp_4s() {
+    roundtrip(".text\nfrintp.4s v4, v5\n");
+}
+#[test]
+fn rt_frintz_4s() {
+    roundtrip(".text\nfrintz.4s v6, v7\n");
+}
+#[test]
 fn rt_and_16b() {
     roundtrip(".text\nand.16b v6, v7, v8\n");
 }

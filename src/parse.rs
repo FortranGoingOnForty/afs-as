@@ -1281,7 +1281,8 @@ impl<'a> Parser<'a> {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
             "fabs.4s" | "fneg.4s" | "fsqrt.4s" | "scvtf.4s" | "ucvtf.4s" | "fcvtzs.4s"
-            | "fcvtzu.4s" | "frecpe.4s" | "frsqrte.4s" => self.parse_simd_fp_unary_4s(mnemonic),
+            | "fcvtzu.4s" | "frecpe.4s" | "frsqrte.4s" | "frintn.4s" | "frintm.4s"
+            | "frintp.4s" | "frintz.4s" => self.parse_simd_fp_unary_4s(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -3943,6 +3944,10 @@ impl<'a> Parser<'a> {
             "fcvtzu.4s" => Inst::FcvtzuV4S { rd, rn },
             "frecpe.4s" => Inst::FrecpeV4S { rd, rn },
             "frsqrte.4s" => Inst::FrsqrteV4S { rd, rn },
+            "frintn.4s" => Inst::FrintnV4S { rd, rn },
+            "frintm.4s" => Inst::FrintmV4S { rd, rn },
+            "frintp.4s" => Inst::FrintpV4S { rd, rn },
+            "frintz.4s" => Inst::FrintzV4S { rd, rn },
             _ => unreachable!(),
         })
     }

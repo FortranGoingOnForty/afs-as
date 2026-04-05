@@ -2361,6 +2361,46 @@ fn sys_frsqrts_4s() {
     );
 }
 #[test]
+fn sys_frintn_4s() {
+    verify(
+        "frintn.4s v0, v1",
+        Inst::FrintnV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_frintm_4s() {
+    verify(
+        "frintm.4s v2, v3",
+        Inst::FrintmV4S {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+        },
+    );
+}
+#[test]
+fn sys_frintp_4s() {
+    verify(
+        "frintp.4s v4, v5",
+        Inst::FrintpV4S {
+            rd: FpReg::new(4),
+            rn: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_frintz_4s() {
+    verify(
+        "frintz.4s v6, v7",
+        Inst::FrintzV4S {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+        },
+    );
+}
+#[test]
 fn sys_and_16b() {
     verify(
         "and.16b v6, v7, v8",
