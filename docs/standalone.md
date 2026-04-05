@@ -192,6 +192,7 @@ Major covered families include:
 - SIMD / vector:
   - `add.4s`, `sub.4s`, `smax.4s`, `smin.4s`, `umax.4s`, `umin.4s`
   - `addv.4s`, `smaxv.4s`, `umaxv.4s`
+  - `sminv.4s`, `uminv.4s`
   - `and.16b`, `bic.16b`, `orr.16b`, `eor.16b`
   - `bif.16b`, `bit.16b`, `bsl.16b`
   - `cmeq.4s`, `cmhs.4s`, `cmhi.4s`, `cmge.4s`, `cmgt.4s`
