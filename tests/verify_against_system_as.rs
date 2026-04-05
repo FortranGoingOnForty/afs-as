@@ -1934,10 +1934,32 @@ fn sys_fadd_4s() {
     );
 }
 #[test]
+fn sys_add_4s() {
+    verify(
+        "add.4s v0, v1, v2",
+        Inst::AddV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_fsub_4s() {
     verify(
         "fsub.4s v3, v4, v5",
         Inst::FsubV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_sub_4s() {
+    verify(
+        "sub.4s v3, v4, v5",
+        Inst::SubV4S {
             rd: FpReg::new(3),
             rn: FpReg::new(4),
             rm: FpReg::new(5),
@@ -1963,6 +1985,39 @@ fn sys_fdiv_4s() {
             rd: FpReg::new(9),
             rn: FpReg::new(10),
             rm: FpReg::new(11),
+        },
+    );
+}
+#[test]
+fn sys_and_16b() {
+    verify(
+        "and.16b v6, v7, v8",
+        Inst::AndV16B {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
+fn sys_orr_16b() {
+    verify(
+        "orr.16b v9, v10, v11",
+        Inst::OrrV16B {
+            rd: FpReg::new(9),
+            rn: FpReg::new(10),
+            rm: FpReg::new(11),
+        },
+    );
+}
+#[test]
+fn sys_eor_16b() {
+    verify(
+        "eor.16b v12, v13, v14",
+        Inst::EorV16B {
+            rd: FpReg::new(12),
+            rn: FpReg::new(13),
+            rm: FpReg::new(14),
         },
     );
 }

@@ -1187,8 +1187,11 @@ impl<'a> Parser<'a> {
 
             // Logic
             "and" => self.parse_logic("and"),
+            "and.16b" => self.parse_simd_logic_16b("and.16b"),
             "orr" => self.parse_logic("orr"),
+            "orr.16b" => self.parse_simd_logic_16b("orr.16b"),
             "eor" => self.parse_logic("eor"),
+            "eor.16b" => self.parse_simd_logic_16b("eor.16b"),
             "ands" => self.parse_logic("ands"),
             "neg" => self.parse_neg(),
             "mvn" => self.parse_mvn(),
@@ -1244,6 +1247,7 @@ impl<'a> Parser<'a> {
 
             // FP arithmetic (double)
             "fadd" => self.parse_fp_arith("fadd"),
+            "add.4s" | "sub.4s" => self.parse_simd_int_arith_4s(mnemonic),
             "fadd.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
@@ -3731,6 +3735,33 @@ impl<'a> Parser<'a> {
             "fsub.4s" => Inst::FsubV4S { rd, rn, rm },
             "fmul.4s" => Inst::FmulV4S { rd, rn, rm },
             "fdiv.4s" => Inst::FdivV4S { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_int_arith_4s(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "add.4s" => Inst::AddV4S { rd, rn, rm },
+            "sub.4s" => Inst::SubV4S { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_logic_16b(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "and.16b" => Inst::AndV16B { rd, rn, rm },
+            "orr.16b" => Inst::OrrV16B { rd, rn, rm },
+            "eor.16b" => Inst::EorV16B { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -6692,10 +6723,34 @@ mod tests {
     }
 
     #[test]
+    fn parse_add_4s() {
+        assert_eq!(
+            parse_inst("add.4s v0, v1, v2"),
+            Inst::AddV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
     fn parse_fsub_4s() {
         assert_eq!(
             parse_inst("fsub.4s v3, v4, v5"),
             Inst::FsubV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sub_4s() {
+        assert_eq!(
+            parse_inst("sub.4s v3, v4, v5"),
+            Inst::SubV4S {
                 rd: FpReg::new(3),
                 rn: FpReg::new(4),
                 rm: FpReg::new(5)
@@ -6723,6 +6778,42 @@ mod tests {
                 rd: FpReg::new(9),
                 rn: FpReg::new(10),
                 rm: FpReg::new(11)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_and_16b() {
+        assert_eq!(
+            parse_inst("and.16b v6, v7, v8"),
+            Inst::AndV16B {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_orr_16b() {
+        assert_eq!(
+            parse_inst("orr.16b v9, v10, v11"),
+            Inst::OrrV16B {
+                rd: FpReg::new(9),
+                rn: FpReg::new(10),
+                rm: FpReg::new(11)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_eor_16b() {
+        assert_eq!(
+            parse_inst("eor.16b v12, v13, v14"),
+            Inst::EorV16B {
+                rd: FpReg::new(12),
+                rn: FpReg::new(13),
+                rm: FpReg::new(14)
             }
         );
     }

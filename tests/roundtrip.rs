@@ -797,8 +797,16 @@ fn rt_fadd_4s() {
     roundtrip(".text\nfadd.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_add_4s() {
+    roundtrip(".text\nadd.4s v0, v1, v2\n");
+}
+#[test]
 fn rt_fsub_4s() {
     roundtrip(".text\nfsub.4s v3, v4, v5\n");
+}
+#[test]
+fn rt_sub_4s() {
+    roundtrip(".text\nsub.4s v3, v4, v5\n");
 }
 #[test]
 fn rt_fmul_4s() {
@@ -807,6 +815,18 @@ fn rt_fmul_4s() {
 #[test]
 fn rt_fdiv_4s() {
     roundtrip(".text\nfdiv.4s v9, v10, v11\n");
+}
+#[test]
+fn rt_and_16b() {
+    roundtrip(".text\nand.16b v6, v7, v8\n");
+}
+#[test]
+fn rt_orr_16b() {
+    roundtrip(".text\norr.16b v9, v10, v11\n");
+}
+#[test]
+fn rt_eor_16b() {
+    roundtrip(".text\neor.16b v12, v13, v14\n");
 }
 #[test]
 fn rt_mov_16b() {

@@ -1115,8 +1115,12 @@ pub enum Inst {
     FaddS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FADD.4S Vd, Vn, Vm
     FaddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// ADD.4S Vd, Vn, Vm
+    AddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FSUB.4S Vd, Vn, Vm
     FsubV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// SUB.4S Vd, Vn, Vm
+    SubV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FSUB Sd, Sn, Sm  (single)
     FsubS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMUL.4S Vd, Vn, Vm
@@ -1139,6 +1143,12 @@ pub enum Inst {
     MovV4S { rd: FpReg, rn: FpReg },
     /// MOV.2D Vd, Vn
     MovV2D { rd: FpReg, rn: FpReg },
+    /// AND.16B Vd, Vn, Vm
+    AndV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// ORR.16B Vd, Vn, Vm
+    OrrV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// EOR.16B Vd, Vn, Vm
+    EorV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// MOV Sd, Vn[index]
     MovFromLaneS { rd: FpReg, rn: FpReg, index: u8 },
     /// MOV Dd, Vn[index]
@@ -2219,7 +2229,9 @@ impl Inst {
             Inst::FdivD { rd, rn, rm } => fp_arith(0b01, 0b0001, *rm, *rn, *rd),
             Inst::FaddS { rd, rn, rm } => fp_arith(0b00, 0b0010, *rm, *rn, *rd),
             Inst::FaddV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20D400, *rm, *rn, *rd),
+            Inst::AddV4S { rd, rn, rm } => simd_binary(0x4EA08400, *rm, *rn, *rd),
             Inst::FsubV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0D400, *rm, *rn, *rd),
+            Inst::SubV4S { rd, rn, rm } => simd_binary(0x6EA08400, *rm, *rn, *rd),
             Inst::FsubS { rd, rn, rm } => fp_arith(0b00, 0b0011, *rm, *rn, *rd),
             Inst::FmulV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20DC00, *rm, *rn, *rd),
             Inst::FmulS { rd, rn, rm } => fp_arith(0b00, 0b0000, *rm, *rn, *rd),
@@ -2231,6 +2243,9 @@ impl Inst {
             Inst::MovV16B { rd, rn } => simd_mov_reg(0x4EA01C00, *rn, *rd),
             Inst::MovV4S { rd, rn } => simd_mov_reg(0x4EA01C00, *rn, *rd),
             Inst::MovV2D { rd, rn } => simd_mov_reg(0x4EA01C00, *rn, *rd),
+            Inst::AndV16B { rd, rn, rm } => simd_binary(0x4E201C00, *rm, *rn, *rd),
+            Inst::OrrV16B { rd, rn, rm } => simd_binary(0x4EA01C00, *rm, *rn, *rd),
+            Inst::EorV16B { rd, rn, rm } => simd_binary(0x6E201C00, *rm, *rn, *rd),
             Inst::MovFromLaneS { rd, rn, index } => simd_extract_lane_s(*rn, *index, *rd),
             Inst::MovFromLaneD { rd, rn, index } => simd_extract_lane_d(*rn, *index, *rd),
             Inst::MovLaneS {
@@ -2647,6 +2662,10 @@ fn fp_arith(ftype: u32, opcode: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
 }
 
 fn simd_fp_arith_4s(base: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
+    base | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_binary(base: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
     base | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
@@ -5068,6 +5087,18 @@ mod tests {
         );
     }
     #[test]
+    fn add_4s_v0_v1_v2() {
+        assert_eq!(
+            Inst::AddV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+            .encode(),
+            0x4EA28420
+        );
+    }
+    #[test]
     fn fsub_4s_v0_v0_v1() {
         assert_eq!(
             Inst::FsubV4S {
@@ -5077,6 +5108,18 @@ mod tests {
             }
             .encode(),
             0x4EA1D400
+        );
+    }
+    #[test]
+    fn sub_4s_v3_v4_v5() {
+        assert_eq!(
+            Inst::SubV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+            .encode(),
+            0x6EA58483
         );
     }
     #[test]
@@ -5145,6 +5188,42 @@ mod tests {
             }
             .encode(),
             0x4EA71CE6
+        );
+    }
+    #[test]
+    fn and_16b_v6_v7_v8() {
+        assert_eq!(
+            Inst::AndV16B {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+            .encode(),
+            0x4E281CE6
+        );
+    }
+    #[test]
+    fn orr_16b_v9_v10_v11() {
+        assert_eq!(
+            Inst::OrrV16B {
+                rd: FpReg::new(9),
+                rn: FpReg::new(10),
+                rm: FpReg::new(11)
+            }
+            .encode(),
+            0x4EAB1D49
+        );
+    }
+    #[test]
+    fn eor_16b_v12_v13_v14() {
+        assert_eq!(
+            Inst::EorV16B {
+                rd: FpReg::new(12),
+                rn: FpReg::new(13),
+                rm: FpReg::new(14)
+            }
+            .encode(),
+            0x6E2E1DAC
         );
     }
     #[test]
