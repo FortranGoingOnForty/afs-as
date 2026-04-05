@@ -196,6 +196,7 @@ Major covered families include:
   - `tbl.16b`, `tbx.16b`
   - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`
   - `mov.8b`, `mov.16b`, `mov.4s`, `mov.2d`
+  - `dup.16b`, `dup.8h`, `dup.4s`, `dup.2d`
   - `mov sN, vM[idx]`, `mov dN, vM[idx]`
   - `mov.s vN[idx], vM[idx]`, `mov.d vN[idx], vM[idx]`
 - system / hint:

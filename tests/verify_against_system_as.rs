@@ -2276,6 +2276,50 @@ fn sys_mov_lane_d() {
     );
 }
 #[test]
+fn sys_dup_16b() {
+    verify(
+        "dup.16b v0, v1[15]",
+        Inst::DupV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            index: 15,
+        },
+    );
+}
+#[test]
+fn sys_dup_8h() {
+    verify(
+        "dup.8h v1, v2[5]",
+        Inst::DupV8H {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+            index: 5,
+        },
+    );
+}
+#[test]
+fn sys_dup_4s() {
+    verify(
+        "dup.4s v3, v4[2]",
+        Inst::DupV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            index: 2,
+        },
+    );
+}
+#[test]
+fn sys_dup_2d() {
+    verify(
+        "dup.2d v5, v6[1]",
+        Inst::DupV2D {
+            rd: FpReg::new(5),
+            rn: FpReg::new(6),
+            index: 1,
+        },
+    );
+}
+#[test]
 fn sys_fneg_d() {
     verify("fneg d3, d4", Inst::FnegD { rd: D3, rn: D4 });
 }

@@ -1143,6 +1143,14 @@ pub enum Inst {
     MovV4S { rd: FpReg, rn: FpReg },
     /// MOV.2D Vd, Vn
     MovV2D { rd: FpReg, rn: FpReg },
+    /// DUP.16B Vd, Vn[index]
+    DupV16B { rd: FpReg, rn: FpReg, index: u8 },
+    /// DUP.8H Vd, Vn[index]
+    DupV8H { rd: FpReg, rn: FpReg, index: u8 },
+    /// DUP.4S Vd, Vn[index]
+    DupV4S { rd: FpReg, rn: FpReg, index: u8 },
+    /// DUP.2D Vd, Vn[index]
+    DupV2D { rd: FpReg, rn: FpReg, index: u8 },
     /// AND.16B Vd, Vn, Vm
     AndV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// ORR.16B Vd, Vn, Vm
@@ -2278,6 +2286,10 @@ impl Inst {
             Inst::MovV16B { rd, rn } => simd_mov_reg(0x4EA01C00, *rn, *rd),
             Inst::MovV4S { rd, rn } => simd_mov_reg(0x4EA01C00, *rn, *rd),
             Inst::MovV2D { rd, rn } => simd_mov_reg(0x4EA01C00, *rn, *rd),
+            Inst::DupV16B { rd, rn, index } => simd_dup_lane(0, *rn, *index, *rd),
+            Inst::DupV8H { rd, rn, index } => simd_dup_lane(1, *rn, *index, *rd),
+            Inst::DupV4S { rd, rn, index } => simd_dup_lane(2, *rn, *index, *rd),
+            Inst::DupV2D { rd, rn, index } => simd_dup_lane(3, *rn, *index, *rd),
             Inst::AndV16B { rd, rn, rm } => simd_binary(0x4E201C00, *rm, *rn, *rd),
             Inst::OrrV16B { rd, rn, rm } => simd_binary(0x4EA01C00, *rm, *rn, *rd),
             Inst::EorV16B { rd, rn, rm } => simd_binary(0x6E201C00, *rm, *rn, *rd),
@@ -2730,6 +2742,14 @@ fn simd_unary(base: u32, rn: FpReg, rd: FpReg) -> u32 {
 
 fn simd_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
     base | (rn.enc() << 16) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_dup_lane(size_log2: u8, rn: FpReg, index: u8, rd: FpReg) -> u32 {
+    0x4E000400
+        | (((1u32) << size_log2) << 16)
+        | ((index as u32) << (17 + size_log2))
+        | (rn.enc() << 5)
+        | rd.enc()
 }
 
 fn simd_ext_16b(rm: FpReg, rn: FpReg, rd: FpReg, index: u8) -> u32 {
@@ -5530,6 +5550,54 @@ mod tests {
             }
             .encode(),
             0x6E184507
+        );
+    }
+    #[test]
+    fn dup_16b_v0_v1_lane15() {
+        assert_eq!(
+            Inst::DupV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                index: 15
+            }
+            .encode(),
+            0x4E1F0420
+        );
+    }
+    #[test]
+    fn dup_8h_v1_v2_lane5() {
+        assert_eq!(
+            Inst::DupV8H {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2),
+                index: 5
+            }
+            .encode(),
+            0x4E160441
+        );
+    }
+    #[test]
+    fn dup_4s_v3_v4_lane2() {
+        assert_eq!(
+            Inst::DupV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                index: 2
+            }
+            .encode(),
+            0x4E140483
+        );
+    }
+    #[test]
+    fn dup_2d_v5_v6_lane1() {
+        assert_eq!(
+            Inst::DupV2D {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6),
+                index: 1
+            }
+            .encode(),
+            0x4E1804C5
         );
     }
     #[test]

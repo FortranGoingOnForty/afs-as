@@ -243,6 +243,8 @@ impl FpMemWidth {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SimdLaneWidth {
+    B8,
+    H16,
     S32,
     D64,
 }
@@ -250,6 +252,8 @@ enum SimdLaneWidth {
 impl SimdLaneWidth {
     fn max_index(self) -> u8 {
         match self {
+            SimdLaneWidth::B8 => 15,
+            SimdLaneWidth::H16 => 7,
             SimdLaneWidth::S32 => 3,
             SimdLaneWidth::D64 => 1,
         }
@@ -1212,6 +1216,7 @@ impl<'a> Parser<'a> {
             "mov" => self.parse_mov(),
             "mov.s" | "mov.d" => self.parse_simd_lane_insert(mnemonic),
             "mov.8b" | "mov.16b" | "mov.4s" | "mov.2d" => self.parse_simd_mov(mnemonic),
+            "dup.16b" | "dup.8h" | "dup.4s" | "dup.2d" => self.parse_simd_dup(mnemonic),
             "tbl.16b" => self.parse_simd_table_lookup("tbl.16b"),
             "tbx.16b" => self.parse_simd_table_lookup("tbx.16b"),
             "ext.16b" => self.parse_simd_ext_16b(),
@@ -2346,6 +2351,7 @@ impl<'a> Parser<'a> {
                 rn,
                 rn_index,
             },
+            SimdLaneWidth::B8 | SimdLaneWidth::H16 => unreachable!(),
         })
     }
 
@@ -3899,6 +3905,20 @@ impl<'a> Parser<'a> {
             "mov.2d" => Inst::MovV2D { rd, rn },
             _ => unreachable!(),
         })
+    }
+
+    fn parse_simd_dup(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (width, make_inst): (SimdLaneWidth, fn(FpReg, FpReg, u8) -> Inst) = match mnemonic {
+            "dup.16b" => (SimdLaneWidth::B8, |rd, rn, index| Inst::DupV16B { rd, rn, index }),
+            "dup.8h" => (SimdLaneWidth::H16, |rd, rn, index| Inst::DupV8H { rd, rn, index }),
+            "dup.4s" => (SimdLaneWidth::S32, |rd, rn, index| Inst::DupV4S { rd, rn, index }),
+            "dup.2d" => (SimdLaneWidth::D64, |rd, rn, index| Inst::DupV2D { rd, rn, index }),
+            _ => unreachable!(),
+        };
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, index) = self.parse_simd_lane_ref(width)?;
+        Ok(make_inst(rd, rn, index))
     }
 
     fn parse_simd_lane_ref(&mut self, width: SimdLaneWidth) -> Result<(FpReg, u8), ParseError> {
@@ -7200,6 +7220,54 @@ mod tests {
                 rd_index: 1,
                 rn: FpReg::new(8),
                 rn_index: 1
+            }
+        );
+    }
+
+    #[test]
+    fn parse_dup_16b() {
+        assert_eq!(
+            parse_inst("dup.16b v0, v1[15]"),
+            Inst::DupV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                index: 15
+            }
+        );
+    }
+
+    #[test]
+    fn parse_dup_8h() {
+        assert_eq!(
+            parse_inst("dup.8h v1, v2[5]"),
+            Inst::DupV8H {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2),
+                index: 5
+            }
+        );
+    }
+
+    #[test]
+    fn parse_dup_4s() {
+        assert_eq!(
+            parse_inst("dup.4s v3, v4[2]"),
+            Inst::DupV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                index: 2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_dup_2d() {
+        assert_eq!(
+            parse_inst("dup.2d v5, v6[1]"),
+            Inst::DupV2D {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6),
+                index: 1
             }
         );
     }

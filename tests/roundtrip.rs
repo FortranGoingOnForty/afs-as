@@ -925,6 +925,22 @@ fn rt_mov_lane_d() {
     roundtrip(".text\nmov.d v7[1], v8[1]\n");
 }
 #[test]
+fn rt_dup_16b() {
+    roundtrip(".text\ndup.16b v0, v1[15]\n");
+}
+#[test]
+fn rt_dup_8h() {
+    roundtrip(".text\ndup.8h v1, v2[5]\n");
+}
+#[test]
+fn rt_dup_4s() {
+    roundtrip(".text\ndup.4s v3, v4[2]\n");
+}
+#[test]
+fn rt_dup_2d() {
+    roundtrip(".text\ndup.2d v5, v6[1]\n");
+}
+#[test]
 fn rt_fneg_d() {
     roundtrip(".text\nfneg d3, d4\n");
 }
