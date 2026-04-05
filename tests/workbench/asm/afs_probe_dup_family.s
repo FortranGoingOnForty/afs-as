@@ -1,3 +1,6 @@
+; Workbench note: captured Apple clang `-S` output for the broader lane-splat
+; family, confirming real-world emission of `dup.4s`, `dup.2d`, `dup.8h`, and
+; `dup.16b`.
 	.section	__TEXT,__text,regular,pure_instructions
 	.build_version macos, 11, 0	sdk_version 15, 5
 	.globl	_dup_f32                        ; -- Begin function dup_f32

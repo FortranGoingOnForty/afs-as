@@ -1,3 +1,7 @@
+/* Workbench note: this broader blend probe showed that `vbslq_u8` / `vbslq_u32`
+ * lower to `bif.16b` under Apple clang, which led directly to landing the
+ * BIF/BIT/BSL vector blend family in `afs-as`.
+ */
 #include <arm_neon.h>
 uint8x16_t blend_bytes(uint8x16_t a, uint8x16_t b, uint8x16_t m) {
     return vbslq_u8(m, a, b);

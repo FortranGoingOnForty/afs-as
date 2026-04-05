@@ -1,3 +1,6 @@
+; Workbench note: captured Apple clang `-S` output showing that `vbslq_u8` and
+; `vbslq_u32` both lower to `bif.16b`, which was the trigger for the vector
+; blend-family slice.
 	.section	__TEXT,__text,regular,pure_instructions
 	.build_version macos, 11, 0	sdk_version 15, 5
 	.globl	_blend_bytes                    ; -- Begin function blend_bytes

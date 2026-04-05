@@ -1,3 +1,5 @@
+; Workbench note: Apple `as` encoding probe for the ZIP/UZP/TRN interleave and
+; deinterleave family that led to the corresponding Sprint 13 SIMD slice.
 .text
 zip1.4s v0, v0, v1
 zip2.4s v2, v3, v4

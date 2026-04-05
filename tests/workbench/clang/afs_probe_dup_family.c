@@ -1,3 +1,7 @@
+/* Workbench note: this expanded lane-splat probe exposed the practical DUP
+ * family Apple clang emits across `.16b`, `.8h`, `.4s`, and `.2d`, and it led
+ * to landing that family together instead of as one-off mnemonics.
+ */
 #include <arm_neon.h>
 float32x4_t dup_f32(float32x4_t a) { return vdupq_laneq_f32(a, 2); }
 float64x2_t dup_f64(float64x2_t a) { return vdupq_laneq_f64(a, 1); }

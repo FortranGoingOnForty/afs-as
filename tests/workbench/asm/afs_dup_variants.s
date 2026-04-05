@@ -1,3 +1,6 @@
+; Workbench note: variant matrix used to derive the lane-index and size bit
+; placement rule for DUP encodings, rather than treating each size as a
+; separate hardcoded one-off.
 .text
 dup.16b v0, v1[0]
 dup.16b v0, v1[7]

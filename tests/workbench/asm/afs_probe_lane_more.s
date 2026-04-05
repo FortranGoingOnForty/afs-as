@@ -1,3 +1,6 @@
+; Workbench note: captured Apple clang `-S` output for half extraction and
+; lane transfer/combine operations; this was kept to document why `ext.16b`,
+; `mov.d`, and `mov.s` were the right next coverage points.
 	.section	__TEXT,__text,regular,pure_instructions
 	.build_version macos, 11, 0	sdk_version 15, 5
 	.globl	_low_half                       ; -- Begin function low_half

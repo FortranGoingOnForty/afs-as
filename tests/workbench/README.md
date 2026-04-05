@@ -17,6 +17,8 @@ Promotion rules:
   move it into `tests/corpus/`
 - once promoted, either remove the workbench copy or keep it only if it still
   adds discovery value beyond the promoted regression
+- when keeping a workbench file, add a short comment at the top explaining what
+  it exposed, what fix or design decision it led to, or why it is still useful
 
 This directory is tracked on purpose. It is the portable notebook for SIMD,
 relocation, writer-parity, and `clang`-output discovery work across machines.
@@ -29,3 +31,10 @@ Some probes here may be incomplete or intentionally rough:
 That is fine. The canonical regression surface still lives under
 `tests/clang_probe/` and `tests/corpus/`; this workbench just keeps the
 exploration trail durable and close to the codebase.
+
+Suggested header style:
+
+- for C probes:
+  - `/* Workbench note: this probe exposed ... and led to ... */`
+- for assembly probes:
+  - `; Workbench note: this probe pinned ... and led to ...`
