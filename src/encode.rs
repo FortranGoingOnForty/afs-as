@@ -646,12 +646,20 @@ pub enum Inst {
     LdrFpImm64 { rt: FpReg, rn: GpReg, offset: u16 },
     /// LDR St, [Xn, #offset]
     LdrFpImm32 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// LDR Ht, [Xn, #offset]
+    LdrFpImm16 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// LDR Bt, [Xn, #offset]
+    LdrFpImm8 { rt: FpReg, rn: GpReg, offset: u16 },
     /// LDR Qt, [Xn, #offset]
     LdrFpImm128 { rt: FpReg, rn: GpReg, offset: u16 },
     /// STR Dt, [Xn, #offset]
     StrFpImm64 { rt: FpReg, rn: GpReg, offset: u16 },
     /// STR St, [Xn, #offset]
     StrFpImm32 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// STR Ht, [Xn, #offset]
+    StrFpImm16 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// STR Bt, [Xn, #offset]
+    StrFpImm8 { rt: FpReg, rn: GpReg, offset: u16 },
     /// STR Qt, [Xn, #offset]
     StrFpImm128 { rt: FpReg, rn: GpReg, offset: u16 },
     /// LDR Dt, [Xn, Rm{, extend}]
@@ -1202,6 +1210,14 @@ pub enum Inst {
     MovFromLaneS { rd: FpReg, rn: FpReg, index: u8 },
     /// MOV Dd, Vn[index]
     MovFromLaneD { rd: FpReg, rn: FpReg, index: u8 },
+    /// MOV.S Wd, Vn[index]
+    MovFromLaneGpS { rd: GpReg, rn: FpReg, index: u8 },
+    /// MOV.D Xd, Vn[index]
+    MovFromLaneGpD { rd: GpReg, rn: FpReg, index: u8 },
+    /// UMOV.H Wd, Vn[index]
+    UmovFromLaneH { rd: GpReg, rn: FpReg, index: u8 },
+    /// UMOV.B Wd, Vn[index]
+    UmovFromLaneB { rd: GpReg, rn: FpReg, index: u8 },
     /// MOV.S Vd[index], Vn[index]
     MovLaneS {
         rd: FpReg,
@@ -1216,6 +1232,28 @@ pub enum Inst {
         rn: FpReg,
         rn_index: u8,
     },
+    /// MOV.H Vd[index], Vn[index]
+    MovLaneH {
+        rd: FpReg,
+        rd_index: u8,
+        rn: FpReg,
+        rn_index: u8,
+    },
+    /// MOV.B Vd[index], Vn[index]
+    MovLaneB {
+        rd: FpReg,
+        rd_index: u8,
+        rn: FpReg,
+        rn_index: u8,
+    },
+    /// MOV.S Vd[index], Wn
+    MovLaneFromGpS { rd: FpReg, rd_index: u8, rn: GpReg },
+    /// MOV.D Vd[index], Xn
+    MovLaneFromGpD { rd: FpReg, rd_index: u8, rn: GpReg },
+    /// MOV.H Vd[index], Wn
+    MovLaneFromGpH { rd: FpReg, rd_index: u8, rn: GpReg },
+    /// MOV.B Vd[index], Wn
+    MovLaneFromGpB { rd: FpReg, rd_index: u8, rn: GpReg },
     /// FNEG Dd, Dn
     FnegD { rd: FpReg, rn: FpReg },
     /// FNEG Sd, Sn
@@ -1272,8 +1310,12 @@ pub enum Inst {
     ScvtfD { rd: FpReg, rn: GpReg },
     /// FMOV Dd, Xn  (move bits GP -> FP, no conversion)
     FmovToD { rd: FpReg, rn: GpReg },
+    /// FMOV Sd, Wn  (move bits GP -> FP, no conversion)
+    FmovToS { rd: FpReg, rn: GpReg },
     /// FMOV Xd, Dn  (move bits FP -> GP, no conversion)
     FmovFromD { rd: GpReg, rn: FpReg },
+    /// FMOV Wd, Sn  (move bits FP -> GP, no conversion)
+    FmovFromS { rd: GpReg, rn: FpReg },
 
     // ---- System ----
     /// SVC #imm16
@@ -1564,7 +1606,14 @@ impl Inst {
                 lsb,
                 width,
                 sf,
-            } => bitfield(*sf, 0b01, *lsb, lsb.wrapping_add(*width).wrapping_sub(1), *rn, *rd),
+            } => bitfield(
+                *sf,
+                0b01,
+                *lsb,
+                lsb.wrapping_add(*width).wrapping_sub(1),
+                *rn,
+                *rd,
+            ),
 
             // ---- Branches ----
             Inst::B { offset } => {
@@ -1831,14 +1880,14 @@ impl Inst {
 
             Inst::LdrFpImm64 { rt, rn, offset } => ldst_uimm_fp(0b11, 0b01, 3, *offset, *rn, *rt),
             Inst::LdrFpImm32 { rt, rn, offset } => ldst_uimm_fp(0b10, 0b01, 2, *offset, *rn, *rt),
-            Inst::LdrFpImm128 { rt, rn, offset } => {
-                ldst_uimm_fp(0b00, 0b11, 4, *offset, *rn, *rt)
-            }
+            Inst::LdrFpImm16 { rt, rn, offset } => ldst_uimm_fp(0b01, 0b01, 1, *offset, *rn, *rt),
+            Inst::LdrFpImm8 { rt, rn, offset } => ldst_uimm_fp(0b00, 0b01, 0, *offset, *rn, *rt),
+            Inst::LdrFpImm128 { rt, rn, offset } => ldst_uimm_fp(0b00, 0b11, 4, *offset, *rn, *rt),
             Inst::StrFpImm64 { rt, rn, offset } => ldst_uimm_fp(0b11, 0b00, 3, *offset, *rn, *rt),
             Inst::StrFpImm32 { rt, rn, offset } => ldst_uimm_fp(0b10, 0b00, 2, *offset, *rn, *rt),
-            Inst::StrFpImm128 { rt, rn, offset } => {
-                ldst_uimm_fp(0b00, 0b10, 4, *offset, *rn, *rt)
-            }
+            Inst::StrFpImm16 { rt, rn, offset } => ldst_uimm_fp(0b01, 0b00, 1, *offset, *rn, *rt),
+            Inst::StrFpImm8 { rt, rn, offset } => ldst_uimm_fp(0b00, 0b00, 0, *offset, *rn, *rt),
+            Inst::StrFpImm128 { rt, rn, offset } => ldst_uimm_fp(0b00, 0b10, 4, *offset, *rn, *rt),
             Inst::LdrFpReg64 {
                 rt,
                 rn,
@@ -1893,40 +1942,24 @@ impl Inst {
             Inst::LdrPre32 { rt, rn, offset } => ldst_idx(0b10, 0b01, *offset, 0b11, *rn, *rt),
             Inst::StrPre32 { rt, rn, offset } => ldst_idx(0b10, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrbPre { rt, rn, offset } => ldst_idx(0b00, 0b01, *offset, 0b11, *rn, *rt),
-            Inst::LdrsbPre32 { rt, rn, offset } => {
-                ldst_idx(0b00, 0b11, *offset, 0b11, *rn, *rt)
-            }
-            Inst::LdrsbPre64 { rt, rn, offset } => {
-                ldst_idx(0b00, 0b10, *offset, 0b11, *rn, *rt)
-            }
+            Inst::LdrsbPre32 { rt, rn, offset } => ldst_idx(0b00, 0b11, *offset, 0b11, *rn, *rt),
+            Inst::LdrsbPre64 { rt, rn, offset } => ldst_idx(0b00, 0b10, *offset, 0b11, *rn, *rt),
             Inst::StrbPre { rt, rn, offset } => ldst_idx(0b00, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrhPre { rt, rn, offset } => ldst_idx(0b01, 0b01, *offset, 0b11, *rn, *rt),
-            Inst::LdrshPre32 { rt, rn, offset } => {
-                ldst_idx(0b01, 0b11, *offset, 0b11, *rn, *rt)
-            }
-            Inst::LdrshPre64 { rt, rn, offset } => {
-                ldst_idx(0b01, 0b10, *offset, 0b11, *rn, *rt)
-            }
+            Inst::LdrshPre32 { rt, rn, offset } => ldst_idx(0b01, 0b11, *offset, 0b11, *rn, *rt),
+            Inst::LdrshPre64 { rt, rn, offset } => ldst_idx(0b01, 0b10, *offset, 0b11, *rn, *rt),
             Inst::StrhPre { rt, rn, offset } => ldst_idx(0b01, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrPre64 { rt, rn, offset } => ldst_idx(0b11, 0b01, *offset, 0b11, *rn, *rt),
             Inst::StrPre64 { rt, rn, offset } => ldst_idx(0b11, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrPost32 { rt, rn, offset } => ldst_idx(0b10, 0b01, *offset, 0b01, *rn, *rt),
             Inst::StrPost32 { rt, rn, offset } => ldst_idx(0b10, 0b00, *offset, 0b01, *rn, *rt),
             Inst::LdrbPost { rt, rn, offset } => ldst_idx(0b00, 0b01, *offset, 0b01, *rn, *rt),
-            Inst::LdrsbPost32 { rt, rn, offset } => {
-                ldst_idx(0b00, 0b11, *offset, 0b01, *rn, *rt)
-            }
-            Inst::LdrsbPost64 { rt, rn, offset } => {
-                ldst_idx(0b00, 0b10, *offset, 0b01, *rn, *rt)
-            }
+            Inst::LdrsbPost32 { rt, rn, offset } => ldst_idx(0b00, 0b11, *offset, 0b01, *rn, *rt),
+            Inst::LdrsbPost64 { rt, rn, offset } => ldst_idx(0b00, 0b10, *offset, 0b01, *rn, *rt),
             Inst::StrbPost { rt, rn, offset } => ldst_idx(0b00, 0b00, *offset, 0b01, *rn, *rt),
             Inst::LdrhPost { rt, rn, offset } => ldst_idx(0b01, 0b01, *offset, 0b01, *rn, *rt),
-            Inst::LdrshPost32 { rt, rn, offset } => {
-                ldst_idx(0b01, 0b11, *offset, 0b01, *rn, *rt)
-            }
-            Inst::LdrshPost64 { rt, rn, offset } => {
-                ldst_idx(0b01, 0b10, *offset, 0b01, *rn, *rt)
-            }
+            Inst::LdrshPost32 { rt, rn, offset } => ldst_idx(0b01, 0b11, *offset, 0b01, *rn, *rt),
+            Inst::LdrshPost64 { rt, rn, offset } => ldst_idx(0b01, 0b10, *offset, 0b01, *rn, *rt),
             Inst::StrhPost { rt, rn, offset } => ldst_idx(0b01, 0b00, *offset, 0b01, *rn, *rt),
             Inst::LdrPost64 { rt, rn, offset } => ldst_idx(0b11, 0b01, *offset, 0b01, *rn, *rt),
             Inst::StrPost64 { rt, rn, offset } => ldst_idx(0b11, 0b00, *offset, 0b01, *rn, *rt),
@@ -2324,6 +2357,10 @@ impl Inst {
             } => simd_table_lookup(0x4E001000, *index, *table, *table_len, *rd),
             Inst::MovFromLaneS { rd, rn, index } => simd_extract_lane_s(*rn, *index, *rd),
             Inst::MovFromLaneD { rd, rn, index } => simd_extract_lane_d(*rn, *index, *rd),
+            Inst::MovFromLaneGpS { rd, rn, index } => simd_extract_lane_gp(2, *rn, *index, *rd),
+            Inst::MovFromLaneGpD { rd, rn, index } => simd_extract_lane_gp(3, *rn, *index, *rd),
+            Inst::UmovFromLaneH { rd, rn, index } => simd_extract_lane_gp(1, *rn, *index, *rd),
+            Inst::UmovFromLaneB { rd, rn, index } => simd_extract_lane_gp(0, *rn, *index, *rd),
             Inst::MovLaneS {
                 rd,
                 rd_index,
@@ -2336,6 +2373,30 @@ impl Inst {
                 rn,
                 rn_index,
             } => simd_insert_lane_d(*rn, *rn_index, *rd, *rd_index),
+            Inst::MovLaneH {
+                rd,
+                rd_index,
+                rn,
+                rn_index,
+            } => simd_insert_lane_h(*rn, *rn_index, *rd, *rd_index),
+            Inst::MovLaneB {
+                rd,
+                rd_index,
+                rn,
+                rn_index,
+            } => simd_insert_lane_b(*rn, *rn_index, *rd, *rd_index),
+            Inst::MovLaneFromGpS { rd, rd_index, rn } => {
+                simd_insert_lane_gp(2, *rn, *rd_index, *rd)
+            }
+            Inst::MovLaneFromGpD { rd, rd_index, rn } => {
+                simd_insert_lane_gp(3, *rn, *rd_index, *rd)
+            }
+            Inst::MovLaneFromGpH { rd, rd_index, rn } => {
+                simd_insert_lane_gp(1, *rn, *rd_index, *rd)
+            }
+            Inst::MovLaneFromGpB { rd, rd_index, rn } => {
+                simd_insert_lane_gp(0, *rn, *rd_index, *rd)
+            }
 
             Inst::FnegD { rd, rn } => fp_unary(0b01, 0b0000_10, *rn, *rd),
             Inst::FnegS { rd, rn } => fp_unary(0b00, 0b0000_10, *rn, *rd),
@@ -2362,9 +2423,11 @@ impl Inst {
             Inst::FmovToD { rd, rn } => {
                 (0b1_00_11110_01_1 << 21) | (0b00_111 << 16) | (rn.enc() << 5) | rd.enc()
             }
+            Inst::FmovToS { rd, rn } => 0x1E270000 | (rn.enc() << 5) | rd.enc(),
             Inst::FmovFromD { rd, rn } => {
                 (0b1_00_11110_01_1 << 21) | (0b00_110 << 16) | (rn.enc() << 5) | rd.enc()
             }
+            Inst::FmovFromS { rd, rn } => 0x1E260000 | (rn.enc() << 5) | rd.enc(),
 
             // ---- System ----
             Inst::Svc { imm16 } => (0b11010100_000 << 21) | ((*imm16 as u32) << 5) | 0b000_01,
@@ -2508,8 +2571,8 @@ fn encode_logical_immediate(imm: u64, width: u8) -> Option<(bool, u8, u8)> {
                 let candidate = replicate_pattern(pattern, esize, width);
                 if candidate == imm {
                     let n = esize == 64;
-                    let imms = (((!(u64::from(esize) - 1)) << 1) | u64::from(ones - 1)) as u8
-                        & 0x3F;
+                    let imms =
+                        (((!(u64::from(esize) - 1)) << 1) | u64::from(ones - 1)) as u8 & 0x3F;
                     return Some((n, rot, imms));
                 }
             }
@@ -2753,12 +2816,12 @@ fn simd_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
     base | (rn.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
+fn simd_lane_imm5(size_log2: u8, index: u8) -> u32 {
+    ((1u32) << size_log2) | ((index as u32) << (size_log2 + 1))
+}
+
 fn simd_dup_lane(size_log2: u8, rn: FpReg, index: u8, rd: FpReg) -> u32 {
-    0x4E000400
-        | (((1u32) << size_log2) << 16)
-        | ((index as u32) << (17 + size_log2))
-        | (rn.enc() << 5)
-        | rd.enc()
+    0x4E000400 | (simd_lane_imm5(size_log2, index) << 16) | (rn.enc() << 5) | rd.enc()
 }
 
 fn simd_ext_16b(rm: FpReg, rn: FpReg, rd: FpReg, index: u8) -> u32 {
@@ -2782,20 +2845,33 @@ fn simd_extract_lane_d(rn: FpReg, index: u8, rd: FpReg) -> u32 {
     0x5E080400 | ((index as u32) << 20) | (rn.enc() << 5) | rd.enc()
 }
 
+fn simd_extract_lane_gp(size_log2: u8, rn: FpReg, index: u8, rd: GpReg) -> u32 {
+    let base = if size_log2 == 3 {
+        0x4E003C00
+    } else {
+        0x0E003C00
+    };
+    base | (simd_lane_imm5(size_log2, index) << 16) | (rn.enc() << 5) | rd.enc()
+}
+
 fn simd_insert_lane_s(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
-    0x6E040400
-        | ((rd_index as u32) << 19)
-        | ((rn_index as u32) << 13)
-        | (rn.enc() << 5)
-        | rd.enc()
+    0x6E040400 | ((rd_index as u32) << 19) | ((rn_index as u32) << 13) | (rn.enc() << 5) | rd.enc()
 }
 
 fn simd_insert_lane_d(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
-    0x6E080400
-        | ((rd_index as u32) << 20)
-        | ((rn_index as u32) << 14)
-        | (rn.enc() << 5)
-        | rd.enc()
+    0x6E080400 | ((rd_index as u32) << 20) | ((rn_index as u32) << 14) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_insert_lane_h(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
+    0x6E020400 | ((rd_index as u32) << 18) | ((rn_index as u32) << 12) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_insert_lane_b(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
+    0x6E010400 | ((rd_index as u32) << 17) | ((rn_index as u32) << 11) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_insert_lane_gp(size_log2: u8, rn: GpReg, index: u8, rd: FpReg) -> u32 {
+    0x4E001C00 | (simd_lane_imm5(size_log2, index) << 16) | (rn.enc() << 5) | rd.enc()
 }
 
 #[cfg(test)]
@@ -4362,17 +4438,11 @@ mod tests {
     }
     #[test]
     fn stlr_w10_x11() {
-        assert_eq!(
-            Inst::Stlr32 { rt: W10, rn: X11 }.encode(),
-            0x889FFD6A
-        );
+        assert_eq!(Inst::Stlr32 { rt: W10, rn: X11 }.encode(), 0x889FFD6A);
     }
     #[test]
     fn stlr_x10_x11() {
-        assert_eq!(
-            Inst::Stlr64 { rt: X10, rn: X11 }.encode(),
-            0xC89FFD6A
-        );
+        assert_eq!(Inst::Stlr64 { rt: X10, rn: X11 }.encode(), 0xC89FFD6A);
     }
     #[test]
     fn ldaddal_w0_w8_x8() {
@@ -4603,6 +4673,30 @@ mod tests {
         );
     }
     #[test]
+    fn ldr_h2_sp_14() {
+        assert_eq!(
+            Inst::LdrFpImm16 {
+                rt: FpReg::new(2),
+                rn: SP,
+                offset: 14
+            }
+            .encode(),
+            0x7D401FE2
+        );
+    }
+    #[test]
+    fn ldr_b2_sp_15() {
+        assert_eq!(
+            Inst::LdrFpImm8 {
+                rt: FpReg::new(2),
+                rn: SP,
+                offset: 15
+            }
+            .encode(),
+            0x3D403FE2
+        );
+    }
+    #[test]
     fn str_q1_sp() {
         assert_eq!(
             Inst::StrFpImm128 {
@@ -4612,6 +4706,30 @@ mod tests {
             }
             .encode(),
             0x3D8003E1
+        );
+    }
+    #[test]
+    fn str_h2_sp_14() {
+        assert_eq!(
+            Inst::StrFpImm16 {
+                rt: FpReg::new(2),
+                rn: SP,
+                offset: 14
+            }
+            .encode(),
+            0x7D001FE2
+        );
+    }
+    #[test]
+    fn str_b2_sp_15() {
+        assert_eq!(
+            Inst::StrFpImm8 {
+                rt: FpReg::new(2),
+                rn: SP,
+                offset: 15
+            }
+            .encode(),
+            0x3D003FE2
         );
     }
     #[test]
@@ -5535,17 +5653,11 @@ mod tests {
     }
     #[test]
     fn fmov_s1_s2() {
-        assert_eq!(
-            Inst::FmovRegS { rd: S1, rn: S2 }.encode(),
-            0x1E204041
-        );
+        assert_eq!(Inst::FmovRegS { rd: S1, rn: S2 }.encode(), 0x1E204041);
     }
     #[test]
     fn fmov_d1_d2() {
-        assert_eq!(
-            Inst::FmovRegD { rd: D1, rn: D2 }.encode(),
-            0x1E604041
-        );
+        assert_eq!(Inst::FmovRegD { rd: D1, rn: D2 }.encode(), 0x1E604041);
     }
     #[test]
     fn mov_s0_v1_lane2() {
@@ -5595,6 +5707,128 @@ mod tests {
             }
             .encode(),
             0x6E184507
+        );
+    }
+    #[test]
+    fn mov_h_v0_lane5_from_v1_lane0() {
+        assert_eq!(
+            Inst::MovLaneH {
+                rd: FpReg::new(0),
+                rd_index: 5,
+                rn: FpReg::new(1),
+                rn_index: 0
+            }
+            .encode(),
+            0x6E160420
+        );
+    }
+    #[test]
+    fn mov_b_v0_lane7_from_v1_lane0() {
+        assert_eq!(
+            Inst::MovLaneB {
+                rd: FpReg::new(0),
+                rd_index: 7,
+                rn: FpReg::new(1),
+                rn_index: 0
+            }
+            .encode(),
+            0x6E0F0420
+        );
+    }
+    #[test]
+    fn mov_s_w0_v1_lane2() {
+        assert_eq!(
+            Inst::MovFromLaneGpS {
+                rd: W0,
+                rn: FpReg::new(1),
+                index: 2
+            }
+            .encode(),
+            0x0E143C20
+        );
+    }
+    #[test]
+    fn mov_d_x0_v1_lane1() {
+        assert_eq!(
+            Inst::MovFromLaneGpD {
+                rd: X0,
+                rn: FpReg::new(1),
+                index: 1
+            }
+            .encode(),
+            0x4E183C20
+        );
+    }
+    #[test]
+    fn umov_h_w1_v2_lane5() {
+        assert_eq!(
+            Inst::UmovFromLaneH {
+                rd: W1,
+                rn: FpReg::new(2),
+                index: 5
+            }
+            .encode(),
+            0x0E163C41
+        );
+    }
+    #[test]
+    fn umov_b_w3_v4_lane7() {
+        assert_eq!(
+            Inst::UmovFromLaneB {
+                rd: W3,
+                rn: FpReg::new(4),
+                index: 7
+            }
+            .encode(),
+            0x0E0F3C83
+        );
+    }
+    #[test]
+    fn mov_s_v5_lane1_w6() {
+        assert_eq!(
+            Inst::MovLaneFromGpS {
+                rd: FpReg::new(5),
+                rd_index: 1,
+                rn: W6
+            }
+            .encode(),
+            0x4E0C1CC5
+        );
+    }
+    #[test]
+    fn mov_d_v0_lane1_x1() {
+        assert_eq!(
+            Inst::MovLaneFromGpD {
+                rd: FpReg::new(0),
+                rd_index: 1,
+                rn: X1
+            }
+            .encode(),
+            0x4E181C20
+        );
+    }
+    #[test]
+    fn mov_h_v7_lane5_w8() {
+        assert_eq!(
+            Inst::MovLaneFromGpH {
+                rd: FpReg::new(7),
+                rd_index: 5,
+                rn: W8
+            }
+            .encode(),
+            0x4E161D07
+        );
+    }
+    #[test]
+    fn mov_b_v9_lane7_w10() {
+        assert_eq!(
+            Inst::MovLaneFromGpB {
+                rd: FpReg::new(9),
+                rd_index: 7,
+                rn: W10
+            }
+            .encode(),
+            0x4E0F1D49
         );
     }
     #[test]
@@ -5775,8 +6009,16 @@ mod tests {
         assert_eq!(Inst::FmovToD { rd: D0, rn: X1 }.encode(), 0x9E670020);
     }
     #[test]
+    fn fmov_s0_w0() {
+        assert_eq!(Inst::FmovToS { rd: S0, rn: W0 }.encode(), 0x1E270000);
+    }
+    #[test]
     fn fmov_x0_d1() {
         assert_eq!(Inst::FmovFromD { rd: X0, rn: D1 }.encode(), 0x9E660020);
+    }
+    #[test]
+    fn fmov_w0_s0() {
+        assert_eq!(Inst::FmovFromS { rd: W0, rn: S0 }.encode(), 0x1E260000);
     }
 
     // ---- System ----

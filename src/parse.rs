@@ -226,6 +226,8 @@ enum GpRegKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FpMemWidth {
+    B8,
+    H16,
     S32,
     D64,
     Q128,
@@ -234,6 +236,8 @@ enum FpMemWidth {
 impl FpMemWidth {
     fn scale(self) -> u8 {
         match self {
+            FpMemWidth::B8 => 0,
+            FpMemWidth::H16 => 1,
             FpMemWidth::S32 => 2,
             FpMemWidth::D64 => 3,
             FpMemWidth::Q128 => 4,
@@ -800,11 +804,7 @@ impl<'a> Parser<'a> {
 
     fn parse_logical_immediate_value(&mut self, sf: bool) -> Result<u64, ParseError> {
         let imm = self.parse_immediate_const_expr("logical immediate")?;
-        let raw = if sf {
-            imm as u64
-        } else {
-            (imm as u32) as u64
-        };
+        let raw = if sf { imm as u64 } else { (imm as u32) as u64 };
         if logical_immediate_encodable(raw, if sf { 64 } else { 32 }) {
             Ok(raw)
         } else {
@@ -1217,7 +1217,8 @@ impl<'a> Parser<'a> {
             "cinv" => self.parse_cinv(),
             "cneg" => self.parse_cneg(),
             "mov" => self.parse_mov(),
-            "mov.s" | "mov.d" => self.parse_simd_lane_insert(mnemonic),
+            "mov.s" | "mov.d" | "mov.h" | "mov.b" => self.parse_simd_lane_insert(mnemonic),
+            "umov.h" | "umov.b" => self.parse_simd_lane_extract_gp(mnemonic),
             "mov.8b" | "mov.16b" | "mov.4s" | "mov.2d" => self.parse_simd_mov(mnemonic),
             "dup.16b" | "dup.8h" | "dup.4s" | "dup.2d" => self.parse_simd_dup(mnemonic),
             "tbl.16b" => self.parse_simd_table_lookup("tbl.16b"),
@@ -1263,9 +1264,7 @@ impl<'a> Parser<'a> {
             // FP arithmetic (double)
             "fadd" => self.parse_fp_arith("fadd"),
             "add.4s" | "sub.4s" => self.parse_simd_int_arith_4s(mnemonic),
-            "fadd.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" => {
-                self.parse_simd_fp_arith_4s(mnemonic)
-            }
+            "fadd.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" => self.parse_simd_fp_arith_4s(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -1333,28 +1332,57 @@ impl<'a> Parser<'a> {
     fn parse_gp_reg_with_size_kind(&mut self) -> Result<(GpReg, bool, GpRegKind), ParseError> {
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
+        self.gp_reg_with_size_kind_from_name(&name, &lower)
+    }
+
+    fn gp_reg_with_size_kind_from_name(
+        &self,
+        name: &str,
+        lower: &str,
+    ) -> Result<(GpReg, bool, GpRegKind), ParseError> {
         if lower == "sp" || lower == "xzr" {
             let kind = if lower == "sp" {
                 GpRegKind::Sp
             } else {
                 GpRegKind::Zr
             };
-            return Ok((parse_gp_reg_name(&lower).unwrap(), true, kind));
+            return Ok((parse_gp_reg_name(lower).unwrap(), true, kind));
         }
         if lower == "wzr" {
             return Ok((WZR, false, GpRegKind::Zr));
         }
         if lower.starts_with('x') {
-            let reg = parse_gp_reg_name(&lower)
+            let reg = parse_gp_reg_name(lower)
                 .ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
             Ok((reg, true, GpRegKind::Reg))
         } else if lower.starts_with('w') {
-            let reg = parse_gp_reg_name(&lower)
+            let reg = parse_gp_reg_name(lower)
                 .ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
             Ok((reg, false, GpRegKind::Reg))
         } else {
             Err(self.err(format!("expected GP register, got '{}'", name)))
         }
+    }
+
+    fn parse_lane_gp_reg(
+        &mut self,
+        width: SimdLaneWidth,
+        context: &str,
+    ) -> Result<GpReg, ParseError> {
+        let (reg, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
+        if kind == GpRegKind::Sp {
+            return Err(self.err(format!("{} does not allow SP", context)));
+        }
+        let needs_64bit = matches!(width, SimdLaneWidth::D64);
+        if needs_64bit != is_64bit {
+            let width_name = if needs_64bit {
+                "x-register"
+            } else {
+                "w-register"
+            };
+            return Err(self.err(format!("{} requires a {}", context, width_name)));
+        }
+        Ok(reg)
     }
 
     fn parse_fp_reg_with_size(&mut self) -> Result<(FpReg, bool), ParseError> {
@@ -1376,7 +1404,11 @@ impl<'a> Parser<'a> {
     fn parse_fp_mem_reg_with_width(&mut self) -> Result<(FpReg, FpMemWidth), ParseError> {
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
-        let width = if lower.starts_with('d') {
+        let width = if lower.starts_with('b') {
+            FpMemWidth::B8
+        } else if lower.starts_with('h') {
+            FpMemWidth::H16
+        } else if lower.starts_with('d') {
             FpMemWidth::D64
         } else if lower.starts_with('s') {
             FpMemWidth::S32
@@ -1385,18 +1417,20 @@ impl<'a> Parser<'a> {
         } else {
             return Err(self.err(format!("expected FP/SIMD register, got '{}'", name)));
         };
-        let reg = parse_fp_reg_name(&lower)
-            .ok_or_else(|| self.err(format!("bad FP/SIMD register '{}'", name)))?;
+        let num: u8 = lower[1..]
+            .parse()
+            .map_err(|_| self.err(format!("bad FP/SIMD register '{}'", name)))?;
+        if num > 31 {
+            return Err(self.err(format!("bad FP/SIMD register '{}'", name)));
+        }
+        let reg = FpReg::new(num);
         Ok((reg, width))
     }
 
     fn parse_atomic_data_reg(&mut self, context: &str) -> Result<(GpReg, bool), ParseError> {
         let (reg, sf, kind) = self.parse_gp_reg_with_size_kind()?;
         if kind == GpRegKind::Sp {
-            return Err(self.err(format!(
-                "{} does not allow SP as a data register",
-                context
-            )));
+            return Err(self.err(format!("{} does not allow SP as a data register", context)));
         }
         Ok((reg, sf))
     }
@@ -1413,22 +1447,13 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::LBracket)?;
         let (rn, sf, kind) = self.parse_gp_reg_with_size_kind()?;
         if !sf || kind == GpRegKind::Zr {
-            return Err(self.err(format!(
-                "{} expects an [Xn] or [sp] base register",
-                context
-            )));
+            return Err(self.err(format!("{} expects an [Xn] or [sp] base register", context)));
         }
         if !self.eat(&Tok::RBracket) {
-            return Err(self.err(format!(
-                "{} expects a simple [Xn] memory operand",
-                context
-            )));
+            return Err(self.err(format!("{} expects a simple [Xn] memory operand", context)));
         }
         if self.eat(&Tok::Bang) {
-            return Err(self.err(format!(
-                "{} does not support pre-index addressing",
-                context
-            )));
+            return Err(self.err(format!("{} does not support pre-index addressing", context)));
         }
         if self.eat(&Tok::Comma) {
             return Err(self.err(format!(
@@ -1490,12 +1515,10 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rt, rt_sf) = self.parse_atomic_data_reg(mnemonic)?;
         if sf != rt_sf {
-            return Err(self.err(
-                format!(
-                    "{} requires source and destination registers of the same width",
-                    mnemonic
-                ),
-            ));
+            return Err(self.err(format!(
+                "{} requires source and destination registers of the same width",
+                mnemonic
+            )));
         }
         self.expect(&Tok::Comma)?;
         let rn = self.parse_atomic_base_reg(mnemonic)?;
@@ -2332,30 +2355,80 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_simd_lane_extract_gp(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let width = match mnemonic {
+            "umov.h" => SimdLaneWidth::H16,
+            "umov.b" => SimdLaneWidth::B8,
+            _ => unreachable!(),
+        };
+        let rd = self.parse_lane_gp_reg(width, mnemonic)?;
+        self.expect(&Tok::Comma)?;
+        let (rn, index) = self.parse_simd_lane_ref(width)?;
+        Ok(match width {
+            SimdLaneWidth::H16 => Inst::UmovFromLaneH { rd, rn, index },
+            SimdLaneWidth::B8 => Inst::UmovFromLaneB { rd, rn, index },
+            SimdLaneWidth::S32 | SimdLaneWidth::D64 => unreachable!(),
+        })
+    }
+
     fn parse_simd_lane_insert(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let width = match mnemonic {
             "mov.s" => SimdLaneWidth::S32,
             "mov.d" => SimdLaneWidth::D64,
+            "mov.h" => SimdLaneWidth::H16,
+            "mov.b" => SimdLaneWidth::B8,
             _ => unreachable!(),
         };
+        if matches!(width, SimdLaneWidth::S32 | SimdLaneWidth::D64) && self.peek_is_gp_reg() {
+            let rd = self.parse_lane_gp_reg(width, mnemonic)?;
+            self.expect(&Tok::Comma)?;
+            let (rn, index) = self.parse_simd_lane_ref(width)?;
+            return Ok(match width {
+                SimdLaneWidth::S32 => Inst::MovFromLaneGpS { rd, rn, index },
+                SimdLaneWidth::D64 => Inst::MovFromLaneGpD { rd, rn, index },
+                SimdLaneWidth::B8 | SimdLaneWidth::H16 => unreachable!(),
+            });
+        }
+
         let (rd, rd_index) = self.parse_simd_lane_ref(width)?;
         self.expect(&Tok::Comma)?;
-        let (rn, rn_index) = self.parse_simd_lane_ref(width)?;
-        Ok(match width {
-            SimdLaneWidth::S32 => Inst::MovLaneS {
-                rd,
-                rd_index,
-                rn,
-                rn_index,
-            },
-            SimdLaneWidth::D64 => Inst::MovLaneD {
-                rd,
-                rd_index,
-                rn,
-                rn_index,
-            },
-            SimdLaneWidth::B8 | SimdLaneWidth::H16 => unreachable!(),
-        })
+        if self.peek_is_simd_reg() {
+            let (rn, rn_index) = self.parse_simd_lane_ref(width)?;
+            Ok(match width {
+                SimdLaneWidth::S32 => Inst::MovLaneS {
+                    rd,
+                    rd_index,
+                    rn,
+                    rn_index,
+                },
+                SimdLaneWidth::D64 => Inst::MovLaneD {
+                    rd,
+                    rd_index,
+                    rn,
+                    rn_index,
+                },
+                SimdLaneWidth::H16 => Inst::MovLaneH {
+                    rd,
+                    rd_index,
+                    rn,
+                    rn_index,
+                },
+                SimdLaneWidth::B8 => Inst::MovLaneB {
+                    rd,
+                    rd_index,
+                    rn,
+                    rn_index,
+                },
+            })
+        } else {
+            let rn = self.parse_lane_gp_reg(width, mnemonic)?;
+            Ok(match width {
+                SimdLaneWidth::S32 => Inst::MovLaneFromGpS { rd, rd_index, rn },
+                SimdLaneWidth::D64 => Inst::MovLaneFromGpD { rd, rd_index, rn },
+                SimdLaneWidth::H16 => Inst::MovLaneFromGpH { rd, rd_index, rn },
+                SimdLaneWidth::B8 => Inst::MovLaneFromGpB { rd, rd_index, rn },
+            })
+        }
     }
 
     fn parse_mov_wide(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -2879,10 +2952,15 @@ impl<'a> Parser<'a> {
     fn parse_ldr_str_fp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
         let (rt, width) = self.parse_fp_mem_reg_with_width()?;
         self.expect(&Tok::Comma)?;
+        let is_scalar_narrow = matches!(width, FpMemWidth::B8 | FpMemWidth::H16);
 
         if is_load && self.starts_immediate_expr() {
+            if is_scalar_narrow {
+                return Err(self.err("narrow FP literal loads are not supported".into()));
+            }
             let offset = self.parse_immediate_const_expr("ldr literal offset")? as i32;
             let inst = match width {
+                FpMemWidth::B8 | FpMemWidth::H16 => unreachable!(),
                 FpMemWidth::D64 => Inst::LdrFpLit64 { rt, offset },
                 FpMemWidth::S32 => Inst::LdrFpLit32 { rt, offset },
                 FpMemWidth::Q128 => Inst::LdrFpLit128 { rt, offset },
@@ -2891,9 +2969,13 @@ impl<'a> Parser<'a> {
         }
 
         if is_load && self.starts_non_register_literal_reference() {
+            if is_scalar_narrow {
+                return Err(self.err("narrow FP literal loads are not supported".into()));
+            }
             let label = self.parse_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             let inst = match width {
+                FpMemWidth::B8 | FpMemWidth::H16 => unreachable!(),
                 FpMemWidth::D64 => Inst::LdrFpLit64 { rt, offset: 0 },
                 FpMemWidth::S32 => Inst::LdrFpLit32 { rt, offset: 0 },
                 FpMemWidth::Q128 => Inst::LdrFpLit128 { rt, offset: 0 },
@@ -2917,8 +2999,14 @@ impl<'a> Parser<'a> {
 
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
+                if is_scalar_narrow {
+                    return Err(
+                        self.err("post-index narrow FP loads/stores are not supported".into())
+                    );
+                }
                 let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
                 let inst = match (is_load, width) {
+                    (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                     (true, FpMemWidth::D64) => Inst::LdrFpPost64 { rt, rn, offset },
                     (false, FpMemWidth::D64) => Inst::StrFpPost64 { rt, rn, offset },
                     (true, FpMemWidth::S32) => Inst::LdrFpPost32 { rt, rn, offset },
@@ -2929,6 +3017,10 @@ impl<'a> Parser<'a> {
                 return Ok(Stmt::Instruction(inst));
             }
             let inst = match (is_load, width) {
+                (true, FpMemWidth::H16) => Inst::LdrFpImm16 { rt, rn, offset: 0 },
+                (false, FpMemWidth::H16) => Inst::StrFpImm16 { rt, rn, offset: 0 },
+                (true, FpMemWidth::B8) => Inst::LdrFpImm8 { rt, rn, offset: 0 },
+                (false, FpMemWidth::B8) => Inst::StrFpImm8 { rt, rn, offset: 0 },
                 (true, FpMemWidth::D64) => Inst::LdrFpImm64 { rt, rn, offset: 0 },
                 (false, FpMemWidth::D64) => Inst::StrFpImm64 { rt, rn, offset: 0 },
                 (true, FpMemWidth::S32) => Inst::LdrFpImm32 { rt, rn, offset: 0 },
@@ -2941,6 +3033,9 @@ impl<'a> Parser<'a> {
 
         self.expect(&Tok::Comma)?;
         if self.starts_non_register_symbol_reference() {
+            if is_scalar_narrow {
+                return Err(self.err("symbolic narrow FP loads/stores are not supported".into()));
+            }
             let label = self.parse_label_reference()?;
             let kind = self.parse_symbol_reloc_modifier(
                 None,
@@ -2950,6 +3045,7 @@ impl<'a> Parser<'a> {
             let addend = self.parse_optional_symbol_addend()?;
             self.expect(&Tok::RBracket)?;
             let inst = match (is_load, width) {
+                (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                 (true, FpMemWidth::D64) => Inst::LdrFpImm64 { rt, rn, offset: 0 },
                 (false, FpMemWidth::D64) => Inst::StrFpImm64 { rt, rn, offset: 0 },
                 (true, FpMemWidth::S32) => Inst::LdrFpImm32 { rt, rn, offset: 0 },
@@ -2968,9 +3064,15 @@ impl<'a> Parser<'a> {
         }
 
         if self.starts_register_like_operand() {
+            if is_scalar_narrow {
+                return Err(
+                    self.err("register-offset narrow FP loads/stores are not supported".into())
+                );
+            }
             let (rm, extend, shift) = self.parse_reg_offset_operand(width.scale())?;
             self.expect(&Tok::RBracket)?;
             let inst = match (is_load, width) {
+                (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                 (true, FpMemWidth::D64) => Inst::LdrFpReg64 {
                     rt,
                     rn,
@@ -3021,7 +3123,11 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
+            if is_scalar_narrow {
+                return Err(self.err("pre-index narrow FP loads/stores are not supported".into()));
+            }
             let inst = match (is_load, width) {
+                (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                 (true, FpMemWidth::D64) => Inst::LdrFpPre64 {
                     rt,
                     rn,
@@ -3057,6 +3163,26 @@ impl<'a> Parser<'a> {
         }
 
         let inst = match (is_load, width) {
+            (true, FpMemWidth::H16) => Inst::LdrFpImm16 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            (false, FpMemWidth::H16) => Inst::StrFpImm16 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            (true, FpMemWidth::B8) => Inst::LdrFpImm8 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            (false, FpMemWidth::B8) => Inst::StrFpImm8 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
             (true, FpMemWidth::D64) => Inst::LdrFpImm64 {
                 rt,
                 rn,
@@ -3262,13 +3388,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_ldstb_h_post_inst(
-        &self,
-        mnemonic: &str,
-        rt: GpReg,
-        rn: GpReg,
-        offset: i16,
-    ) -> Inst {
+    fn parse_ldstb_h_post_inst(&self, mnemonic: &str, rt: GpReg, rn: GpReg, offset: i16) -> Inst {
         match mnemonic {
             "ldrb" => Inst::LdrbPost { rt, rn, offset },
             "ldrh" => Inst::LdrhPost { rt, rn, offset },
@@ -3338,9 +3458,7 @@ impl<'a> Parser<'a> {
                 let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
                 return Ok(self.parse_ldst_signed_b_h_post_inst(mnemonic, rt, sf, rn, offset));
             }
-            return Ok(self.parse_ldst_signed_b_h_offset_inst(
-                mnemonic, rt, sf, rn, 0,
-            ));
+            return Ok(self.parse_ldst_signed_b_h_offset_inst(mnemonic, rt, sf, rn, 0));
         }
 
         self.expect(&Tok::Comma)?;
@@ -3365,13 +3483,9 @@ impl<'a> Parser<'a> {
         let offset = self.parse_immediate_const_expr("memory offset")? as i16;
         self.expect(&Tok::RBracket)?;
         if self.eat(&Tok::Bang) {
-            return Ok(self.parse_ldst_signed_b_h_pre_inst(
-                mnemonic, rt, sf, rn, offset,
-            ));
+            return Ok(self.parse_ldst_signed_b_h_pre_inst(mnemonic, rt, sf, rn, offset));
         }
-        Ok(self.parse_ldst_signed_b_h_offset_inst(
-            mnemonic, rt, sf, rn, offset,
-        ))
+        Ok(self.parse_ldst_signed_b_h_offset_inst(mnemonic, rt, sf, rn, offset))
     }
 
     fn parse_ldrsw(&mut self) -> Result<Stmt, ParseError> {
@@ -3574,6 +3688,9 @@ impl<'a> Parser<'a> {
                 self.err("ldp/stp FP register pair must use matching register widths".into())
             );
         }
+        if matches!(width, FpMemWidth::B8 | FpMemWidth::H16) {
+            return Err(self.err("ldp/stp does not support b/h FP register pairs".into()));
+        }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
@@ -3582,6 +3699,7 @@ impl<'a> Parser<'a> {
             if self.eat(&Tok::Comma) {
                 let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
                 return Ok(match (is_load, width) {
+                    (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                     (true, FpMemWidth::D64) => Inst::LdpFpPost64 {
                         rt1,
                         rt2,
@@ -3622,6 +3740,7 @@ impl<'a> Parser<'a> {
             }
 
             return Ok(match (is_load, width) {
+                (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                 (true, FpMemWidth::D64) => Inst::LdpFpOff64 {
                     rt1,
                     rt2,
@@ -3667,6 +3786,7 @@ impl<'a> Parser<'a> {
 
         if self.eat(&Tok::Bang) {
             return Ok(match (is_load, width) {
+                (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                 (true, FpMemWidth::D64) => Inst::LdpFpPre64 {
                     rt1,
                     rt2,
@@ -3707,6 +3827,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(match (is_load, width) {
+            (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
             (true, FpMemWidth::D64) => Inst::LdpFpOff64 {
                 rt1,
                 rt2,
@@ -3820,8 +3941,12 @@ impl<'a> Parser<'a> {
         let rm = self.parse_simd_reg()?;
         self.expect(&Tok::Comma)?;
         let index_value = self.parse_immediate_const_expr("vector extract offset")?;
-        let index = u8::try_from(index_value)
-            .map_err(|_| self.err(format!("vector extract offset {} out of range", index_value)))?;
+        let index = u8::try_from(index_value).map_err(|_| {
+            self.err(format!(
+                "vector extract offset {} out of range",
+                index_value
+            ))
+        })?;
         if index > 15 {
             return Err(self.err(format!(
                 "vector extract offset {} out of range",
@@ -3866,9 +3991,9 @@ impl<'a> Parser<'a> {
             }
             count += 1;
             if count > 4 {
-                return Err(self.err(
-                    "SIMD table register list supports at most 4 registers".to_string(),
-                ));
+                return Err(
+                    self.err("SIMD table register list supports at most 4 registers".to_string())
+                );
             }
             prev = next;
         }
@@ -3915,10 +4040,26 @@ impl<'a> Parser<'a> {
 
     fn parse_simd_dup(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (width, make_inst): (SimdLaneWidth, fn(FpReg, FpReg, u8) -> Inst) = match mnemonic {
-            "dup.16b" => (SimdLaneWidth::B8, |rd, rn, index| Inst::DupV16B { rd, rn, index }),
-            "dup.8h" => (SimdLaneWidth::H16, |rd, rn, index| Inst::DupV8H { rd, rn, index }),
-            "dup.4s" => (SimdLaneWidth::S32, |rd, rn, index| Inst::DupV4S { rd, rn, index }),
-            "dup.2d" => (SimdLaneWidth::D64, |rd, rn, index| Inst::DupV2D { rd, rn, index }),
+            "dup.16b" => (SimdLaneWidth::B8, |rd, rn, index| Inst::DupV16B {
+                rd,
+                rn,
+                index,
+            }),
+            "dup.8h" => (SimdLaneWidth::H16, |rd, rn, index| Inst::DupV8H {
+                rd,
+                rn,
+                index,
+            }),
+            "dup.4s" => (SimdLaneWidth::S32, |rd, rn, index| Inst::DupV4S {
+                rd,
+                rn,
+                index,
+            }),
+            "dup.2d" => (SimdLaneWidth::D64, |rd, rn, index| Inst::DupV2D {
+                rd,
+                rn,
+                index,
+            }),
             _ => unreachable!(),
         };
         let rd = self.parse_simd_reg()?;
@@ -3947,10 +4088,7 @@ impl<'a> Parser<'a> {
         let index = u8::try_from(value)
             .map_err(|_| self.err(format!("lane index {} out of range", value)))?;
         if index > max_index {
-            return Err(self.err(format!(
-                "lane index {} out of range for lane width",
-                value
-            )));
+            return Err(self.err(format!("lane index {} out of range for lane width", value)));
         }
         Ok(index)
     }
@@ -4056,17 +4194,41 @@ impl<'a> Parser<'a> {
                     }
                 }
                 _ => {
-                    // FMOV Dd, Xn (GP → FP)
-                    let rn = self.parse_gp_reg()?;
-                    Ok(Inst::FmovToD { rd, rn })
+                    // FMOV Dd, Xn or FMOV Sd, Wn (GP → FP)
+                    let (rn, sf, kind) = self.parse_gp_reg_with_size_kind()?;
+                    if kind == GpRegKind::Sp {
+                        return Err(self.err("fmov does not allow SP".into()));
+                    }
+                    if is_double {
+                        if !sf {
+                            return Err(
+                                self.err("fmov dN, ... requires an x-register source".into())
+                            );
+                        }
+                        Ok(Inst::FmovToD { rd, rn })
+                    } else {
+                        if sf {
+                            return Err(
+                                self.err("fmov sN, ... requires a w-register source".into())
+                            );
+                        }
+                        Ok(Inst::FmovToS { rd, rn })
+                    }
                 }
             }
         } else {
-            // FMOV Xd, Dn (FP → GP)
-            let rd = parse_gp_reg_name(&lower)
-                .ok_or_else(|| self.err(format!("bad GP reg '{}'", name)))?;
-            let (rn, _) = self.parse_fp_reg_with_size()?;
-            Ok(Inst::FmovFromD { rd, rn })
+            // FMOV Xd, Dn or FMOV Wd, Sn (FP → GP)
+            let (rd, sf, kind) = self.gp_reg_with_size_kind_from_name(&name, &lower)?;
+            if kind == GpRegKind::Sp {
+                return Err(self.err("fmov does not allow SP".into()));
+            }
+            let (rn, is_double) = self.parse_fp_reg_with_size()?;
+            match (sf, is_double) {
+                (true, true) => Ok(Inst::FmovFromD { rd, rn }),
+                (false, false) => Ok(Inst::FmovFromS { rd, rn }),
+                (true, false) => Err(self.err("fmov xN, ... requires a d-register source".into())),
+                (false, true) => Err(self.err("fmov wN, ... requires an s-register source".into())),
+            }
         }
     }
 
@@ -4077,11 +4239,26 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.err(format!("expected vector register, got '{}'", name)))
     }
 
+    fn peek_is_gp_reg(&self) -> bool {
+        match self.peek() {
+            Tok::Ident(name) => parse_gp_reg_name(&name.to_lowercase()).is_some(),
+            _ => false,
+        }
+    }
+
+    fn peek_is_simd_reg(&self) -> bool {
+        match self.peek() {
+            Tok::Ident(name) => parse_simd_reg_name(&name.to_lowercase()).is_some(),
+            _ => false,
+        }
+    }
+
     fn peek_is_scalar_fp_reg(&self) -> bool {
         match self.peek() {
             Tok::Ident(name) => {
                 let lower = name.to_lowercase();
-                (lower.starts_with('s') || lower.starts_with('d')) && parse_fp_reg_name(&lower).is_some()
+                (lower.starts_with('s') || lower.starts_with('d'))
+                    && parse_fp_reg_name(&lower).is_some()
             }
             _ => false,
         }
@@ -4098,10 +4275,7 @@ impl<'a> Parser<'a> {
                 value
             }
             other => {
-                return Err(self.err(format!(
-                    "expected floating-point immediate, got {}",
-                    other
-                )))
+                return Err(self.err(format!("expected floating-point immediate, got {}", other)))
             }
         };
 
@@ -4450,12 +4624,16 @@ fn looks_like_gp_register_name(name: &str) -> bool {
 
 fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
     let lower = name.to_lowercase();
-    let (prefix, num_str) =
-        if lower.starts_with('d') || lower.starts_with('s') || lower.starts_with('q') {
-            (&lower[..1], &lower[1..])
-        } else {
-            return None;
-        };
+    let (prefix, num_str) = if lower.starts_with('b')
+        || lower.starts_with('h')
+        || lower.starts_with('d')
+        || lower.starts_with('s')
+        || lower.starts_with('q')
+    {
+        (&lower[..1], &lower[1..])
+    } else {
+        return None;
+    };
     let num: u8 = num_str.parse().ok()?;
     if num > 31 {
         return None;
@@ -5775,6 +5953,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldr_h_offset() {
+        assert_eq!(
+            parse_inst("ldr h2, [sp, #14]"),
+            Inst::LdrFpImm16 {
+                rt: FpReg::new(2),
+                rn: SP,
+                offset: 14
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_b_offset() {
+        assert_eq!(
+            parse_inst("ldr b2, [sp, #15]"),
+            Inst::LdrFpImm8 {
+                rt: FpReg::new(2),
+                rn: SP,
+                offset: 15
+            }
+        );
+    }
+
+    #[test]
     fn parse_str_q_base() {
         assert_eq!(
             parse_inst("str q1, [x0]"),
@@ -5782,6 +5984,30 @@ mod tests {
                 rt: FpReg::new(1),
                 rn: X0,
                 offset: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parse_str_h_offset() {
+        assert_eq!(
+            parse_inst("str h2, [sp, #14]"),
+            Inst::StrFpImm16 {
+                rt: FpReg::new(2),
+                rn: SP,
+                offset: 14
+            }
+        );
+    }
+
+    #[test]
+    fn parse_str_b_offset() {
+        assert_eq!(
+            parse_inst("str b2, [sp, #15]"),
+            Inst::StrFpImm8 {
+                rt: FpReg::new(2),
+                rn: SP,
+                offset: 15
             }
         );
     }
@@ -6118,18 +6344,12 @@ mod tests {
 
     #[test]
     fn parse_stlrb_w() {
-        assert_eq!(
-            parse_inst("stlrb w4, [x5]"),
-            Inst::Stlrb { rt: W4, rn: X5 }
-        );
+        assert_eq!(parse_inst("stlrb w4, [x5]"), Inst::Stlrb { rt: W4, rn: X5 });
     }
 
     #[test]
     fn parse_stlrh_w() {
-        assert_eq!(
-            parse_inst("stlrh w6, [x7]"),
-            Inst::Stlrh { rt: W6, rn: X7 }
-        );
+        assert_eq!(parse_inst("stlrh w6, [x7]"), Inst::Stlrh { rt: W6, rn: X7 });
     }
 
     #[test]
@@ -7229,6 +7449,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_fmov_to_s() {
+        assert_eq!(parse_inst("fmov s0, w1"), Inst::FmovToS { rd: S0, rn: W1 });
+    }
+
+    #[test]
+    fn parse_fmov_from_s() {
+        assert_eq!(
+            parse_inst("fmov w0, s1"),
+            Inst::FmovFromS { rd: W0, rn: S1 }
+        );
+    }
+
+    #[test]
     fn parse_mov_from_lane_d() {
         assert_eq!(
             parse_inst("mov d3, v4[1]"),
@@ -7262,6 +7495,128 @@ mod tests {
                 rd_index: 1,
                 rn: FpReg::new(8),
                 rn_index: 1
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_lane_h() {
+        assert_eq!(
+            parse_inst("mov.h v0[5], v1[0]"),
+            Inst::MovLaneH {
+                rd: FpReg::new(0),
+                rd_index: 5,
+                rn: FpReg::new(1),
+                rn_index: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_lane_b() {
+        assert_eq!(
+            parse_inst("mov.b v0[7], v1[0]"),
+            Inst::MovLaneB {
+                rd: FpReg::new(0),
+                rd_index: 7,
+                rn: FpReg::new(1),
+                rn_index: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_from_lane_gp_s() {
+        assert_eq!(
+            parse_inst("mov.s w0, v1[2]"),
+            Inst::MovFromLaneGpS {
+                rd: W0,
+                rn: FpReg::new(1),
+                index: 2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_from_lane_gp_d() {
+        assert_eq!(
+            parse_inst("mov.d x0, v1[1]"),
+            Inst::MovFromLaneGpD {
+                rd: X0,
+                rn: FpReg::new(1),
+                index: 1
+            }
+        );
+    }
+
+    #[test]
+    fn parse_umov_h() {
+        assert_eq!(
+            parse_inst("umov.h w1, v2[5]"),
+            Inst::UmovFromLaneH {
+                rd: W1,
+                rn: FpReg::new(2),
+                index: 5
+            }
+        );
+    }
+
+    #[test]
+    fn parse_umov_b() {
+        assert_eq!(
+            parse_inst("umov.b w3, v4[7]"),
+            Inst::UmovFromLaneB {
+                rd: W3,
+                rn: FpReg::new(4),
+                index: 7
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_lane_from_gp_s() {
+        assert_eq!(
+            parse_inst("mov.s v5[1], w6"),
+            Inst::MovLaneFromGpS {
+                rd: FpReg::new(5),
+                rd_index: 1,
+                rn: W6
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_lane_from_gp_d() {
+        assert_eq!(
+            parse_inst("mov.d v0[1], x1"),
+            Inst::MovLaneFromGpD {
+                rd: FpReg::new(0),
+                rd_index: 1,
+                rn: X1
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_lane_from_gp_h() {
+        assert_eq!(
+            parse_inst("mov.h v7[5], w8"),
+            Inst::MovLaneFromGpH {
+                rd: FpReg::new(7),
+                rd_index: 5,
+                rn: W8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_lane_from_gp_b() {
+        assert_eq!(
+            parse_inst("mov.b v9[7], w10"),
+            Inst::MovLaneFromGpB {
+                rd: FpReg::new(9),
+                rd_index: 7,
+                rn: W10
             }
         );
     }

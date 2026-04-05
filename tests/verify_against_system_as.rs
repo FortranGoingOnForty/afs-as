@@ -1069,13 +1069,7 @@ fn sys_stlrh() {
 }
 #[test]
 fn sys_stlr() {
-    verify(
-        "stlr x10, [x11]",
-        Inst::Stlr64 {
-            rt: X10,
-            rn: X11,
-        },
-    );
+    verify("stlr x10, [x11]", Inst::Stlr64 { rt: X10, rn: X11 });
 }
 #[test]
 fn sys_ldaddalb() {
@@ -1512,6 +1506,28 @@ fn sys_ldr_q() {
     );
 }
 #[test]
+fn sys_ldr_h() {
+    verify(
+        "ldr h2, [sp, #14]",
+        Inst::LdrFpImm16 {
+            rt: FpReg::new(2),
+            rn: SP,
+            offset: 14,
+        },
+    );
+}
+#[test]
+fn sys_ldr_b() {
+    verify(
+        "ldr b2, [sp, #15]",
+        Inst::LdrFpImm8 {
+            rt: FpReg::new(2),
+            rn: SP,
+            offset: 15,
+        },
+    );
+}
+#[test]
 fn sys_str_q() {
     verify(
         "str q1, [x0]",
@@ -1519,6 +1535,28 @@ fn sys_str_q() {
             rt: FpReg::new(1),
             rn: X0,
             offset: 0,
+        },
+    );
+}
+#[test]
+fn sys_str_h() {
+    verify(
+        "str h2, [sp, #14]",
+        Inst::StrFpImm16 {
+            rt: FpReg::new(2),
+            rn: SP,
+            offset: 14,
+        },
+    );
+}
+#[test]
+fn sys_str_b() {
+    verify(
+        "str b2, [sp, #15]",
+        Inst::StrFpImm8 {
+            rt: FpReg::new(2),
+            rn: SP,
+            offset: 15,
         },
     );
 }
@@ -2263,6 +2301,14 @@ fn sys_fmov_reg_d() {
     verify("fmov d1, d2", Inst::FmovRegD { rd: D1, rn: D2 });
 }
 #[test]
+fn sys_fmov_to_s() {
+    verify("fmov s0, w1", Inst::FmovToS { rd: S0, rn: W1 });
+}
+#[test]
+fn sys_fmov_from_s() {
+    verify("fmov w0, s1", Inst::FmovFromS { rd: W0, rn: S1 });
+}
+#[test]
 fn sys_mov_from_lane_s() {
     verify(
         "mov s0, v1[2]",
@@ -2305,6 +2351,118 @@ fn sys_mov_lane_d() {
             rd_index: 1,
             rn: FpReg::new(8),
             rn_index: 1,
+        },
+    );
+}
+#[test]
+fn sys_mov_lane_h() {
+    verify(
+        "mov.h v0[5], v1[0]",
+        Inst::MovLaneH {
+            rd: FpReg::new(0),
+            rd_index: 5,
+            rn: FpReg::new(1),
+            rn_index: 0,
+        },
+    );
+}
+#[test]
+fn sys_mov_lane_b() {
+    verify(
+        "mov.b v0[7], v1[0]",
+        Inst::MovLaneB {
+            rd: FpReg::new(0),
+            rd_index: 7,
+            rn: FpReg::new(1),
+            rn_index: 0,
+        },
+    );
+}
+#[test]
+fn sys_mov_from_lane_gp_s() {
+    verify(
+        "mov.s w0, v1[2]",
+        Inst::MovFromLaneGpS {
+            rd: W0,
+            rn: FpReg::new(1),
+            index: 2,
+        },
+    );
+}
+#[test]
+fn sys_mov_from_lane_gp_d() {
+    verify(
+        "mov.d x0, v1[1]",
+        Inst::MovFromLaneGpD {
+            rd: X0,
+            rn: FpReg::new(1),
+            index: 1,
+        },
+    );
+}
+#[test]
+fn sys_umov_h() {
+    verify(
+        "umov.h w1, v2[5]",
+        Inst::UmovFromLaneH {
+            rd: W1,
+            rn: FpReg::new(2),
+            index: 5,
+        },
+    );
+}
+#[test]
+fn sys_umov_b() {
+    verify(
+        "umov.b w3, v4[7]",
+        Inst::UmovFromLaneB {
+            rd: W3,
+            rn: FpReg::new(4),
+            index: 7,
+        },
+    );
+}
+#[test]
+fn sys_mov_lane_from_gp_s() {
+    verify(
+        "mov.s v5[1], w6",
+        Inst::MovLaneFromGpS {
+            rd: FpReg::new(5),
+            rd_index: 1,
+            rn: W6,
+        },
+    );
+}
+#[test]
+fn sys_mov_lane_from_gp_d() {
+    verify(
+        "mov.d v0[1], x1",
+        Inst::MovLaneFromGpD {
+            rd: FpReg::new(0),
+            rd_index: 1,
+            rn: X1,
+        },
+    );
+}
+#[test]
+fn sys_mov_lane_from_gp_h() {
+    verify(
+        "mov.h v7[5], w8",
+        Inst::MovLaneFromGpH {
+            rd: FpReg::new(7),
+            rd_index: 5,
+            rn: W8,
+        },
+    );
+}
+#[test]
+fn sys_mov_lane_from_gp_b() {
+    verify(
+        "mov.b v9[7], w10",
+        Inst::MovLaneFromGpB {
+            rd: FpReg::new(9),
+            rd_index: 7,
+            rn: W10,
         },
     );
 }

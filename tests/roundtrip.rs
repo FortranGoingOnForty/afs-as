@@ -649,8 +649,24 @@ fn rt_ldr_q() {
     roundtrip(".text\nldr q0, [sp, #16]\n");
 }
 #[test]
+fn rt_ldr_h() {
+    roundtrip(".text\nldr h2, [sp, #14]\n");
+}
+#[test]
+fn rt_ldr_b() {
+    roundtrip(".text\nldr b2, [sp, #15]\n");
+}
+#[test]
 fn rt_str_q() {
     roundtrip(".text\nstr q1, [x0]\n");
+}
+#[test]
+fn rt_str_h() {
+    roundtrip(".text\nstr h2, [sp, #14]\n");
+}
+#[test]
+fn rt_str_b() {
+    roundtrip(".text\nstr b2, [sp, #15]\n");
 }
 #[test]
 fn rt_ldr_q_lit() {
@@ -921,6 +937,14 @@ fn rt_fmov_reg_d() {
     roundtrip(".text\nfmov d1, d2\n");
 }
 #[test]
+fn rt_fmov_to_s() {
+    roundtrip(".text\nfmov s0, w1\n");
+}
+#[test]
+fn rt_fmov_from_s() {
+    roundtrip(".text\nfmov w0, s1\n");
+}
+#[test]
 fn rt_mov_from_lane_s() {
     roundtrip(".text\nmov s0, v1[2]\n");
 }
@@ -935,6 +959,46 @@ fn rt_mov_lane_s() {
 #[test]
 fn rt_mov_lane_d() {
     roundtrip(".text\nmov.d v7[1], v8[1]\n");
+}
+#[test]
+fn rt_mov_lane_h() {
+    roundtrip(".text\nmov.h v0[5], v1[0]\n");
+}
+#[test]
+fn rt_mov_lane_b() {
+    roundtrip(".text\nmov.b v0[7], v1[0]\n");
+}
+#[test]
+fn rt_mov_from_lane_gp_s() {
+    roundtrip(".text\nmov.s w0, v1[2]\n");
+}
+#[test]
+fn rt_mov_from_lane_gp_d() {
+    roundtrip(".text\nmov.d x0, v1[1]\n");
+}
+#[test]
+fn rt_umov_h() {
+    roundtrip(".text\numov.h w1, v2[5]\n");
+}
+#[test]
+fn rt_umov_b() {
+    roundtrip(".text\numov.b w3, v4[7]\n");
+}
+#[test]
+fn rt_mov_lane_from_gp_s() {
+    roundtrip(".text\nmov.s v5[1], w6\n");
+}
+#[test]
+fn rt_mov_lane_from_gp_d() {
+    roundtrip(".text\nmov.d v0[1], x1\n");
+}
+#[test]
+fn rt_mov_lane_from_gp_h() {
+    roundtrip(".text\nmov.h v7[5], w8\n");
+}
+#[test]
+fn rt_mov_lane_from_gp_b() {
+    roundtrip(".text\nmov.b v9[7], w10\n");
 }
 #[test]
 fn rt_dup_16b() {
