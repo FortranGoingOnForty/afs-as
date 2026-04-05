@@ -1994,6 +1994,17 @@ fn sys_fmax_4s() {
     );
 }
 #[test]
+fn sys_fmaxnm_4s() {
+    verify(
+        "fmaxnm.4s v0, v1, v2",
+        Inst::FmaxnmV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_fmin_4s() {
     verify(
         "fmin.4s v2, v3, v4",
@@ -2001,6 +2012,17 @@ fn sys_fmin_4s() {
             rd: FpReg::new(2),
             rn: FpReg::new(3),
             rm: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_fminnm_4s() {
+    verify(
+        "fminnm.4s v3, v4, v5",
+        Inst::FminnmV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
         },
     );
 }
