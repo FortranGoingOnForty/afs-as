@@ -1123,6 +1123,10 @@ pub enum Inst {
     FaddS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FADD.4S Vd, Vn, Vm
     FaddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FADDP.4S Vd, Vn, Vm
+    FaddpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FADDP.2S Sd, Vn
+    FaddpV2S { rd: FpReg, rn: FpReg },
     /// ADD.4S Vd, Vn, Vm
     AddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMAX.4S Vd, Vn, Vm
@@ -1147,6 +1151,10 @@ pub enum Inst {
     UminvV4S { rd: FpReg, rn: FpReg },
     /// SMINV.4S Sd, Vn
     SminvV4S { rd: FpReg, rn: FpReg },
+    /// FMAXV.4S Sd, Vn
+    FmaxvV4S { rd: FpReg, rn: FpReg },
+    /// FMINV.4S Sd, Vn
+    FminvV4S { rd: FpReg, rn: FpReg },
     /// FSUB.4S Vd, Vn, Vm
     FsubV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// SUB.4S Vd, Vn, Vm
@@ -2345,6 +2353,8 @@ impl Inst {
             Inst::FdivD { rd, rn, rm } => fp_arith(0b01, 0b0001, *rm, *rn, *rd),
             Inst::FaddS { rd, rn, rm } => fp_arith(0b00, 0b0010, *rm, *rn, *rd),
             Inst::FaddV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20D400, *rm, *rn, *rd),
+            Inst::FaddpV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20D400, *rm, *rn, *rd),
+            Inst::FaddpV2S { rd, rn } => simd_reduce_4s(0x7E30D800, *rn, *rd),
             Inst::AddV4S { rd, rn, rm } => simd_binary(0x4EA08400, *rm, *rn, *rd),
             Inst::FmaxV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20F400, *rm, *rn, *rd),
             Inst::FminV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0F400, *rm, *rn, *rd),
@@ -2357,6 +2367,8 @@ impl Inst {
             Inst::SmaxvV4S { rd, rn } => simd_reduce_4s(0x4EB0A800, *rn, *rd),
             Inst::UminvV4S { rd, rn } => simd_reduce_4s(0x6EB1A800, *rn, *rd),
             Inst::SminvV4S { rd, rn } => simd_reduce_4s(0x4EB1A800, *rn, *rd),
+            Inst::FmaxvV4S { rd, rn } => simd_reduce_4s(0x6E30F800, *rn, *rd),
+            Inst::FminvV4S { rd, rn } => simd_reduce_4s(0x6EB0F800, *rn, *rd),
             Inst::FsubV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0D400, *rm, *rn, *rd),
             Inst::SubV4S { rd, rn, rm } => simd_binary(0x6EA08400, *rm, *rn, *rd),
             Inst::FsubS { rd, rn, rm } => fp_arith(0b00, 0b0011, *rm, *rn, *rd),
@@ -5452,6 +5464,29 @@ mod tests {
         );
     }
     #[test]
+    fn faddp_4s_v0_v1_v2() {
+        assert_eq!(
+            Inst::FaddpV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+            .encode(),
+            0x6E22D420
+        );
+    }
+    #[test]
+    fn faddp_2s_s3_v4() {
+        assert_eq!(
+            Inst::FaddpV2S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+            .encode(),
+            0x7E30D883
+        );
+    }
+    #[test]
     fn umaxv_4s_s1_v2() {
         assert_eq!(
             Inst::UmaxvV4S {
@@ -5493,6 +5528,28 @@ mod tests {
             }
             .encode(),
             0x4EB1A883
+        );
+    }
+    #[test]
+    fn fmaxv_4s_s1_v2() {
+        assert_eq!(
+            Inst::FmaxvV4S {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x6E30F841
+        );
+    }
+    #[test]
+    fn fminv_4s_s3_v4() {
+        assert_eq!(
+            Inst::FminvV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+            .encode(),
+            0x6EB0F883
         );
     }
     #[test]
