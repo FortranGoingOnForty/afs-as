@@ -1175,6 +1175,12 @@ pub enum Inst {
     BslV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// CMEQ.4S Vd, Vn, Vm
     CmeqV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// CMHS.4S Vd, Vn, Vm
+    CmhsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// CMHI.4S Vd, Vn, Vm
+    CmhiV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// CMGE.4S Vd, Vn, Vm
+    CmgeV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// CMGT.4S Vd, Vn, Vm
     CmgtV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// EXT.16B Vd, Vn, Vm, #index
@@ -2343,6 +2349,9 @@ impl Inst {
             Inst::BitV16B { rd, rn, rm } => simd_binary(0x6EA01C00, *rm, *rn, *rd),
             Inst::BslV16B { rd, rn, rm } => simd_binary(0x6E601C00, *rm, *rn, *rd),
             Inst::CmeqV4S { rd, rn, rm } => simd_binary(0x6EA08C00, *rm, *rn, *rd),
+            Inst::CmhsV4S { rd, rn, rm } => simd_binary(0x6EA03C00, *rm, *rn, *rd),
+            Inst::CmhiV4S { rd, rn, rm } => simd_binary(0x6EA03400, *rm, *rn, *rd),
+            Inst::CmgeV4S { rd, rn, rm } => simd_binary(0x4EA03C00, *rm, *rn, *rd),
             Inst::CmgtV4S { rd, rn, rm } => simd_binary(0x4EA03400, *rm, *rn, *rd),
             Inst::ExtV16B { rd, rn, rm, index } => simd_ext_16b(*rm, *rn, *rd, *index),
             Inst::Rev64V4S { rd, rn } => simd_unary(0x4EA00800, *rn, *rd),
@@ -5484,6 +5493,42 @@ mod tests {
             }
             .encode(),
             0x6EA18C00
+        );
+    }
+    #[test]
+    fn cmhs_4s_v0_v0_v1() {
+        assert_eq!(
+            Inst::CmhsV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+            .encode(),
+            0x6EA13C00
+        );
+    }
+    #[test]
+    fn cmhi_4s_v2_v3_v4() {
+        assert_eq!(
+            Inst::CmhiV4S {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3),
+                rm: FpReg::new(4)
+            }
+            .encode(),
+            0x6EA43462
+        );
+    }
+    #[test]
+    fn cmge_4s_v5_v6_v7() {
+        assert_eq!(
+            Inst::CmgeV4S {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6),
+                rm: FpReg::new(7)
+            }
+            .encode(),
+            0x4EA73CC5
         );
     }
     #[test]

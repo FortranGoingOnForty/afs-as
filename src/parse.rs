@@ -1265,7 +1265,9 @@ impl<'a> Parser<'a> {
             // FP arithmetic (double)
             "fadd" => self.parse_fp_arith("fadd"),
             "add.4s" | "sub.4s" => self.parse_simd_int_arith_4s(mnemonic),
-            "cmeq.4s" | "cmgt.4s" => self.parse_simd_compare_4s(mnemonic),
+            "cmeq.4s" | "cmhs.4s" | "cmhi.4s" | "cmge.4s" | "cmgt.4s" => {
+                self.parse_simd_compare_4s(mnemonic)
+            }
             "fadd.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" => self.parse_simd_fp_arith_4s(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
@@ -3944,6 +3946,9 @@ impl<'a> Parser<'a> {
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
             "cmeq.4s" => Inst::CmeqV4S { rd, rn, rm },
+            "cmhs.4s" => Inst::CmhsV4S { rd, rn, rm },
+            "cmhi.4s" => Inst::CmhiV4S { rd, rn, rm },
+            "cmge.4s" => Inst::CmgeV4S { rd, rn, rm },
             "cmgt.4s" => Inst::CmgtV4S { rd, rn, rm },
             _ => unreachable!(),
         })
@@ -7253,6 +7258,42 @@ mod tests {
                 rd: FpReg::new(0),
                 rn: FpReg::new(0),
                 rm: FpReg::new(1)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_cmhs_4s() {
+        assert_eq!(
+            parse_inst("cmhs.4s v0, v0, v1"),
+            Inst::CmhsV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_cmhi_4s() {
+        assert_eq!(
+            parse_inst("cmhi.4s v2, v3, v4"),
+            Inst::CmhiV4S {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3),
+                rm: FpReg::new(4)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_cmge_4s() {
+        assert_eq!(
+            parse_inst("cmge.4s v5, v6, v7"),
+            Inst::CmgeV4S {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6),
+                rm: FpReg::new(7)
             }
         );
     }

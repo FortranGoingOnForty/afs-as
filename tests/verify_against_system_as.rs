@@ -2093,6 +2093,39 @@ fn sys_cmeq_4s() {
     );
 }
 #[test]
+fn sys_cmhs_4s() {
+    verify(
+        "cmhs.4s v0, v0, v1",
+        Inst::CmhsV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+            rm: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_cmhi_4s() {
+    verify(
+        "cmhi.4s v2, v3, v4",
+        Inst::CmhiV4S {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+            rm: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_cmge_4s() {
+    verify(
+        "cmge.4s v5, v6, v7",
+        Inst::CmgeV4S {
+            rd: FpReg::new(5),
+            rn: FpReg::new(6),
+            rm: FpReg::new(7),
+        },
+    );
+}
+#[test]
 fn sys_cmgt_4s() {
     verify(
         "cmgt.4s v2, v3, v4",

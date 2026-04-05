@@ -857,6 +857,18 @@ fn rt_cmeq_4s() {
     roundtrip(".text\ncmeq.4s v0, v0, v1\n");
 }
 #[test]
+fn rt_cmhs_4s() {
+    roundtrip(".text\ncmhs.4s v0, v0, v1\n");
+}
+#[test]
+fn rt_cmhi_4s() {
+    roundtrip(".text\ncmhi.4s v2, v3, v4\n");
+}
+#[test]
+fn rt_cmge_4s() {
+    roundtrip(".text\ncmge.4s v5, v6, v7\n");
+}
+#[test]
 fn rt_cmgt_4s() {
     roundtrip(".text\ncmgt.4s v2, v3, v4\n");
 }
