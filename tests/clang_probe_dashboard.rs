@@ -158,6 +158,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_add",
+        source: "vector_add.c",
+        driver: "typedef float v4f __attribute__((vector_size(16)));\nextern v4f add4(v4f, v4f);\nextern void add4_store(float *, const float *, const float *);\nint main(void) {\n    v4f a = {1.0f, 2.0f, 3.0f, 4.0f};\n    v4f b = {10.0f, 20.0f, 30.0f, 40.0f};\n    v4f c = add4(a, b);\n    float out[4] = {0.0f, 0.0f, 0.0f, 0.0f};\n    add4_store(out, (const float *)&a, (const float *)&b);\n    return (c[0] != 11.0f) || (c[1] != 22.0f) || (c[2] != 33.0f) || (c[3] != 44.0f)\n        || (out[0] != 11.0f) || (out[1] != 22.0f) || (out[2] != 33.0f) || (out[3] != 44.0f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "bitops",
         source: "bitops.c",
         driver: "extern unsigned bit_mix(unsigned);\nint main(void) { return bit_mix(0xABu) != 117u; }\n",
