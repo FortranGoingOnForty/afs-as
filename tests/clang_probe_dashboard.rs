@@ -4,7 +4,11 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct ProbeCase {
     name: &'static str,
@@ -328,47 +332,99 @@ fn probe_source_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn format_command_output(output: &Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    match (stdout.trim().is_empty(), stderr.trim().is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => format!("\nstdout:\n{}", stdout),
+        (true, false) => format!("\nstderr:\n{}", stderr),
+        (false, false) => format!("\nstdout:\n{}\nstderr:\n{}", stdout, stderr),
+    }
+}
+
+fn run_command_output(
+    command: &mut Command,
+    context: &str,
+    timeout: Duration,
+) -> Result<Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("spawn {}: {}", context, err))?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|err| format!("wait for {}: {}", context, err));
+            }
+            Ok(None) if start.elapsed() >= timeout => {
+                let _ = child.kill();
+                let output = child
+                    .wait_with_output()
+                    .map_err(|err| format!("wait for timed out {}: {}", context, err))?;
+                return Err(format!(
+                    "{} timed out after {:.1?}{}",
+                    context,
+                    timeout,
+                    format_command_output(&output)
+                ));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(err) => return Err(format!("poll {}: {}", context, err)),
+        }
+    }
+}
+
 fn clang_generate_asm(source: &Path, opt: &str, output: &Path) -> Result<(), String> {
     let opt_flag = format!("-{}", opt);
-    let result = Command::new("clang")
-        .arg("-target")
+    let mut cmd = Command::new("clang");
+    cmd.arg("-target")
         .arg("arm64-apple-macos11")
         .arg("-S")
         .arg(&opt_flag)
         .arg("-o")
         .arg(output)
-        .arg(source)
-        .output()
-        .map_err(|err| format!("run clang -S for {}: {}", source.display(), err))?;
+        .arg(source);
+    let result = run_command_output(
+        &mut cmd,
+        &format!("clang -S for {} {}", source.display(), opt),
+        COMMAND_TIMEOUT,
+    )?;
     if result.status.success() {
         Ok(())
     } else {
         Err(format!(
-            "clang -S failed for {} {}:\n{}",
+            "clang -S failed for {} {}:{}",
             source.display(),
             opt,
-            String::from_utf8_lossy(&result.stderr)
+            format_command_output(&result)
         ))
     }
 }
 
 fn clang_compile_object(source: &Path, output: &Path) -> Result<(), String> {
-    let result = Command::new("clang")
-        .arg("-target")
+    let mut cmd = Command::new("clang");
+    cmd.arg("-target")
         .arg("arm64-apple-macos11")
         .arg("-c")
         .arg(source)
         .arg("-o")
-        .arg(output)
-        .output()
-        .map_err(|err| format!("run clang -c for {}: {}", source.display(), err))?;
+        .arg(output);
+    let result = run_command_output(
+        &mut cmd,
+        &format!("clang -c for {}", source.display()),
+        COMMAND_TIMEOUT,
+    )?;
     if result.status.success() {
         Ok(())
     } else {
         Err(format!(
-            "clang -c failed for {}:\n{}",
+            "clang -c failed for {}:{}",
             source.display(),
-            String::from_utf8_lossy(&result.stderr)
+            format_command_output(&result)
         ))
     }
 }
@@ -383,19 +439,20 @@ fn assemble_with_ours(src: &str, output: &Path) -> Result<(), String> {
 }
 
 fn assemble_with_system(src_path: &Path, output: &Path) -> Result<(), String> {
-    let result = Command::new("as")
-        .arg("-o")
-        .arg(output)
-        .arg(src_path)
-        .output()
-        .map_err(|err| format!("run system as for {}: {}", src_path.display(), err))?;
+    let mut cmd = Command::new("as");
+    cmd.arg("-o").arg(output).arg(src_path);
+    let result = run_command_output(
+        &mut cmd,
+        &format!("system as for {}", src_path.display()),
+        COMMAND_TIMEOUT,
+    )?;
     if result.status.success() {
         Ok(())
     } else {
         Err(format!(
-            "system as failed for {}:\n{}",
+            "system as failed for {}:{}",
             src_path.display(),
-            String::from_utf8_lossy(&result.stderr)
+            format_command_output(&result)
         ))
     }
 }
@@ -407,18 +464,34 @@ fn clang_link_binary(objects: &[&Path], output: &Path) -> Result<(), String> {
         cmd.arg(object);
     }
     cmd.arg("-o").arg(output);
-    let result = cmd
-        .output()
-        .map_err(|err| format!("run clang link for {}: {}", output.display(), err))?;
+    let result = run_command_output(
+        &mut cmd,
+        &format!("clang link for {}", output.display()),
+        COMMAND_TIMEOUT,
+    )?;
     if result.status.success() {
         Ok(())
     } else {
         Err(format!(
-            "clang link failed for {}:\n{}",
+            "clang link failed for {}:{}",
             output.display(),
-            String::from_utf8_lossy(&result.stderr)
+            format_command_output(&result)
         ))
     }
+}
+
+fn run_binary_with_timeout(path: &Path) -> Result<(i32, String, String), String> {
+    let mut cmd = Command::new(path);
+    let output = run_command_output(
+        &mut cmd,
+        &format!("run binary {}", path.display()),
+        COMMAND_TIMEOUT,
+    )?;
+    Ok((
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
 }
 
 fn compare_object_semantics(ours: &Path, reference: &Path) -> Result<(), String> {
@@ -577,8 +650,20 @@ fn run_probe(case: &ProbeCase, opt: &'static str) -> ProbeResult {
     }
     result.status.link = true;
 
-    let (our_code, our_stdout, our_stderr) = common::run_binary(&paths.bin);
-    let (ref_code, ref_stdout, ref_stderr) = common::run_binary(&ref_bin);
+    let (our_code, our_stdout, our_stderr) = match run_binary_with_timeout(&paths.bin) {
+        Ok(output) => output,
+        Err(err) => {
+            result.detail = Some(err);
+            return result;
+        }
+    };
+    let (ref_code, ref_stdout, ref_stderr) = match run_binary_with_timeout(&ref_bin) {
+        Ok(output) => output,
+        Err(err) => {
+            result.detail = Some(err);
+            return result;
+        }
+    };
     if our_code != 0 || ref_code != 0 {
         result.detail = Some(format!(
             "unexpected exit codes ours={} ref={}\nours stderr:\n{}\nref stderr:\n{}",
@@ -648,12 +733,47 @@ fn render_dashboard(results: &[ProbeResult]) -> String {
 
 #[test]
 fn clang_probe_dashboard() {
+    let case_filter = std::env::var("AFS_CLANG_PROBE_CASE").ok();
+    let opt_filter = std::env::var("AFS_CLANG_PROBE_OPT").ok();
+    let fail_fast = std::env::var("AFS_CLANG_PROBE_FAIL_FAST")
+        .ok()
+        .is_some_and(|value| value != "0");
     let mut results = Vec::new();
-    for case in CASES {
-        for opt in ["O0", "O2"] {
-            results.push(run_probe(case, opt));
+    let mut matched_any = false;
+    for case in CASES.iter().filter(|case| {
+        case_filter
+            .as_deref()
+            .is_none_or(|filter| case.name.contains(filter))
+    }) {
+        for opt in ["O0", "O2"]
+            .into_iter()
+            .filter(|opt| opt_filter.as_deref().is_none_or(|filter| *opt == filter))
+        {
+            matched_any = true;
+            eprintln!("probe {} {}: start", case.name, opt);
+            let start = Instant::now();
+            let probe = run_probe(case, opt);
+            let status = if probe.status.run { "ok" } else { "fail" };
+            eprintln!(
+                "probe {} {}: {} in {:.2?}",
+                case.name,
+                opt,
+                status,
+                start.elapsed()
+            );
+            let failed = !probe.status.run;
+            results.push(probe);
+            if failed && fail_fast {
+                panic!("clang probe dashboard failed:\n{}", render_dashboard(&results));
+            }
         }
     }
+    assert!(
+        matched_any,
+        "no clang probe cases matched filters case={:?} opt={:?}",
+        case_filter,
+        opt_filter
+    );
 
     let failures: Vec<_> = results.iter().filter(|result| !result.status.run).collect();
     assert!(
