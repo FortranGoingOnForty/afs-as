@@ -258,6 +258,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fmla",
+        source: "vector_fmla.c",
+        driver: "#include <arm_neon.h>\nextern float32x4_t mla4f(float32x4_t, float32x4_t, float32x4_t);\nextern float32x4_t mls4f(float32x4_t, float32x4_t, float32x4_t);\nextern float32x4_t neg4f(float32x4_t);\nint main(void) {\n    float32x4_t a = {100.0f, 100.0f, 100.0f, 100.0f};\n    float32x4_t b = {1.0f, 2.0f, 3.0f, 4.0f};\n    float32x4_t c = {10.0f, 20.0f, 30.0f, 40.0f};\n    float32x4_t x = mla4f(a, b, c);\n    float32x4_t y = mls4f(a, b, c);\n    float32x4_t z = neg4f(c);\n    return (x[0] != 110.0f) || (x[1] != 140.0f) || (x[2] != 190.0f) || (x[3] != 260.0f)\n        || (y[0] != 90.0f) || (y[1] != 60.0f) || (y[2] != 10.0f) || (y[3] != -60.0f)\n        || (z[0] != -10.0f) || (z[1] != -20.0f) || (z[2] != -30.0f) || (z[3] != -40.0f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp",
         source: "vector_fcmp.c",
         driver: "#include <arm_neon.h>\nextern uint32x4_t eq_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t ge_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t gt_mask_f32(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {1.0f, 7.0f, -5.0f, 8.0f};\n    uint32x4_t eq = eq_mask_f32(a, b);\n    uint32x4_t ge = ge_mask_f32(a, b);\n    uint32x4_t gt = gt_mask_f32(a, b);\n    return (eq[0] != 0xFFFFFFFFu) || (eq[1] != 0u) || (eq[2] != 0u) || (eq[3] != 0u)\n        || (ge[0] != 0xFFFFFFFFu) || (ge[1] != 0xFFFFFFFFu) || (ge[2] != 0xFFFFFFFFu) || (ge[3] != 0u)\n        || (gt[0] != 0u) || (gt[1] != 0xFFFFFFFFu) || (gt[2] != 0xFFFFFFFFu) || (gt[3] != 0u);\n}\n",
