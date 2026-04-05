@@ -2368,7 +2368,7 @@ impl Assembler {
             .iter()
             .enumerate()
             .filter_map(|(section, _)| {
-                if self.sections[section].kind == SectionKind::Literal16 {
+                if self.sections[section].kind != SectionKind::ConstData {
                     return None;
                 }
                 let has_page_target_at_base = self.labels.iter().any(|(name, (label_section, offset))| {
@@ -2447,7 +2447,10 @@ impl Assembler {
                     let prefer_temp_first =
                         a.section > 0
                             && a.section == b.section
-                            && self.sections[(a.section - 1) as usize].kind == SectionKind::Literal16;
+                            && matches!(
+                                self.sections[(a.section - 1) as usize].kind,
+                                SectionKind::Literal16 | SectionKind::CStringLiterals
+                            );
                     let temp_cmp = if prefer_temp_first {
                         b_is_section_temp.cmp(&a_is_section_temp)
                     } else {
@@ -2458,7 +2461,10 @@ impl Assembler {
                     if a.section == b.section
                         && a.value == b.value
                         && a.section > 0
-                        && self.sections[(a.section - 1) as usize].kind != SectionKind::Literal16
+                        && !matches!(
+                            self.sections[(a.section - 1) as usize].kind,
+                            SectionKind::Literal16 | SectionKind::CStringLiterals
+                        )
                         && a_is_section_temp != b_is_section_temp
                     {
                         let a_prefers_front =
@@ -4189,6 +4195,44 @@ mod tests {
         let lit1_index = names.iter().position(|name| *name == "lit1").unwrap();
         assert!(ltmp1_index < lit0_index, "symbols: {:?}", names);
         assert!(lit0_index < lit1_index, "symbols: {:?}", names);
+    }
+
+    #[test]
+    fn assemble_cstring_section_temp_stays_before_cstring_labels() {
+        let obj = assemble_source(
+            ".build_version macos, 11, 0 sdk_version 15, 5\n\
+             .subsections_via_symbols\n\
+             .globl _fuzz_1\n\
+             .text\n\
+             _fuzz_1:\n\
+               adrp x16, cstr0_1@PAGE\n\
+               add x16, x16, cstr0_1@PAGEOFF\n\
+               adrp x17, _ext_1@GOTPAGE\n\
+               ldr x17, [x17, _ext_1@GOTPAGEOFF]\n\
+               ret\n\
+             .section __TEXT,__cstring,cstring_literals\n\
+             cstr0_1:\n\
+               .asciz \"hello\"\n\
+             cstr1_1:\n\
+               .asciz \"world\"\n\
+             .section __TEXT,__const\n\
+             .p2align 3\n\
+             const0_1:\n\
+               .quad data0_1\n\
+             const1_1:\n\
+               .quad _ext_1\n\
+             .data\n\
+             .p2align 3\n\
+             data0_1:\n\
+               .quad cstr0_1\n",
+        )
+        .unwrap();
+        let names: Vec<_> = obj.symbols.iter().map(|sym| sym.name.as_str()).collect();
+        let ltmp1_index = names.iter().position(|name| *name == "ltmp1").unwrap();
+        let cstr0_index = names.iter().position(|name| *name == "cstr0_1").unwrap();
+        let cstr1_index = names.iter().position(|name| *name == "cstr1_1").unwrap();
+        assert!(cstr0_index < ltmp1_index, "symbols: {:?}", names);
+        assert!(ltmp1_index < cstr1_index, "symbols: {:?}", names);
     }
 
     #[test]
