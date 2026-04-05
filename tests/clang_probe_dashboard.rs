@@ -222,6 +222,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_blend",
+        source: "vector_blend.c",
+        driver: "typedef unsigned char v16u8 __attribute__((vector_size(16)));\ntypedef unsigned v4u __attribute__((vector_size(16)));\nextern v16u8 blend_bytes(v16u8, v16u8, v16u8);\nextern v4u blend_u32(v4u, v4u, v4u);\nint main(void) {\n    v16u8 a = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};\n    v16u8 b = {101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116};\n    v16u8 m = {0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00};\n    v4u au = {10u, 20u, 30u, 40u};\n    v4u bu = {110u, 120u, 130u, 140u};\n    v4u mu = {0xFFFFFFFFu, 0u, 0xFFFFFFFFu, 0u};\n    v16u8 rb = blend_bytes(a, b, m);\n    v4u ru = blend_u32(au, bu, mu);\n    return (rb[0] != 1) || (rb[1] != 102) || (rb[2] != 3) || (rb[3] != 104)\n        || (rb[4] != 5) || (rb[5] != 106) || (rb[6] != 7) || (rb[7] != 108)\n        || (rb[8] != 9) || (rb[9] != 110) || (rb[10] != 11) || (rb[11] != 112)\n        || (rb[12] != 13) || (rb[13] != 114) || (rb[14] != 15) || (rb[15] != 116)\n        || (ru[0] != 10u) || (ru[1] != 120u) || (ru[2] != 30u) || (ru[3] != 140u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "bitops",
         source: "bitops.c",
         driver: "extern unsigned bit_mix(unsigned);\nint main(void) { return bit_mix(0xABu) != 117u; }\n",
