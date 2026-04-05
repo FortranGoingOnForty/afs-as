@@ -645,6 +645,34 @@ fn rt_ldr_d() {
     roundtrip(".text\nldr d0, [x1]\n");
 }
 #[test]
+fn rt_ldr_q() {
+    roundtrip(".text\nldr q0, [sp, #16]\n");
+}
+#[test]
+fn rt_str_q() {
+    roundtrip(".text\nstr q1, [x0]\n");
+}
+#[test]
+fn rt_ldr_q_lit() {
+    roundtrip(".text\nldr q0, #16\n");
+}
+#[test]
+fn rt_ldr_q_reg() {
+    roundtrip(".text\nldr q0, [x1, x2]\n");
+}
+#[test]
+fn rt_str_q_reg_uxtw() {
+    roundtrip(".text\nstr q1, [x3, w4, uxtw #4]\n");
+}
+#[test]
+fn rt_ldr_q_post() {
+    roundtrip(".text\nldr q0, [sp], #16\n");
+}
+#[test]
+fn rt_str_q_pre() {
+    roundtrip(".text\nstr q1, [sp, #-16]!\n");
+}
+#[test]
 fn rt_str_d_off() {
     roundtrip(".text\nstr d2, [x3, #16]\n");
 }
@@ -751,6 +779,10 @@ fn rt_fdiv_d() {
 #[test]
 fn rt_fadd_s() {
     roundtrip(".text\nfadd s0, s1, s2\n");
+}
+#[test]
+fn rt_fadd_4s() {
+    roundtrip(".text\nfadd.4s v0, v1, v2\n");
 }
 #[test]
 fn rt_fneg_d() {

@@ -1501,6 +1501,86 @@ fn sys_ldr_d() {
     );
 }
 #[test]
+fn sys_ldr_q() {
+    verify(
+        "ldr q0, [sp, #16]",
+        Inst::LdrFpImm128 {
+            rt: FpReg::new(0),
+            rn: SP,
+            offset: 16,
+        },
+    );
+}
+#[test]
+fn sys_str_q() {
+    verify(
+        "str q1, [x0]",
+        Inst::StrFpImm128 {
+            rt: FpReg::new(1),
+            rn: X0,
+            offset: 0,
+        },
+    );
+}
+#[test]
+fn sys_ldr_q_lit() {
+    verify(
+        "ldr q0, #16",
+        Inst::LdrFpLit128 {
+            rt: FpReg::new(0),
+            offset: 16,
+        },
+    );
+}
+#[test]
+fn sys_ldr_q_reg() {
+    verify(
+        "ldr q0, [x1, x2]",
+        Inst::LdrFpReg128 {
+            rt: FpReg::new(0),
+            rn: X1,
+            rm: X2,
+            extend: AddrExtend::Lsl,
+            shift: false,
+        },
+    );
+}
+#[test]
+fn sys_str_q_reg_uxtw() {
+    verify(
+        "str q1, [x3, w4, uxtw #4]",
+        Inst::StrFpReg128 {
+            rt: FpReg::new(1),
+            rn: X3,
+            rm: W4,
+            extend: AddrExtend::Uxtw,
+            shift: true,
+        },
+    );
+}
+#[test]
+fn sys_ldr_q_post() {
+    verify(
+        "ldr q0, [sp], #16",
+        Inst::LdrFpPost128 {
+            rt: FpReg::new(0),
+            rn: SP,
+            offset: 16,
+        },
+    );
+}
+#[test]
+fn sys_str_q_pre() {
+    verify(
+        "str q1, [sp, #-16]!",
+        Inst::StrFpPre128 {
+            rt: FpReg::new(1),
+            rn: SP,
+            offset: -16,
+        },
+    );
+}
+#[test]
 fn sys_str_d_off() {
     verify(
         "str d2, [x3, #16]",
@@ -1803,6 +1883,17 @@ fn sys_fadd_s() {
             rd: S5,
             rn: S6,
             rm: S7,
+        },
+    );
+}
+#[test]
+fn sys_fadd_4s() {
+    verify(
+        "fadd.4s v0, v1, v2",
+        Inst::FaddV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
         },
     );
 }

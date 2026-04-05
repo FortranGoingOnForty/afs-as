@@ -646,10 +646,14 @@ pub enum Inst {
     LdrFpImm64 { rt: FpReg, rn: GpReg, offset: u16 },
     /// LDR St, [Xn, #offset]
     LdrFpImm32 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// LDR Qt, [Xn, #offset]
+    LdrFpImm128 { rt: FpReg, rn: GpReg, offset: u16 },
     /// STR Dt, [Xn, #offset]
     StrFpImm64 { rt: FpReg, rn: GpReg, offset: u16 },
     /// STR St, [Xn, #offset]
     StrFpImm32 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// STR Qt, [Xn, #offset]
+    StrFpImm128 { rt: FpReg, rn: GpReg, offset: u16 },
     /// LDR Dt, [Xn, Rm{, extend}]
     LdrFpReg64 {
         rt: FpReg,
@@ -660,6 +664,14 @@ pub enum Inst {
     },
     /// LDR St, [Xn, Rm{, extend}]
     LdrFpReg32 {
+        rt: FpReg,
+        rn: GpReg,
+        rm: GpReg,
+        extend: AddrExtend,
+        shift: bool,
+    },
+    /// LDR Qt, [Xn, Rm{, extend}]
+    LdrFpReg128 {
         rt: FpReg,
         rn: GpReg,
         rm: GpReg,
@@ -682,6 +694,14 @@ pub enum Inst {
         extend: AddrExtend,
         shift: bool,
     },
+    /// STR Qt, [Xn, Rm{, extend}]
+    StrFpReg128 {
+        rt: FpReg,
+        rn: GpReg,
+        rm: GpReg,
+        extend: AddrExtend,
+        shift: bool,
+    },
 
     /// LDR Xt, label
     LdrLit64 { rt: GpReg, offset: i32 },
@@ -693,6 +713,8 @@ pub enum Inst {
     LdrFpLit64 { rt: FpReg, offset: i32 },
     /// LDR St, label
     LdrFpLit32 { rt: FpReg, offset: i32 },
+    /// LDR Qt, label
+    LdrFpLit128 { rt: FpReg, offset: i32 },
 
     // ---- Load/Store (pre-index) ----
     /// LDR Wt, [Xn, #offset]!  (pre-index, 32-bit)
@@ -727,6 +749,10 @@ pub enum Inst {
     LdrFpPre32 { rt: FpReg, rn: GpReg, offset: i16 },
     /// STR St, [Xn, #offset]!  (pre-index, single)
     StrFpPre32 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// LDR Qt, [Xn, #offset]!  (pre-index, vector)
+    LdrFpPre128 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STR Qt, [Xn, #offset]!  (pre-index, vector)
+    StrFpPre128 { rt: FpReg, rn: GpReg, offset: i16 },
 
     // ---- Load/Store (post-index) ----
     /// LDR Wt, [Xn], #offset  (post-index, 32-bit)
@@ -761,6 +787,10 @@ pub enum Inst {
     LdrFpPost32 { rt: FpReg, rn: GpReg, offset: i16 },
     /// STR St, [Xn], #offset  (post-index, single)
     StrFpPost32 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// LDR Qt, [Xn], #offset  (post-index, vector)
+    LdrFpPost128 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STR Qt, [Xn], #offset  (post-index, vector)
+    StrFpPost128 { rt: FpReg, rn: GpReg, offset: i16 },
 
     // ---- Atomic memory operations ----
     /// LDAPRB Wt, [Xn]
@@ -1041,6 +1071,8 @@ pub enum Inst {
     FdivD { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FADD Sd, Sn, Sm  (single)
     FaddS { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FADD.4S Vd, Vn, Vm
+    FaddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FSUB Sd, Sn, Sm  (single)
     FsubS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMUL Sd, Sn, Sm  (single)
@@ -1662,8 +1694,14 @@ impl Inst {
 
             Inst::LdrFpImm64 { rt, rn, offset } => ldst_uimm_fp(0b11, 0b01, 3, *offset, *rn, *rt),
             Inst::LdrFpImm32 { rt, rn, offset } => ldst_uimm_fp(0b10, 0b01, 2, *offset, *rn, *rt),
+            Inst::LdrFpImm128 { rt, rn, offset } => {
+                ldst_uimm_fp(0b00, 0b11, 4, *offset, *rn, *rt)
+            }
             Inst::StrFpImm64 { rt, rn, offset } => ldst_uimm_fp(0b11, 0b00, 3, *offset, *rn, *rt),
             Inst::StrFpImm32 { rt, rn, offset } => ldst_uimm_fp(0b10, 0b00, 2, *offset, *rn, *rt),
+            Inst::StrFpImm128 { rt, rn, offset } => {
+                ldst_uimm_fp(0b00, 0b10, 4, *offset, *rn, *rt)
+            }
             Inst::LdrFpReg64 {
                 rt,
                 rn,
@@ -1678,6 +1716,13 @@ impl Inst {
                 extend,
                 shift,
             } => ldst_reg_fp(0b10, 0b01, *rm, *extend, *shift, *rn, *rt),
+            Inst::LdrFpReg128 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            } => ldst_reg_fp(0b00, 0b11, *rm, *extend, *shift, *rn, *rt),
             Inst::StrFpReg64 {
                 rt,
                 rn,
@@ -1692,12 +1737,20 @@ impl Inst {
                 extend,
                 shift,
             } => ldst_reg_fp(0b10, 0b00, *rm, *extend, *shift, *rn, *rt),
+            Inst::StrFpReg128 {
+                rt,
+                rn,
+                rm,
+                extend,
+                shift,
+            } => ldst_reg_fp(0b00, 0b10, *rm, *extend, *shift, *rn, *rt),
 
             Inst::LdrLit64 { rt, offset } => ldr_lit(0b01, *offset, *rt),
             Inst::LdrLit32 { rt, offset } => ldr_lit(0b00, *offset, *rt),
             Inst::LdrswLit { rt, offset } => ldr_lit(0b10, *offset, *rt),
             Inst::LdrFpLit64 { rt, offset } => ldr_lit_fp(0b01, *offset, *rt),
             Inst::LdrFpLit32 { rt, offset } => ldr_lit_fp(0b00, *offset, *rt),
+            Inst::LdrFpLit128 { rt, offset } => ldr_lit_fp(0b10, *offset, *rt),
 
             // ---- Load/Store (pre/post-index) ----
             Inst::LdrPre32 { rt, rn, offset } => ldst_idx(0b10, 0b01, *offset, 0b11, *rn, *rt),
@@ -1744,6 +1797,12 @@ impl Inst {
             Inst::StrFpPre64 { rt, rn, offset } => ldst_idx_fp(0b11, 0b00, *offset, 0b11, *rn, *rt),
             Inst::LdrFpPre32 { rt, rn, offset } => ldst_idx_fp(0b10, 0b01, *offset, 0b11, *rn, *rt),
             Inst::StrFpPre32 { rt, rn, offset } => ldst_idx_fp(0b10, 0b00, *offset, 0b11, *rn, *rt),
+            Inst::LdrFpPre128 { rt, rn, offset } => {
+                ldst_idx_fp(0b00, 0b11, *offset, 0b11, *rn, *rt)
+            }
+            Inst::StrFpPre128 { rt, rn, offset } => {
+                ldst_idx_fp(0b00, 0b10, *offset, 0b11, *rn, *rt)
+            }
             Inst::LdrFpPost64 { rt, rn, offset } => {
                 ldst_idx_fp(0b11, 0b01, *offset, 0b01, *rn, *rt)
             }
@@ -1755,6 +1814,12 @@ impl Inst {
             }
             Inst::StrFpPost32 { rt, rn, offset } => {
                 ldst_idx_fp(0b10, 0b00, *offset, 0b01, *rn, *rt)
+            }
+            Inst::LdrFpPost128 { rt, rn, offset } => {
+                ldst_idx_fp(0b00, 0b11, *offset, 0b01, *rn, *rt)
+            }
+            Inst::StrFpPost128 { rt, rn, offset } => {
+                ldst_idx_fp(0b00, 0b10, *offset, 0b01, *rn, *rt)
             }
 
             // ---- Atomic memory operations ----
@@ -2039,6 +2104,7 @@ impl Inst {
             Inst::FmulD { rd, rn, rm } => fp_arith(0b01, 0b0000, *rm, *rn, *rd),
             Inst::FdivD { rd, rn, rm } => fp_arith(0b01, 0b0001, *rm, *rn, *rd),
             Inst::FaddS { rd, rn, rm } => fp_arith(0b00, 0b0010, *rm, *rn, *rd),
+            Inst::FaddV4S { rd, rn, rm } => simd_fadd_4s(*rm, *rn, *rd),
             Inst::FsubS { rd, rn, rm } => fp_arith(0b00, 0b0011, *rm, *rn, *rd),
             Inst::FmulS { rd, rn, rm } => fp_arith(0b00, 0b0000, *rm, *rn, *rd),
             Inst::FdivS { rd, rn, rm } => fp_arith(0b00, 0b0001, *rm, *rn, *rd),
@@ -2436,6 +2502,10 @@ fn fp_arith(ftype: u32, opcode: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
         | (0b10 << 10)
         | (rn.enc() << 5)
         | rd.enc()
+}
+
+fn simd_fadd_4s(rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
+    0x4E20D400 | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
 #[cfg(test)]
@@ -4231,6 +4301,93 @@ mod tests {
         );
     }
     #[test]
+    fn ldr_q0_sp_16() {
+        assert_eq!(
+            Inst::LdrFpImm128 {
+                rt: FpReg::new(0),
+                rn: SP,
+                offset: 16
+            }
+            .encode(),
+            0x3DC007E0
+        );
+    }
+    #[test]
+    fn str_q1_sp() {
+        assert_eq!(
+            Inst::StrFpImm128 {
+                rt: FpReg::new(1),
+                rn: SP,
+                offset: 0
+            }
+            .encode(),
+            0x3D8003E1
+        );
+    }
+    #[test]
+    fn ldr_q0_lit_16() {
+        assert_eq!(
+            Inst::LdrFpLit128 {
+                rt: FpReg::new(0),
+                offset: 16
+            }
+            .encode(),
+            0x9C000080
+        );
+    }
+    #[test]
+    fn ldr_q0_x1_x2() {
+        assert_eq!(
+            Inst::LdrFpReg128 {
+                rt: FpReg::new(0),
+                rn: X1,
+                rm: X2,
+                extend: AddrExtend::Lsl,
+                shift: false
+            }
+            .encode(),
+            0x3CE26820
+        );
+    }
+    #[test]
+    fn str_q1_x3_w4_uxtw4() {
+        assert_eq!(
+            Inst::StrFpReg128 {
+                rt: FpReg::new(1),
+                rn: X3,
+                rm: W4,
+                extend: AddrExtend::Uxtw,
+                shift: true
+            }
+            .encode(),
+            0x3CA45861
+        );
+    }
+    #[test]
+    fn ldr_q0_sp_post_16() {
+        assert_eq!(
+            Inst::LdrFpPost128 {
+                rt: FpReg::new(0),
+                rn: SP,
+                offset: 16
+            }
+            .encode(),
+            0x3CC107E0
+        );
+    }
+    #[test]
+    fn str_q1_sp_pre_m16() {
+        assert_eq!(
+            Inst::StrFpPre128 {
+                rt: FpReg::new(1),
+                rn: SP,
+                offset: -16
+            }
+            .encode(),
+            0x3C9F0FE1
+        );
+    }
+    #[test]
     fn str_d2_x3_16() {
         assert_eq!(
             Inst::StrFpImm64 {
@@ -4683,6 +4840,18 @@ mod tests {
             }
             .encode(),
             0x1E222820
+        );
+    }
+    #[test]
+    fn fadd_4s_v0_v0_v1() {
+        assert_eq!(
+            Inst::FaddV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+            .encode(),
+            0x4E21D400
         );
     }
     #[test]

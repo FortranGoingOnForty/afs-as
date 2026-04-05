@@ -170,7 +170,8 @@ Major covered families include:
   - `ldrb`, `ldrsb`, `ldrh`, `ldrsh`, `ldrsw`
   - `strb`, `strh`
   - `ldp`, `stp`
-  - integer, FP scalar, and FP pair forms across the supported addressing modes
+  - integer, FP scalar, and `q` vector forms across the supported addressing modes
+  - FP pair forms across the supported addressing modes
 - scalar atomic memory:
   - `ldaprb`, `ldaprh`, `ldapr`
   - `stlrb`, `stlrh`, `stlr`
@@ -188,6 +189,8 @@ Major covered families include:
   - `fadd`, `fsub`, `fmul`, `fdiv`
   - `fabs`, `fneg`, `fsqrt`, `fcmp`, `fmadd`
   - `fcvtzs`, `scvtf`, `fmov`
+- SIMD / vector:
+  - `fadd.4s`
 - system / hint:
   - `svc`, `brk`, `nop`
   - `yield`, `wfe`, `wfi`, `sev`, `sevl`

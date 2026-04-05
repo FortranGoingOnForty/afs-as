@@ -1839,6 +1839,10 @@ impl Assembler {
                 rt: *rt,
                 offset: checked,
             }),
+            Inst::LdrFpLit128 { rt, .. } => Ok(Inst::LdrFpLit128 {
+                rt: *rt,
+                offset: checked,
+            }),
             _ => Err(AsmError(
                 "internal error: invalid literal fixup instruction".into(),
             )),
@@ -3692,6 +3696,21 @@ mod tests {
             &Inst::LdrFpLit32 { rt: S0, offset: 8 }
                 .encode()
                 .to_le_bytes()
+        );
+    }
+
+    #[test]
+    fn assemble_ldr_q_literal_local_label() {
+        let obj = assemble_source(".text\nldr q0, target\nret\n.p2align 4\ntarget:\n.zero 16\n")
+            .unwrap();
+        assert_eq!(
+            &text_bytes(&obj)[0..4],
+            &Inst::LdrFpLit128 {
+                rt: FpReg::new(0),
+                offset: 16
+            }
+            .encode()
+            .to_le_bytes()
         );
     }
 

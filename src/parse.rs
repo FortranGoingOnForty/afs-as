@@ -224,6 +224,23 @@ enum GpRegKind {
     Zr,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FpMemWidth {
+    S32,
+    D64,
+    Q128,
+}
+
+impl FpMemWidth {
+    fn scale(self) -> u8 {
+        match self {
+            FpMemWidth::S32 => 2,
+            FpMemWidth::D64 => 3,
+            FpMemWidth::Q128 => 4,
+        }
+    }
+}
+
 impl<'a> Parser<'a> {
     fn new(tokens: &'a [Token]) -> Self {
         Self {
@@ -1210,6 +1227,7 @@ impl<'a> Parser<'a> {
 
             // FP arithmetic (double)
             "fadd" => self.parse_fp_arith("fadd"),
+            "fadd.4s" => self.parse_simd_fp_arith_4s("fadd.4s"),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -1315,6 +1333,23 @@ impl<'a> Parser<'a> {
         } else {
             Err(self.err(format!("expected FP register, got '{}'", name)))
         }
+    }
+
+    fn parse_fp_mem_reg_with_width(&mut self) -> Result<(FpReg, FpMemWidth), ParseError> {
+        let name = self.expect_ident()?;
+        let lower = name.to_lowercase();
+        let width = if lower.starts_with('d') {
+            FpMemWidth::D64
+        } else if lower.starts_with('s') {
+            FpMemWidth::S32
+        } else if lower.starts_with('q') {
+            FpMemWidth::Q128
+        } else {
+            return Err(self.err(format!("expected FP/SIMD register, got '{}'", name)));
+        };
+        let reg = parse_fp_reg_name(&lower)
+            .ok_or_else(|| self.err(format!("bad FP/SIMD register '{}'", name)))?;
+        Ok((reg, width))
     }
 
     fn parse_atomic_data_reg(&mut self, context: &str) -> Result<(GpReg, bool), ParseError> {
@@ -2760,15 +2795,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldr_str_fp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
-        let (rt, is_double) = self.parse_fp_reg_with_size()?;
+        let (rt, width) = self.parse_fp_mem_reg_with_width()?;
         self.expect(&Tok::Comma)?;
 
         if is_load && self.starts_immediate_expr() {
             let offset = self.parse_immediate_const_expr("ldr literal offset")? as i32;
-            let inst = if is_double {
-                Inst::LdrFpLit64 { rt, offset }
-            } else {
-                Inst::LdrFpLit32 { rt, offset }
+            let inst = match width {
+                FpMemWidth::D64 => Inst::LdrFpLit64 { rt, offset },
+                FpMemWidth::S32 => Inst::LdrFpLit32 { rt, offset },
+                FpMemWidth::Q128 => Inst::LdrFpLit128 { rt, offset },
             };
             return Ok(Stmt::Instruction(inst));
         }
@@ -2776,10 +2811,10 @@ impl<'a> Parser<'a> {
         if is_load && self.starts_non_register_literal_reference() {
             let label = self.parse_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
-            let inst = if is_double {
-                Inst::LdrFpLit64 { rt, offset: 0 }
-            } else {
-                Inst::LdrFpLit32 { rt, offset: 0 }
+            let inst = match width {
+                FpMemWidth::D64 => Inst::LdrFpLit64 { rt, offset: 0 },
+                FpMemWidth::S32 => Inst::LdrFpLit32 { rt, offset: 0 },
+                FpMemWidth::Q128 => Inst::LdrFpLit128 { rt, offset: 0 },
             };
             return Ok(Stmt::InstructionWithReloc(
                 inst,
@@ -2801,51 +2836,68 @@ impl<'a> Parser<'a> {
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
                 let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
-                let inst = match (is_load, is_double) {
-                    (true, true) => Inst::LdrFpPost64 { rt, rn, offset },
-                    (false, true) => Inst::StrFpPost64 { rt, rn, offset },
-                    (true, false) => Inst::LdrFpPost32 { rt, rn, offset },
-                    (false, false) => Inst::StrFpPost32 { rt, rn, offset },
+                let inst = match (is_load, width) {
+                    (true, FpMemWidth::D64) => Inst::LdrFpPost64 { rt, rn, offset },
+                    (false, FpMemWidth::D64) => Inst::StrFpPost64 { rt, rn, offset },
+                    (true, FpMemWidth::S32) => Inst::LdrFpPost32 { rt, rn, offset },
+                    (false, FpMemWidth::S32) => Inst::StrFpPost32 { rt, rn, offset },
+                    (true, FpMemWidth::Q128) => Inst::LdrFpPost128 { rt, rn, offset },
+                    (false, FpMemWidth::Q128) => Inst::StrFpPost128 { rt, rn, offset },
                 };
                 return Ok(Stmt::Instruction(inst));
             }
-            let inst = match (is_load, is_double) {
-                (true, true) => Inst::LdrFpImm64 { rt, rn, offset: 0 },
-                (false, true) => Inst::StrFpImm64 { rt, rn, offset: 0 },
-                (true, false) => Inst::LdrFpImm32 { rt, rn, offset: 0 },
-                (false, false) => Inst::StrFpImm32 { rt, rn, offset: 0 },
+            let inst = match (is_load, width) {
+                (true, FpMemWidth::D64) => Inst::LdrFpImm64 { rt, rn, offset: 0 },
+                (false, FpMemWidth::D64) => Inst::StrFpImm64 { rt, rn, offset: 0 },
+                (true, FpMemWidth::S32) => Inst::LdrFpImm32 { rt, rn, offset: 0 },
+                (false, FpMemWidth::S32) => Inst::StrFpImm32 { rt, rn, offset: 0 },
+                (true, FpMemWidth::Q128) => Inst::LdrFpImm128 { rt, rn, offset: 0 },
+                (false, FpMemWidth::Q128) => Inst::StrFpImm128 { rt, rn, offset: 0 },
             };
             return Ok(Stmt::Instruction(inst));
         }
 
         self.expect(&Tok::Comma)?;
         if self.starts_register_like_operand() {
-            let (rm, extend, shift) =
-                self.parse_reg_offset_operand(if is_double { 3 } else { 2 })?;
+            let (rm, extend, shift) = self.parse_reg_offset_operand(width.scale())?;
             self.expect(&Tok::RBracket)?;
-            let inst = match (is_load, is_double) {
-                (true, true) => Inst::LdrFpReg64 {
+            let inst = match (is_load, width) {
+                (true, FpMemWidth::D64) => Inst::LdrFpReg64 {
                     rt,
                     rn,
                     rm,
                     extend,
                     shift,
                 },
-                (false, true) => Inst::StrFpReg64 {
+                (false, FpMemWidth::D64) => Inst::StrFpReg64 {
                     rt,
                     rn,
                     rm,
                     extend,
                     shift,
                 },
-                (true, false) => Inst::LdrFpReg32 {
+                (true, FpMemWidth::S32) => Inst::LdrFpReg32 {
                     rt,
                     rn,
                     rm,
                     extend,
                     shift,
                 },
-                (false, false) => Inst::StrFpReg32 {
+                (false, FpMemWidth::S32) => Inst::StrFpReg32 {
+                    rt,
+                    rn,
+                    rm,
+                    extend,
+                    shift,
+                },
+                (true, FpMemWidth::Q128) => Inst::LdrFpReg128 {
+                    rt,
+                    rn,
+                    rm,
+                    extend,
+                    shift,
+                },
+                (false, FpMemWidth::Q128) => Inst::StrFpReg128 {
                     rt,
                     rn,
                     rm,
@@ -2860,23 +2912,33 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
-            let inst = match (is_load, is_double) {
-                (true, true) => Inst::LdrFpPre64 {
+            let inst = match (is_load, width) {
+                (true, FpMemWidth::D64) => Inst::LdrFpPre64 {
                     rt,
                     rn,
                     offset: offset as i16,
                 },
-                (false, true) => Inst::StrFpPre64 {
+                (false, FpMemWidth::D64) => Inst::StrFpPre64 {
                     rt,
                     rn,
                     offset: offset as i16,
                 },
-                (true, false) => Inst::LdrFpPre32 {
+                (true, FpMemWidth::S32) => Inst::LdrFpPre32 {
                     rt,
                     rn,
                     offset: offset as i16,
                 },
-                (false, false) => Inst::StrFpPre32 {
+                (false, FpMemWidth::S32) => Inst::StrFpPre32 {
+                    rt,
+                    rn,
+                    offset: offset as i16,
+                },
+                (true, FpMemWidth::Q128) => Inst::LdrFpPre128 {
+                    rt,
+                    rn,
+                    offset: offset as i16,
+                },
+                (false, FpMemWidth::Q128) => Inst::StrFpPre128 {
                     rt,
                     rn,
                     offset: offset as i16,
@@ -2885,23 +2947,33 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::Instruction(inst));
         }
 
-        let inst = match (is_load, is_double) {
-            (true, true) => Inst::LdrFpImm64 {
+        let inst = match (is_load, width) {
+            (true, FpMemWidth::D64) => Inst::LdrFpImm64 {
                 rt,
                 rn,
                 offset: offset as u16,
             },
-            (false, true) => Inst::StrFpImm64 {
+            (false, FpMemWidth::D64) => Inst::StrFpImm64 {
                 rt,
                 rn,
                 offset: offset as u16,
             },
-            (true, false) => Inst::LdrFpImm32 {
+            (true, FpMemWidth::S32) => Inst::LdrFpImm32 {
                 rt,
                 rn,
                 offset: offset as u16,
             },
-            (false, false) => Inst::StrFpImm32 {
+            (false, FpMemWidth::S32) => Inst::StrFpImm32 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            (true, FpMemWidth::Q128) => Inst::LdrFpImm128 {
+                rt,
+                rn,
+                offset: offset as u16,
+            },
+            (false, FpMemWidth::Q128) => Inst::StrFpImm128 {
                 rt,
                 rn,
                 offset: offset as u16,
@@ -3538,6 +3610,18 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_simd_fp_arith_4s(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "fadd.4s" => Inst::FaddV4S { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
     fn parse_fp_unary(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
@@ -3641,6 +3725,13 @@ impl<'a> Parser<'a> {
             let (rn, _) = self.parse_fp_reg_with_size()?;
             Ok(Inst::FmovFromD { rd, rn })
         }
+    }
+
+    fn parse_simd_reg(&mut self) -> Result<FpReg, ParseError> {
+        let name = self.expect_ident()?;
+        let lower = name.to_lowercase();
+        parse_simd_reg_name(&lower)
+            .ok_or_else(|| self.err(format!("expected vector register, got '{}'", name)))
     }
 
     fn parse_fp_modified_immediate(&mut self, is_double: bool) -> Result<u8, ParseError> {
@@ -4017,6 +4108,16 @@ fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
         return None;
     }
     let _ = prefix;
+    Some(FpReg::new(num))
+}
+
+fn parse_simd_reg_name(name: &str) -> Option<FpReg> {
+    let lower = name.to_lowercase();
+    let num_str = lower.strip_prefix('v')?;
+    let num: u8 = num_str.parse().ok()?;
+    if num > 31 {
+        return None;
+    }
     Some(FpReg::new(num))
 }
 
@@ -5309,6 +5410,93 @@ mod tests {
     }
 
     #[test]
+    fn parse_ldr_q_offset() {
+        assert_eq!(
+            parse_inst("ldr q0, [sp, #16]"),
+            Inst::LdrFpImm128 {
+                rt: FpReg::new(0),
+                rn: SP,
+                offset: 16
+            }
+        );
+    }
+
+    #[test]
+    fn parse_str_q_base() {
+        assert_eq!(
+            parse_inst("str q1, [x0]"),
+            Inst::StrFpImm128 {
+                rt: FpReg::new(1),
+                rn: X0,
+                offset: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_q_literal_offset() {
+        assert_eq!(
+            parse_inst("ldr q0, #16"),
+            Inst::LdrFpLit128 {
+                rt: FpReg::new(0),
+                offset: 16
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_q_register_offset() {
+        assert_eq!(
+            parse_inst("ldr q0, [x1, x2]"),
+            Inst::LdrFpReg128 {
+                rt: FpReg::new(0),
+                rn: X1,
+                rm: X2,
+                extend: AddrExtend::Lsl,
+                shift: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_str_q_register_offset_with_extend() {
+        assert_eq!(
+            parse_inst("str q1, [x3, w4, uxtw #4]"),
+            Inst::StrFpReg128 {
+                rt: FpReg::new(1),
+                rn: X3,
+                rm: W4,
+                extend: AddrExtend::Uxtw,
+                shift: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_q_post_index() {
+        assert_eq!(
+            parse_inst("ldr q0, [sp], #16"),
+            Inst::LdrFpPost128 {
+                rt: FpReg::new(0),
+                rn: SP,
+                offset: 16
+            }
+        );
+    }
+
+    #[test]
+    fn parse_str_q_pre_index() {
+        assert_eq!(
+            parse_inst("str q1, [sp, #-16]!"),
+            Inst::StrFpPre128 {
+                rt: FpReg::new(1),
+                rn: SP,
+                offset: -16
+            }
+        );
+    }
+
+    #[test]
     fn parse_str_d_offset() {
         assert_eq!(
             parse_inst("str d2, [x3, #16]"),
@@ -6274,6 +6462,18 @@ mod tests {
                 rd: S0,
                 rn: S1,
                 rm: S2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fadd_4s() {
+        assert_eq!(
+            parse_inst("fadd.4s v0, v1, v2"),
+            Inst::FaddV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
             }
         );
     }
