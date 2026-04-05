@@ -188,6 +188,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_int_ops",
+        source: "vector_int_ops.c",
+        driver: "typedef int v4i __attribute__((vector_size(16)));\ntypedef unsigned char v16u8 __attribute__((vector_size(16)));\nextern v4i add4i(v4i, v4i);\nextern v4i sub4i(v4i, v4i);\nextern v16u8 and16(v16u8, v16u8);\nextern v16u8 or16(v16u8, v16u8);\nextern v16u8 xor16(v16u8, v16u8);\nint main(void) {\n    v4i a = {10, 20, 30, 40};\n    v4i b = {1, 2, 3, 4};\n    v16u8 x = {0xFF, 0x0F, 0xF0, 0x55, 0xAA, 0x12, 0x34, 0x56, 0x80, 0x7F, 0x33, 0xCC, 0x5A, 0xA5, 0x11, 0x22};\n    v16u8 y = {0x0F, 0xF0, 0x0F, 0xAA, 0x55, 0x34, 0x12, 0x65, 0x7F, 0x80, 0xCC, 0x33, 0xA5, 0x5A, 0x22, 0x11};\n    v4i add = add4i(a, b);\n    v4i sub = sub4i(a, b);\n    v16u8 av = and16(x, y);\n    v16u8 ov = or16(x, y);\n    v16u8 xv = xor16(x, y);\n    return (add[0] != 11) || (add[1] != 22) || (add[2] != 33) || (add[3] != 44)\n        || (sub[0] != 9) || (sub[1] != 18) || (sub[2] != 27) || (sub[3] != 36)\n        || (av[0] != 0x0F) || (av[1] != 0x00) || (av[2] != 0x00) || (av[3] != 0x00)\n        || (ov[0] != 0xFF) || (ov[1] != 0xFF) || (ov[2] != 0xFF) || (ov[3] != 0xFF)\n        || (xv[4] != 0xFF) || (xv[5] != 0x26) || (xv[6] != 0x26) || (xv[7] != 0x33)\n        || (xv[8] != 0xFF) || (xv[9] != 0xFF) || (xv[10] != 0xFF) || (xv[11] != 0xFF)\n        || (xv[12] != 0xFF) || (xv[13] != 0xFF) || (xv[14] != 0x33) || (xv[15] != 0x33);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "bitops",
         source: "bitops.c",
         driver: "extern unsigned bit_mix(unsigned);\nint main(void) { return bit_mix(0xABu) != 117u; }\n",
