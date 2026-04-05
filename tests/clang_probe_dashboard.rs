@@ -176,6 +176,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_pair_return",
+        source: "vector_pair_return.c",
+        driver: "typedef float v4f __attribute__((vector_size(16)));\ntypedef struct { v4f a; v4f b; } pair;\nextern pair make_pair(v4f, v4f);\nint main(void) {\n    v4f x = {1.0f, 2.0f, 3.0f, 4.0f};\n    v4f y = {10.0f, 20.0f, 30.0f, 40.0f};\n    pair p = make_pair(x, y);\n    float *lo = (float *)&p.a;\n    float *hi = (float *)&p.b;\n    return (lo[0] != 11.0f) || (lo[1] != 22.0f) || (lo[2] != 33.0f) || (lo[3] != 44.0f)\n        || (hi[0] != -9.0f) || (hi[1] != -18.0f) || (hi[2] != -27.0f) || (hi[3] != -36.0f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "bitops",
         source: "bitops.c",
         driver: "extern unsigned bit_mix(unsigned);\nint main(void) { return bit_mix(0xABu) != 117u; }\n",
