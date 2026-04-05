@@ -2112,10 +2112,30 @@ fn sys_fmaxv_4s() {
     );
 }
 #[test]
+fn sys_fmaxnmv_4s() {
+    verify(
+        "fmaxnmv.4s s1, v2",
+        Inst::FmaxnmvV4S {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_fminv_4s() {
     verify(
         "fminv.4s s3, v4",
         Inst::FminvV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_fminnmv_4s() {
+    verify(
+        "fminnmv.4s s3, v4",
+        Inst::FminnmvV4S {
             rd: FpReg::new(3),
             rn: FpReg::new(4),
         },
