@@ -1205,14 +1205,20 @@ pub enum Inst {
     BslV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// CMEQ.4S Vd, Vn, Vm
     CmeqV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FCMEQ.4S Vd, Vn, Vm
+    FcmeqV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// CMHS.4S Vd, Vn, Vm
     CmhsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// CMHI.4S Vd, Vn, Vm
     CmhiV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// CMGE.4S Vd, Vn, Vm
     CmgeV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FCMGE.4S Vd, Vn, Vm
+    FcmgeV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// CMGT.4S Vd, Vn, Vm
     CmgtV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FCMGT.4S Vd, Vn, Vm
+    FcmgtV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// EXT.16B Vd, Vn, Vm, #index
     ExtV16B {
         rd: FpReg,
@@ -2394,10 +2400,13 @@ impl Inst {
             Inst::BitV16B { rd, rn, rm } => simd_binary(0x6EA01C00, *rm, *rn, *rd),
             Inst::BslV16B { rd, rn, rm } => simd_binary(0x6E601C00, *rm, *rn, *rd),
             Inst::CmeqV4S { rd, rn, rm } => simd_binary(0x6EA08C00, *rm, *rn, *rd),
+            Inst::FcmeqV4S { rd, rn, rm } => simd_binary(0x4E20E400, *rm, *rn, *rd),
             Inst::CmhsV4S { rd, rn, rm } => simd_binary(0x6EA03C00, *rm, *rn, *rd),
             Inst::CmhiV4S { rd, rn, rm } => simd_binary(0x6EA03400, *rm, *rn, *rd),
             Inst::CmgeV4S { rd, rn, rm } => simd_binary(0x4EA03C00, *rm, *rn, *rd),
+            Inst::FcmgeV4S { rd, rn, rm } => simd_binary(0x6E20E400, *rm, *rn, *rd),
             Inst::CmgtV4S { rd, rn, rm } => simd_binary(0x4EA03400, *rm, *rn, *rd),
+            Inst::FcmgtV4S { rd, rn, rm } => simd_binary(0x6EA0E400, *rm, *rn, *rd),
             Inst::ExtV16B { rd, rn, rm, index } => simd_ext_16b(*rm, *rn, *rd, *index),
             Inst::Rev64V4S { rd, rn } => simd_unary(0x4EA00800, *rn, *rd),
             Inst::Zip1V4S { rd, rn, rm } => simd_binary(0x4E803800, *rm, *rn, *rd),
@@ -5717,6 +5726,18 @@ mod tests {
         );
     }
     #[test]
+    fn fcmeq_4s_v0_v1_v2() {
+        assert_eq!(
+            Inst::FcmeqV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+            .encode(),
+            0x4E22E420
+        );
+    }
+    #[test]
     fn cmhs_4s_v0_v0_v1() {
         assert_eq!(
             Inst::CmhsV4S {
@@ -5753,6 +5774,18 @@ mod tests {
         );
     }
     #[test]
+    fn fcmge_4s_v3_v4_v5() {
+        assert_eq!(
+            Inst::FcmgeV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+            .encode(),
+            0x6E25E483
+        );
+    }
+    #[test]
     fn cmgt_4s_v2_v3_v4() {
         assert_eq!(
             Inst::CmgtV4S {
@@ -5762,6 +5795,18 @@ mod tests {
             }
             .encode(),
             0x4EA43462
+        );
+    }
+    #[test]
+    fn fcmgt_4s_v6_v7_v8() {
+        assert_eq!(
+            Inst::FcmgtV4S {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+            .encode(),
+            0x6EA8E4E6
         );
     }
     #[test]

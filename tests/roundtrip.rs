@@ -917,6 +917,10 @@ fn rt_cmeq_4s() {
     roundtrip(".text\ncmeq.4s v0, v0, v1\n");
 }
 #[test]
+fn rt_fcmeq_4s() {
+    roundtrip(".text\nfcmeq.4s v0, v1, v2\n");
+}
+#[test]
 fn rt_cmhs_4s() {
     roundtrip(".text\ncmhs.4s v0, v0, v1\n");
 }
@@ -929,8 +933,16 @@ fn rt_cmge_4s() {
     roundtrip(".text\ncmge.4s v5, v6, v7\n");
 }
 #[test]
+fn rt_fcmge_4s() {
+    roundtrip(".text\nfcmge.4s v3, v4, v5\n");
+}
+#[test]
 fn rt_cmgt_4s() {
     roundtrip(".text\ncmgt.4s v2, v3, v4\n");
+}
+#[test]
+fn rt_fcmgt_4s() {
+    roundtrip(".text\nfcmgt.4s v6, v7, v8\n");
 }
 #[test]
 fn rt_orr_16b() {
