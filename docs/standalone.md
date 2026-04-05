@@ -190,13 +190,13 @@ Major covered families include:
   - `fabs`, `fneg`, `fsqrt`, `fcmp`, `fmadd`
   - `fcvtzs`, `scvtf`, `fmov`
 - SIMD / vector:
-  - `add.4s`, `sub.4s`
+  - `add.4s`, `sub.4s`, `smax.4s`, `smin.4s`
   - `and.16b`, `bic.16b`, `orr.16b`, `eor.16b`
   - `bif.16b`, `bit.16b`, `bsl.16b`
   - `cmeq.4s`, `cmhs.4s`, `cmhi.4s`, `cmge.4s`, `cmgt.4s`
   - `ext.16b`, `rev64.4s`, `zip1.4s`, `zip2.4s`, `uzp1.4s`, `uzp2.4s`, `trn1.4s`, `trn2.4s`
   - `tbl.16b`, `tbx.16b`
-  - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`
+  - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`, `fmax.4s`, `fmin.4s`
   - `mov.8b`, `mov.16b`, `mov.4s`, `mov.2d`
   - `dup.16b`, `dup.8h`, `dup.4s`, `dup.2d`
   - `mov sN, vM[idx]`, `mov dN, vM[idx]`

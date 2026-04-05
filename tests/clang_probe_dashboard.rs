@@ -216,6 +216,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_minmax",
+        source: "vector_minmax.c",
+        driver: "#include <arm_neon.h>\nextern float32x4_t max4f(float32x4_t, float32x4_t);\nextern float32x4_t min4f(float32x4_t, float32x4_t);\nextern int32x4_t max4s(int32x4_t, int32x4_t);\nextern int32x4_t min4s(int32x4_t, int32x4_t);\nint main(void) {\n    float32x4_t af = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t bf = {2.0f, 7.0f, -5.0f, 8.0f};\n    int32x4_t ai = {1, 9, -3, 4};\n    int32x4_t bi = {2, 7, -5, 8};\n    float32x4_t xf = max4f(af, bf);\n    float32x4_t nf = min4f(af, bf);\n    int32x4_t xi = max4s(ai, bi);\n    int32x4_t ni = min4s(ai, bi);\n    return (xf[0] != 2.0f) || (xf[1] != 9.0f) || (xf[2] != -3.0f) || (xf[3] != 8.0f)\n        || (nf[0] != 1.0f) || (nf[1] != 7.0f) || (nf[2] != -5.0f) || (nf[3] != 4.0f)\n        || (xi[0] != 2) || (xi[1] != 9) || (xi[2] != -3) || (xi[3] != 8)\n        || (ni[0] != 1) || (ni[1] != 7) || (ni[2] != -5) || (ni[3] != 4);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_shuffle",
         source: "vector_shuffle.c",
         driver: "typedef float v4f __attribute__((vector_size(16)));\nextern v4f swap_halves(v4f);\nextern v4f blend_even(v4f, v4f);\nint main(void) {\n    v4f a = {1.0f, 2.0f, 3.0f, 4.0f};\n    v4f b = {10.0f, 20.0f, 30.0f, 40.0f};\n    v4f s = swap_halves(a);\n    v4f t = blend_even(a, b);\n    return (s[0] != 3.0f) || (s[1] != 4.0f) || (s[2] != 1.0f) || (s[3] != 2.0f)\n        || (t[0] != 1.0f) || (t[1] != 20.0f) || (t[2] != 3.0f) || (t[3] != 40.0f);\n}\n",
