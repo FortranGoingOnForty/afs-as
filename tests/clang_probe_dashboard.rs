@@ -282,6 +282,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fp_round",
+        source: "vector_fp_round.c",
+        driver: "#include <arm_neon.h>\nextern float32x4_t round_nearest(float32x4_t);\nextern float32x4_t round_down(float32x4_t);\nextern float32x4_t round_up(float32x4_t);\nextern float32x4_t round_zero(float32x4_t);\nint main(void) {\n    float32x4_t a = {1.2f, -1.7f, 2.25f, -3.8f};\n    float32x4_t rn = round_nearest(a);\n    float32x4_t rd = round_down(a);\n    float32x4_t ru = round_up(a);\n    float32x4_t rz = round_zero(a);\n    return (rn[0] != 1.0f) || (rn[1] != -2.0f) || (rn[2] != 2.0f) || (rn[3] != -4.0f)\n        || (rd[0] != 1.0f) || (rd[1] != -2.0f) || (rd[2] != 2.0f) || (rd[3] != -4.0f)\n        || (ru[0] != 2.0f) || (ru[1] != -1.0f) || (ru[2] != 3.0f) || (ru[3] != -3.0f)\n        || (rz[0] != 1.0f) || (rz[1] != -1.0f) || (rz[2] != 2.0f) || (rz[3] != -3.0f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp",
         source: "vector_fcmp.c",
         driver: "#include <arm_neon.h>\nextern uint32x4_t eq_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t ge_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t gt_mask_f32(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {1.0f, 7.0f, -5.0f, 8.0f};\n    uint32x4_t eq = eq_mask_f32(a, b);\n    uint32x4_t ge = ge_mask_f32(a, b);\n    uint32x4_t gt = gt_mask_f32(a, b);\n    return (eq[0] != 0xFFFFFFFFu) || (eq[1] != 0u) || (eq[2] != 0u) || (eq[3] != 0u)\n        || (ge[0] != 0xFFFFFFFFu) || (ge[1] != 0xFFFFFFFFu) || (ge[2] != 0xFFFFFFFFu) || (ge[3] != 0u)\n        || (gt[0] != 0u) || (gt[1] != 0xFFFFFFFFu) || (gt[2] != 0xFFFFFFFFu) || (gt[3] != 0u);\n}\n",
