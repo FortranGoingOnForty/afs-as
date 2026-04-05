@@ -866,6 +866,14 @@ fn rt_fminp_4s() {
     roundtrip(".text\nfminp.4s v3, v4, v5\n");
 }
 #[test]
+fn rt_fmaxnmp_4s() {
+    roundtrip(".text\nfmaxnmp.4s v0, v1, v2\n");
+}
+#[test]
+fn rt_fminnmp_4s() {
+    roundtrip(".text\nfminnmp.4s v3, v4, v5\n");
+}
+#[test]
 fn rt_fmla_4s() {
     roundtrip(".text\nfmla.4s v0, v1, v2\n");
 }

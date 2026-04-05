@@ -2115,6 +2115,28 @@ fn sys_fminp_4s() {
     );
 }
 #[test]
+fn sys_fmaxnmp_4s() {
+    verify(
+        "fmaxnmp.4s v0, v1, v2",
+        Inst::FmaxnmpV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_fminnmp_4s() {
+    verify(
+        "fminnmp.4s v3, v4, v5",
+        Inst::FminnmpV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
 fn sys_fmla_4s() {
     verify(
         "fmla.4s v0, v1, v2",
