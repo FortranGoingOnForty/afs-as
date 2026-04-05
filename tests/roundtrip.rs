@@ -818,6 +818,10 @@ fn rt_add_4s() {
     roundtrip(".text\nadd.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_addp_4s() {
+    roundtrip(".text\naddp.4s v0, v1, v2\n");
+}
+#[test]
 fn rt_fmax_4s() {
     roundtrip(".text\nfmax.4s v0, v0, v1\n");
 }

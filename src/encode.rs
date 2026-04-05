@@ -1141,6 +1141,8 @@ pub enum Inst {
     FmlsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// ADD.4S Vd, Vn, Vm
     AddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// ADDP.4S Vd, Vn, Vm
+    AddpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMAX.4S Vd, Vn, Vm
     FmaxV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMIN.4S Vd, Vn, Vm
@@ -2422,6 +2424,7 @@ impl Inst {
             Inst::FmlaV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20CC00, *rm, *rn, *rd),
             Inst::FmlsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0CC00, *rm, *rn, *rd),
             Inst::AddV4S { rd, rn, rm } => simd_binary(0x4EA08400, *rm, *rn, *rd),
+            Inst::AddpV4S { rd, rn, rm } => simd_binary(0x4EA0BC00, *rm, *rn, *rd),
             Inst::FmaxV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20F400, *rm, *rn, *rd),
             Inst::FminV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0F400, *rm, *rn, *rd),
             Inst::FmaxnmV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20C400, *rm, *rn, *rd),
@@ -5468,6 +5471,18 @@ mod tests {
             }
             .encode(),
             0x4EA28420
+        );
+    }
+    #[test]
+    fn addp_4s_v0_v1_v2() {
+        assert_eq!(
+            Inst::AddpV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+            .encode(),
+            0x4EA2BC20
         );
     }
     #[test]

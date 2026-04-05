@@ -1984,6 +1984,17 @@ fn sys_add_4s() {
     );
 }
 #[test]
+fn sys_addp_4s() {
+    verify(
+        "addp.4s v0, v1, v2",
+        Inst::AddpV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_fmax_4s() {
     verify(
         "fmax.4s v0, v0, v1",

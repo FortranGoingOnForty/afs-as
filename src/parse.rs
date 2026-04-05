@@ -1264,7 +1264,8 @@ impl<'a> Parser<'a> {
 
             // FP arithmetic (double)
             "fadd" => self.parse_fp_arith("fadd"),
-            "add.4s" | "sub.4s" | "smax.4s" | "smin.4s" | "umax.4s" | "umin.4s" => {
+            "add.4s" | "addp.4s" | "sub.4s" | "smax.4s" | "smin.4s" | "umax.4s"
+            | "umin.4s" => {
                 self.parse_simd_int_arith_4s(mnemonic)
             }
             "addv.4s" | "faddp.2s" | "fmaxv.4s" | "fminv.4s" | "fmaxnmv.4s"
@@ -3968,6 +3969,7 @@ impl<'a> Parser<'a> {
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
             "add.4s" => Inst::AddV4S { rd, rn, rm },
+            "addp.4s" => Inst::AddpV4S { rd, rn, rm },
             "smax.4s" => Inst::SmaxV4S { rd, rn, rm },
             "smin.4s" => Inst::SminV4S { rd, rn, rm },
             "sub.4s" => Inst::SubV4S { rd, rn, rm },
@@ -7277,6 +7279,18 @@ mod tests {
         assert_eq!(
             parse_inst("add.4s v0, v1, v2"),
             Inst::AddV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_addp_4s() {
+        assert_eq!(
+            parse_inst("addp.4s v0, v1, v2"),
+            Inst::AddpV4S {
                 rd: FpReg::new(0),
                 rn: FpReg::new(1),
                 rm: FpReg::new(2)
