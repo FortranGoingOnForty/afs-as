@@ -1983,6 +1983,50 @@ fn sys_add_4s() {
     );
 }
 #[test]
+fn sys_fmax_4s() {
+    verify(
+        "fmax.4s v0, v0, v1",
+        Inst::FmaxV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+            rm: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_fmin_4s() {
+    verify(
+        "fmin.4s v2, v3, v4",
+        Inst::FminV4S {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+            rm: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_smax_4s() {
+    verify(
+        "smax.4s v5, v6, v7",
+        Inst::SmaxV4S {
+            rd: FpReg::new(5),
+            rn: FpReg::new(6),
+            rm: FpReg::new(7),
+        },
+    );
+}
+#[test]
+fn sys_smin_4s() {
+    verify(
+        "smin.4s v8, v9, v10",
+        Inst::SminV4S {
+            rd: FpReg::new(8),
+            rn: FpReg::new(9),
+            rm: FpReg::new(10),
+        },
+    );
+}
+#[test]
 fn sys_fsub_4s() {
     verify(
         "fsub.4s v3, v4, v5",
