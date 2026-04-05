@@ -2027,6 +2027,28 @@ fn sys_smin_4s() {
     );
 }
 #[test]
+fn sys_umax_4s() {
+    verify(
+        "umax.4s v0, v0, v1",
+        Inst::UmaxV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+            rm: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_umin_4s() {
+    verify(
+        "umin.4s v2, v3, v4",
+        Inst::UminV4S {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+            rm: FpReg::new(4),
+        },
+    );
+}
+#[test]
 fn sys_fsub_4s() {
     verify(
         "fsub.4s v3, v4, v5",

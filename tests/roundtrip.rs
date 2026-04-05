@@ -833,6 +833,14 @@ fn rt_smin_4s() {
     roundtrip(".text\nsmin.4s v8, v9, v10\n");
 }
 #[test]
+fn rt_umax_4s() {
+    roundtrip(".text\numax.4s v0, v0, v1\n");
+}
+#[test]
+fn rt_umin_4s() {
+    roundtrip(".text\numin.4s v2, v3, v4\n");
+}
+#[test]
 fn rt_fsub_4s() {
     roundtrip(".text\nfsub.4s v3, v4, v5\n");
 }
