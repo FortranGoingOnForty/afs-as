@@ -164,6 +164,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_math",
+        source: "vector_math.c",
+        driver: "typedef float v4f __attribute__((vector_size(16)));\nextern v4f sub4(v4f, v4f);\nextern v4f mul4(v4f, v4f);\nextern v4f div4(v4f, v4f);\nint main(void) {\n    v4f a = {8.0f, 6.0f, 4.0f, 2.0f};\n    v4f b = {1.0f, 2.0f, 4.0f, 8.0f};\n    v4f sub = sub4(a, b);\n    v4f mul = mul4(a, b);\n    v4f div = div4(a, b);\n    return (sub[0] != 7.0f) || (sub[1] != 4.0f) || (sub[2] != 0.0f) || (sub[3] != -6.0f)\n        || (mul[0] != 8.0f) || (mul[1] != 12.0f) || (mul[2] != 16.0f) || (mul[3] != 16.0f)\n        || (div[0] != 8.0f) || (div[1] != 3.0f) || (div[2] != 1.0f) || (div[3] != 0.25f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "bitops",
         source: "bitops.c",
         driver: "extern unsigned bit_mix(unsigned);\nint main(void) { return bit_mix(0xABu) != 117u; }\n",
