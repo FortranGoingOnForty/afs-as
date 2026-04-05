@@ -1192,6 +1192,9 @@ impl<'a> Parser<'a> {
             // Logic
             "and" => self.parse_logic("and"),
             "and.16b" => self.parse_simd_logic_16b("and.16b"),
+            "bif.16b" => self.parse_simd_logic_16b("bif.16b"),
+            "bit.16b" => self.parse_simd_logic_16b("bit.16b"),
+            "bsl.16b" => self.parse_simd_logic_16b("bsl.16b"),
             "orr" => self.parse_logic("orr"),
             "orr.16b" => self.parse_simd_logic_16b("orr.16b"),
             "eor" => self.parse_logic("eor"),
@@ -3800,6 +3803,9 @@ impl<'a> Parser<'a> {
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
             "and.16b" => Inst::AndV16B { rd, rn, rm },
+            "bif.16b" => Inst::BifV16B { rd, rn, rm },
+            "bit.16b" => Inst::BitV16B { rd, rn, rm },
+            "bsl.16b" => Inst::BslV16B { rd, rn, rm },
             "orr.16b" => Inst::OrrV16B { rd, rn, rm },
             "eor.16b" => Inst::EorV16B { rd, rn, rm },
             _ => unreachable!(),
@@ -6948,6 +6954,42 @@ mod tests {
         assert_eq!(
             parse_inst("and.16b v6, v7, v8"),
             Inst::AndV16B {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_bif_16b() {
+        assert_eq!(
+            parse_inst("bif.16b v0, v1, v2"),
+            Inst::BifV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_bit_16b() {
+        assert_eq!(
+            parse_inst("bit.16b v3, v4, v5"),
+            Inst::BitV16B {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_bsl_16b() {
+        assert_eq!(
+            parse_inst("bsl.16b v6, v7, v8"),
+            Inst::BslV16B {
                 rd: FpReg::new(6),
                 rn: FpReg::new(7),
                 rm: FpReg::new(8)

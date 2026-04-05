@@ -821,6 +821,18 @@ fn rt_and_16b() {
     roundtrip(".text\nand.16b v6, v7, v8\n");
 }
 #[test]
+fn rt_bif_16b() {
+    roundtrip(".text\nbif.16b v0, v1, v2\n");
+}
+#[test]
+fn rt_bit_16b() {
+    roundtrip(".text\nbit.16b v3, v4, v5\n");
+}
+#[test]
+fn rt_bsl_16b() {
+    roundtrip(".text\nbsl.16b v6, v7, v8\n");
+}
+#[test]
 fn rt_orr_16b() {
     roundtrip(".text\norr.16b v9, v10, v11\n");
 }

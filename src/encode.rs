@@ -1157,6 +1157,12 @@ pub enum Inst {
     OrrV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// EOR.16B Vd, Vn, Vm
     EorV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// BIF.16B Vd, Vn, Vm
+    BifV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// BIT.16B Vd, Vn, Vm
+    BitV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// BSL.16B Vd, Vn, Vm
+    BslV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// EXT.16B Vd, Vn, Vm, #index
     ExtV16B {
         rd: FpReg,
@@ -2293,6 +2299,9 @@ impl Inst {
             Inst::AndV16B { rd, rn, rm } => simd_binary(0x4E201C00, *rm, *rn, *rd),
             Inst::OrrV16B { rd, rn, rm } => simd_binary(0x4EA01C00, *rm, *rn, *rd),
             Inst::EorV16B { rd, rn, rm } => simd_binary(0x6E201C00, *rm, *rn, *rd),
+            Inst::BifV16B { rd, rn, rm } => simd_binary(0x6EE01C00, *rm, *rn, *rd),
+            Inst::BitV16B { rd, rn, rm } => simd_binary(0x6EA01C00, *rm, *rn, *rd),
+            Inst::BslV16B { rd, rn, rm } => simd_binary(0x6E601C00, *rm, *rn, *rd),
             Inst::ExtV16B { rd, rn, rm, index } => simd_ext_16b(*rm, *rn, *rd, *index),
             Inst::Rev64V4S { rd, rn } => simd_unary(0x4EA00800, *rn, *rd),
             Inst::Zip1V4S { rd, rn, rm } => simd_binary(0x4E803800, *rm, *rn, *rd),
@@ -5288,6 +5297,42 @@ mod tests {
             }
             .encode(),
             0x4E281CE6
+        );
+    }
+    #[test]
+    fn bif_16b_v0_v1_v2() {
+        assert_eq!(
+            Inst::BifV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+            .encode(),
+            0x6EE21C20
+        );
+    }
+    #[test]
+    fn bit_16b_v3_v4_v5() {
+        assert_eq!(
+            Inst::BitV16B {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+            .encode(),
+            0x6EA51C83
+        );
+    }
+    #[test]
+    fn bsl_16b_v6_v7_v8() {
+        assert_eq!(
+            Inst::BslV16B {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+            .encode(),
+            0x6E681CE6
         );
     }
     #[test]

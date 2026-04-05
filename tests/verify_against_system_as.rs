@@ -2000,6 +2000,39 @@ fn sys_and_16b() {
     );
 }
 #[test]
+fn sys_bif_16b() {
+    verify(
+        "bif.16b v0, v1, v2",
+        Inst::BifV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_bit_16b() {
+    verify(
+        "bit.16b v3, v4, v5",
+        Inst::BitV16B {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_bsl_16b() {
+    verify(
+        "bsl.16b v6, v7, v8",
+        Inst::BslV16B {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
 fn sys_orr_16b() {
     verify(
         "orr.16b v9, v10, v11",
