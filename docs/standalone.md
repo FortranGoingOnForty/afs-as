@@ -196,6 +196,7 @@ Major covered families include:
   - `faddp.4s`, `faddp.2s`, `fmaxv.4s`, `fminv.4s`
   - `fmaxnmv.4s`, `fminnmv.4s`
   - `fmla.4s`, `fmls.4s`, `fneg.4s`
+  - `fabs.4s`, `fsqrt.4s`
   - `and.16b`, `bic.16b`, `orr.16b`, `eor.16b`
   - `bif.16b`, `bit.16b`, `bsl.16b`
   - `cmeq.4s`, `cmhs.4s`, `cmhi.4s`, `cmge.4s`, `cmgt.4s`

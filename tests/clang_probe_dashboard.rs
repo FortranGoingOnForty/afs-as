@@ -264,6 +264,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fp_unary",
+        source: "vector_fp_unary.c",
+        driver: "#include <arm_neon.h>\nextern float32x4_t abs4f(float32x4_t);\nextern float32x4_t negabs4f(float32x4_t);\nextern float32x4_t sqrt4f(float32x4_t);\nint main(void) {\n    float32x4_t a = {-1.0f, 2.0f, -3.0f, 4.0f};\n    float32x4_t squares = {1.0f, 4.0f, 9.0f, 16.0f};\n    float32x4_t x = abs4f(a);\n    float32x4_t y = negabs4f(a);\n    float32x4_t z = sqrt4f(squares);\n    return (x[0] != 1.0f) || (x[1] != 2.0f) || (x[2] != 3.0f) || (x[3] != 4.0f)\n        || (y[0] != -1.0f) || (y[1] != -2.0f) || (y[2] != -3.0f) || (y[3] != -4.0f)\n        || (z[0] != 1.0f) || (z[1] != 2.0f) || (z[2] != 3.0f) || (z[3] != 4.0f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp",
         source: "vector_fcmp.c",
         driver: "#include <arm_neon.h>\nextern uint32x4_t eq_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t ge_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t gt_mask_f32(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {1.0f, 7.0f, -5.0f, 8.0f};\n    uint32x4_t eq = eq_mask_f32(a, b);\n    uint32x4_t ge = ge_mask_f32(a, b);\n    uint32x4_t gt = gt_mask_f32(a, b);\n    return (eq[0] != 0xFFFFFFFFu) || (eq[1] != 0u) || (eq[2] != 0u) || (eq[3] != 0u)\n        || (ge[0] != 0xFFFFFFFFu) || (ge[1] != 0xFFFFFFFFu) || (ge[2] != 0xFFFFFFFFu) || (ge[3] != 0u)\n        || (gt[0] != 0u) || (gt[1] != 0xFFFFFFFFu) || (gt[2] != 0xFFFFFFFFu) || (gt[3] != 0u);\n}\n",
