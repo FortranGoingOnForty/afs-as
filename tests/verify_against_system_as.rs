@@ -2049,6 +2049,36 @@ fn sys_umin_4s() {
     );
 }
 #[test]
+fn sys_addv_4s() {
+    verify(
+        "addv.4s s0, v0",
+        Inst::AddvV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_umaxv_4s() {
+    verify(
+        "umaxv.4s s1, v2",
+        Inst::UmaxvV4S {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_smaxv_4s() {
+    verify(
+        "smaxv.4s s3, v4",
+        Inst::SmaxvV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+        },
+    );
+}
+#[test]
 fn sys_fsub_4s() {
     verify(
         "fsub.4s v3, v4, v5",

@@ -841,6 +841,18 @@ fn rt_umin_4s() {
     roundtrip(".text\numin.4s v2, v3, v4\n");
 }
 #[test]
+fn rt_addv_4s() {
+    roundtrip(".text\naddv.4s s0, v0\n");
+}
+#[test]
+fn rt_umaxv_4s() {
+    roundtrip(".text\numaxv.4s s1, v2\n");
+}
+#[test]
+fn rt_smaxv_4s() {
+    roundtrip(".text\nsmaxv.4s s3, v4\n");
+}
+#[test]
 fn rt_fsub_4s() {
     roundtrip(".text\nfsub.4s v3, v4, v5\n");
 }

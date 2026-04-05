@@ -1137,6 +1137,12 @@ pub enum Inst {
     UmaxV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// UMIN.4S Vd, Vn, Vm
     UminV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// ADDV.4S Sd, Vn
+    AddvV4S { rd: FpReg, rn: FpReg },
+    /// UMAXV.4S Sd, Vn
+    UmaxvV4S { rd: FpReg, rn: FpReg },
+    /// SMAXV.4S Sd, Vn
+    SmaxvV4S { rd: FpReg, rn: FpReg },
     /// FSUB.4S Vd, Vn, Vm
     FsubV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// SUB.4S Vd, Vn, Vm
@@ -2342,6 +2348,9 @@ impl Inst {
             Inst::SminV4S { rd, rn, rm } => simd_binary(0x4EA06C00, *rm, *rn, *rd),
             Inst::UmaxV4S { rd, rn, rm } => simd_binary(0x6EA06400, *rm, *rn, *rd),
             Inst::UminV4S { rd, rn, rm } => simd_binary(0x6EA06C00, *rm, *rn, *rd),
+            Inst::AddvV4S { rd, rn } => simd_reduce_4s(0x4EB1B800, *rn, *rd),
+            Inst::UmaxvV4S { rd, rn } => simd_reduce_4s(0x6EB0A800, *rn, *rd),
+            Inst::SmaxvV4S { rd, rn } => simd_reduce_4s(0x4EB0A800, *rn, *rd),
             Inst::FsubV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0D400, *rm, *rn, *rd),
             Inst::SubV4S { rd, rn, rm } => simd_binary(0x6EA08400, *rm, *rn, *rd),
             Inst::FsubS { rd, rn, rm } => fp_arith(0b00, 0b0011, *rm, *rn, *rd),
@@ -2850,6 +2859,10 @@ fn simd_unary(base: u32, rn: FpReg, rd: FpReg) -> u32 {
 
 fn simd_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
     base | (rn.enc() << 16) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_reduce_4s(base: u32, rn: FpReg, rd: FpReg) -> u32 {
+    base | (rn.enc() << 5) | rd.enc()
 }
 
 fn simd_lane_imm5(size_log2: u8, index: u8) -> u32 {
@@ -5419,6 +5432,39 @@ mod tests {
             }
             .encode(),
             0x6EA46C62
+        );
+    }
+    #[test]
+    fn addv_4s_s0_v0() {
+        assert_eq!(
+            Inst::AddvV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4EB1B800
+        );
+    }
+    #[test]
+    fn umaxv_4s_s1_v2() {
+        assert_eq!(
+            Inst::UmaxvV4S {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x6EB0A841
+        );
+    }
+    #[test]
+    fn smaxv_4s_s3_v4() {
+        assert_eq!(
+            Inst::SmaxvV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+            .encode(),
+            0x4EB0A883
         );
     }
     #[test]
