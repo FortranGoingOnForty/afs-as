@@ -241,6 +241,21 @@ impl FpMemWidth {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SimdLaneWidth {
+    S32,
+    D64,
+}
+
+impl SimdLaneWidth {
+    fn max_index(self) -> u8 {
+        match self {
+            SimdLaneWidth::S32 => 3,
+            SimdLaneWidth::D64 => 1,
+        }
+    }
+}
+
 impl<'a> Parser<'a> {
     fn new(tokens: &'a [Token]) -> Self {
         Self {
@@ -1192,6 +1207,7 @@ impl<'a> Parser<'a> {
             "cinv" => self.parse_cinv(),
             "cneg" => self.parse_cneg(),
             "mov" => self.parse_mov(),
+            "mov.s" | "mov.d" => self.parse_simd_lane_insert(mnemonic),
             "mov.8b" | "mov.16b" | "mov.4s" | "mov.2d" => self.parse_simd_mov(mnemonic),
             "movz" => self.parse_mov_wide("movz"),
             "movk" => self.parse_mov_wide("movk"),
@@ -2244,6 +2260,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_mov(&mut self) -> Result<Inst, ParseError> {
+        if self.peek_is_scalar_fp_reg() {
+            return self.parse_simd_lane_extract();
+        }
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
@@ -2277,6 +2296,46 @@ impl<'a> Parser<'a> {
                 })
             }
         }
+    }
+
+    fn parse_simd_lane_extract(&mut self) -> Result<Inst, ParseError> {
+        let (rd, is_double) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, index) = self.parse_simd_lane_ref(if is_double {
+            SimdLaneWidth::D64
+        } else {
+            SimdLaneWidth::S32
+        })?;
+        Ok(if is_double {
+            Inst::MovFromLaneD { rd, rn, index }
+        } else {
+            Inst::MovFromLaneS { rd, rn, index }
+        })
+    }
+
+    fn parse_simd_lane_insert(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let width = match mnemonic {
+            "mov.s" => SimdLaneWidth::S32,
+            "mov.d" => SimdLaneWidth::D64,
+            _ => unreachable!(),
+        };
+        let (rd, rd_index) = self.parse_simd_lane_ref(width)?;
+        self.expect(&Tok::Comma)?;
+        let (rn, rn_index) = self.parse_simd_lane_ref(width)?;
+        Ok(match width {
+            SimdLaneWidth::S32 => Inst::MovLaneS {
+                rd,
+                rd_index,
+                rn,
+                rn_index,
+            },
+            SimdLaneWidth::D64 => Inst::MovLaneD {
+                rd,
+                rd_index,
+                rn,
+                rn_index,
+            },
+        })
     }
 
     fn parse_mov_wide(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -3689,6 +3748,34 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_simd_lane_ref(&mut self, width: SimdLaneWidth) -> Result<(FpReg, u8), ParseError> {
+        let reg = self.parse_simd_reg()?;
+        self.expect(&Tok::LBracket)?;
+        let index = self.parse_lane_index(width.max_index())?;
+        self.expect(&Tok::RBracket)?;
+        Ok((reg, index))
+    }
+
+    fn parse_lane_index(&mut self, max_index: u8) -> Result<u8, ParseError> {
+        let token = self.peek().clone();
+        let value = match token {
+            Tok::Integer(value) => {
+                self.advance();
+                value
+            }
+            other => return Err(self.err(format!("expected lane index, got {}", other))),
+        };
+        let index = u8::try_from(value)
+            .map_err(|_| self.err(format!("lane index {} out of range", value)))?;
+        if index > max_index {
+            return Err(self.err(format!(
+                "lane index {} out of range for lane width",
+                value
+            )));
+        }
+        Ok(index)
+    }
+
     fn parse_fp_unary(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
@@ -3779,6 +3866,16 @@ impl<'a> Parser<'a> {
                         Ok(Inst::FmovImmS { rd, imm8 })
                     }
                 }
+                Tok::Ident(src) if looks_like_fp_register_name(src) => {
+                    let (rn, src_is_double) = self.parse_fp_reg_with_size()?;
+                    if src_is_double != is_double {
+                        Err(self.err("fmov register copy requires matching FP widths".into()))
+                    } else if is_double {
+                        Ok(Inst::FmovRegD { rd, rn })
+                    } else {
+                        Ok(Inst::FmovRegS { rd, rn })
+                    }
+                }
                 _ => {
                     // FMOV Dd, Xn (GP → FP)
                     let rn = self.parse_gp_reg()?;
@@ -3799,6 +3896,16 @@ impl<'a> Parser<'a> {
         let lower = name.to_lowercase();
         parse_simd_reg_name(&lower)
             .ok_or_else(|| self.err(format!("expected vector register, got '{}'", name)))
+    }
+
+    fn peek_is_scalar_fp_reg(&self) -> bool {
+        match self.peek() {
+            Tok::Ident(name) => {
+                let lower = name.to_lowercase();
+                (lower.starts_with('s') || lower.starts_with('d')) && parse_fp_reg_name(&lower).is_some()
+            }
+            _ => false,
+        }
     }
 
     fn parse_fp_modified_immediate(&mut self, is_double: bool) -> Result<u8, ParseError> {
@@ -6660,6 +6767,66 @@ mod tests {
             Inst::MovV2D {
                 rd: FpReg::new(6),
                 rn: FpReg::new(7)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_from_lane_s() {
+        assert_eq!(
+            parse_inst("mov s0, v1[2]"),
+            Inst::MovFromLaneS {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                index: 2
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fmov_reg_s() {
+        assert_eq!(parse_inst("fmov s1, s2"), Inst::FmovRegS { rd: S1, rn: S2 });
+    }
+
+    #[test]
+    fn parse_fmov_reg_d() {
+        assert_eq!(parse_inst("fmov d1, d2"), Inst::FmovRegD { rd: D1, rn: D2 });
+    }
+
+    #[test]
+    fn parse_mov_from_lane_d() {
+        assert_eq!(
+            parse_inst("mov d3, v4[1]"),
+            Inst::MovFromLaneD {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                index: 1
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_lane_s() {
+        assert_eq!(
+            parse_inst("mov.s v5[0], v6[0]"),
+            Inst::MovLaneS {
+                rd: FpReg::new(5),
+                rd_index: 0,
+                rn: FpReg::new(6),
+                rn_index: 0
+            }
+        );
+    }
+
+    #[test]
+    fn parse_mov_lane_d() {
+        assert_eq!(
+            parse_inst("mov.d v7[1], v8[1]"),
+            Inst::MovLaneD {
+                rd: FpReg::new(7),
+                rd_index: 1,
+                rn: FpReg::new(8),
+                rn_index: 1
             }
         );
     }

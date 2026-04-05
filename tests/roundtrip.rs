@@ -825,6 +825,30 @@ fn rt_mov_2d() {
     roundtrip(".text\nmov.2d v6, v7\n");
 }
 #[test]
+fn rt_fmov_reg_s() {
+    roundtrip(".text\nfmov s1, s2\n");
+}
+#[test]
+fn rt_fmov_reg_d() {
+    roundtrip(".text\nfmov d1, d2\n");
+}
+#[test]
+fn rt_mov_from_lane_s() {
+    roundtrip(".text\nmov s0, v1[2]\n");
+}
+#[test]
+fn rt_mov_from_lane_d() {
+    roundtrip(".text\nmov d3, v4[1]\n");
+}
+#[test]
+fn rt_mov_lane_s() {
+    roundtrip(".text\nmov.s v5[0], v6[0]\n");
+}
+#[test]
+fn rt_mov_lane_d() {
+    roundtrip(".text\nmov.d v7[1], v8[1]\n");
+}
+#[test]
 fn rt_fneg_d() {
     roundtrip(".text\nfneg d3, d4\n");
 }

@@ -2007,6 +2007,60 @@ fn sys_mov_2d() {
     );
 }
 #[test]
+fn sys_fmov_reg_s() {
+    verify("fmov s1, s2", Inst::FmovRegS { rd: S1, rn: S2 });
+}
+#[test]
+fn sys_fmov_reg_d() {
+    verify("fmov d1, d2", Inst::FmovRegD { rd: D1, rn: D2 });
+}
+#[test]
+fn sys_mov_from_lane_s() {
+    verify(
+        "mov s0, v1[2]",
+        Inst::MovFromLaneS {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            index: 2,
+        },
+    );
+}
+#[test]
+fn sys_mov_from_lane_d() {
+    verify(
+        "mov d3, v4[1]",
+        Inst::MovFromLaneD {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            index: 1,
+        },
+    );
+}
+#[test]
+fn sys_mov_lane_s() {
+    verify(
+        "mov.s v5[0], v6[0]",
+        Inst::MovLaneS {
+            rd: FpReg::new(5),
+            rd_index: 0,
+            rn: FpReg::new(6),
+            rn_index: 0,
+        },
+    );
+}
+#[test]
+fn sys_mov_lane_d() {
+    verify(
+        "mov.d v7[1], v8[1]",
+        Inst::MovLaneD {
+            rd: FpReg::new(7),
+            rd_index: 1,
+            rn: FpReg::new(8),
+            rn_index: 1,
+        },
+    );
+}
+#[test]
 fn sys_fneg_d() {
     verify("fneg d3, d4", Inst::FnegD { rd: D3, rn: D4 });
 }
