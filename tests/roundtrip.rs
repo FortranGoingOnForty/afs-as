@@ -930,6 +930,22 @@ fn rt_fsqrt_4s() {
     roundtrip(".text\nfsqrt.4s v1, v2\n");
 }
 #[test]
+fn rt_scvtf_4s() {
+    roundtrip(".text\nscvtf.4s v0, v1\n");
+}
+#[test]
+fn rt_ucvtf_4s() {
+    roundtrip(".text\nucvtf.4s v2, v3\n");
+}
+#[test]
+fn rt_fcvtzs_4s() {
+    roundtrip(".text\nfcvtzs.4s v4, v5\n");
+}
+#[test]
+fn rt_fcvtzu_4s() {
+    roundtrip(".text\nfcvtzu.4s v6, v7\n");
+}
+#[test]
 fn rt_and_16b() {
     roundtrip(".text\nand.16b v6, v7, v8\n");
 }

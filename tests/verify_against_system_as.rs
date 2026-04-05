@@ -2279,6 +2279,46 @@ fn sys_fsqrt_4s() {
     );
 }
 #[test]
+fn sys_scvtf_4s() {
+    verify(
+        "scvtf.4s v0, v1",
+        Inst::ScvtfV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_ucvtf_4s() {
+    verify(
+        "ucvtf.4s v2, v3",
+        Inst::UcvtfV4S {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+        },
+    );
+}
+#[test]
+fn sys_fcvtzs_4s() {
+    verify(
+        "fcvtzs.4s v4, v5",
+        Inst::FcvtzsV4S {
+            rd: FpReg::new(4),
+            rn: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_fcvtzu_4s() {
+    verify(
+        "fcvtzu.4s v6, v7",
+        Inst::FcvtzuV4S {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+        },
+    );
+}
+#[test]
 fn sys_and_16b() {
     verify(
         "and.16b v6, v7, v8",
