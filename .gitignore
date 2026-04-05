@@ -1,3 +1,1 @@
 .docs/
-tests/workbench/*
-!tests/workbench/README.md

@@ -15,7 +15,17 @@ Promotion rules:
   `tests/clang_probe/`
 - if an assembly fixture becomes a real compatibility or writer-parity case,
   move it into `tests/corpus/`
-- once promoted, remove or ignore the workbench copy
+- once promoted, either remove the workbench copy or keep it only if it still
+  adds discovery value beyond the promoted regression
 
-This directory is intentionally gitignored except for this README, so we can
-keep useful scratch material in the repo worktree without polluting history.
+This directory is tracked on purpose. It is the portable notebook for SIMD,
+relocation, writer-parity, and `clang`-output discovery work across machines.
+
+Some probes here may be incomplete or intentionally rough:
+- a source may exist only to see what `clang -S` emits
+- an assembly snippet may exist only to pin raw Apple `as` encodings
+- not every file here is expected to build as part of the normal test suite
+
+That is fine. The canonical regression surface still lives under
+`tests/clang_probe/` and `tests/corpus/`; this workbench just keeps the
+exploration trail durable and close to the codebase.
