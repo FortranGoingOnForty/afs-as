@@ -228,6 +228,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_minmax_nm",
+        source: "vector_minmax_nm.c",
+        driver: "#include <arm_neon.h>\nextern float32x4_t maxnm4f(float32x4_t, float32x4_t);\nextern float32x4_t minnm4f(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {2.0f, 7.0f, -5.0f, 8.0f};\n    float32x4_t x = maxnm4f(a, b);\n    float32x4_t n = minnm4f(a, b);\n    return (x[0] != 2.0f) || (x[1] != 9.0f) || (x[2] != -3.0f) || (x[3] != 8.0f)\n        || (n[0] != 1.0f) || (n[1] != 7.0f) || (n[2] != -5.0f) || (n[3] != 4.0f);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_reduce",
         source: "vector_reduce.c",
         driver: "#include <arm_neon.h>\nextern unsigned sum4u(uint32x4_t);\nextern unsigned max4u_reduce(uint32x4_t);\nextern int max4s_reduce(int32x4_t);\nint main(void) {\n    uint32x4_t au = {1u, 9u, 3u, 4u};\n    int32x4_t as = {-1, 5, 7, -3};\n    return (sum4u(au) != 17u) || (max4u_reduce(au) != 9u) || (max4s_reduce(as) != 7);\n}\n",
