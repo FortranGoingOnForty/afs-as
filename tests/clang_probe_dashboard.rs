@@ -192,6 +192,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_lane_gp",
+        source: "vector_lane_gp.c",
+        driver: "typedef unsigned v4u __attribute__((vector_size(16)));\ntypedef unsigned short v8hu __attribute__((vector_size(16)));\ntypedef unsigned char v16bu __attribute__((vector_size(16)));\ntypedef unsigned long long v2ull __attribute__((vector_size(16)));\nextern unsigned get_lane_u32(v4u);\nextern unsigned short get_lane_u16(v8hu);\nextern unsigned char get_lane_u8(v16bu);\nextern unsigned long long get_lane_u64(v2ull);\nextern v4u set_lane_u32(v4u, unsigned);\nextern v8hu set_lane_u16(v8hu, unsigned short);\nextern v16bu set_lane_u8(v16bu, unsigned char);\nextern v2ull set_lane_u64(v2ull, unsigned long long);\nint main(void) {\n    v4u a = {10u, 20u, 30u, 40u};\n    v8hu h = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u};\n    v16bu b = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u};\n    v2ull d = {11ull, 22ull};\n    v4u ra = set_lane_u32(a, 99u);\n    v8hu rh = set_lane_u16(h, 55u);\n    v16bu rb = set_lane_u8(b, 77u);\n    v2ull rd = set_lane_u64(d, 88ull);\n    return (get_lane_u32(a) != 30u)\n        || (get_lane_u16(h) != 6u)\n        || (get_lane_u8(b) != 8u)\n        || (get_lane_u64(d) != 22ull)\n        || (ra[0] != 10u) || (ra[1] != 99u) || (ra[2] != 30u) || (ra[3] != 40u)\n        || (rh[0] != 1u) || (rh[5] != 55u) || (rh[7] != 8u)\n        || (rb[0] != 1u) || (rb[7] != 77u) || (rb[15] != 16u)\n        || (rd[0] != 11ull) || (rd[1] != 88ull);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_int_ops",
         source: "vector_int_ops.c",
         driver: "typedef int v4i __attribute__((vector_size(16)));\ntypedef unsigned char v16u8 __attribute__((vector_size(16)));\nextern v4i add4i(v4i, v4i);\nextern v4i sub4i(v4i, v4i);\nextern v16u8 and16(v16u8, v16u8);\nextern v16u8 or16(v16u8, v16u8);\nextern v16u8 xor16(v16u8, v16u8);\nint main(void) {\n    v4i a = {10, 20, 30, 40};\n    v4i b = {1, 2, 3, 4};\n    v16u8 x = {0xFF, 0x0F, 0xF0, 0x55, 0xAA, 0x12, 0x34, 0x56, 0x80, 0x7F, 0x33, 0xCC, 0x5A, 0xA5, 0x11, 0x22};\n    v16u8 y = {0x0F, 0xF0, 0x0F, 0xAA, 0x55, 0x34, 0x12, 0x65, 0x7F, 0x80, 0xCC, 0x33, 0xA5, 0x5A, 0x22, 0x11};\n    v4i add = add4i(a, b);\n    v4i sub = sub4i(a, b);\n    v16u8 av = and16(x, y);\n    v16u8 ov = or16(x, y);\n    v16u8 xv = xor16(x, y);\n    return (add[0] != 11) || (add[1] != 22) || (add[2] != 33) || (add[3] != 44)\n        || (sub[0] != 9) || (sub[1] != 18) || (sub[2] != 27) || (sub[3] != 36)\n        || (av[0] != 0x0F) || (av[1] != 0x00) || (av[2] != 0x00) || (av[3] != 0x00)\n        || (ov[0] != 0xFF) || (ov[1] != 0xFF) || (ov[2] != 0xFF) || (ov[3] != 0xFF)\n        || (xv[4] != 0xFF) || (xv[5] != 0x26) || (xv[6] != 0x26) || (xv[7] != 0x33)\n        || (xv[8] != 0xFF) || (xv[9] != 0xFF) || (xv[10] != 0xFF) || (xv[11] != 0xFF)\n        || (xv[12] != 0xFF) || (xv[13] != 0xFF) || (xv[14] != 0x33) || (xv[15] != 0x33);\n}\n",
@@ -782,15 +788,17 @@ fn clang_probe_dashboard() {
             let failed = !probe.status.run;
             results.push(probe);
             if failed && fail_fast {
-                panic!("clang probe dashboard failed:\n{}", render_dashboard(&results));
+                panic!(
+                    "clang probe dashboard failed:\n{}",
+                    render_dashboard(&results)
+                );
             }
         }
     }
     assert!(
         matched_any,
         "no clang probe cases matched filters case={:?} opt={:?}",
-        case_filter,
-        opt_filter
+        case_filter, opt_filter
     );
 
     let failures: Vec<_> = results.iter().filter(|result| !result.status.run).collect();

@@ -199,7 +199,9 @@ Major covered families include:
   - `mov.8b`, `mov.16b`, `mov.4s`, `mov.2d`
   - `dup.16b`, `dup.8h`, `dup.4s`, `dup.2d`
   - `mov sN, vM[idx]`, `mov dN, vM[idx]`
-  - `mov.s vN[idx], vM[idx]`, `mov.d vN[idx], vM[idx]`
+  - `mov.s wN, vM[idx]`, `mov.d xN, vM[idx]`, `umov.h wN, vM[idx]`, `umov.b wN, vM[idx]`
+  - `mov.s vN[idx], vM[idx]`, `mov.d vN[idx], vM[idx]`, `mov.h vN[idx], vM[idx]`, `mov.b vN[idx], vM[idx]`
+  - `mov.s vN[idx], wM`, `mov.d vN[idx], xM`, `mov.h vN[idx], wM`, `mov.b vN[idx], wM`
 - system / hint:
   - `svc`, `brk`, `nop`
   - `yield`, `wfe`, `wfi`, `sev`, `sevl`
