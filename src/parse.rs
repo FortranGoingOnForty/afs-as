@@ -1212,6 +1212,9 @@ impl<'a> Parser<'a> {
             "mov" => self.parse_mov(),
             "mov.s" | "mov.d" => self.parse_simd_lane_insert(mnemonic),
             "mov.8b" | "mov.16b" | "mov.4s" | "mov.2d" => self.parse_simd_mov(mnemonic),
+            "ext.16b" => self.parse_simd_ext_16b(),
+            "rev64.4s" => self.parse_simd_rev64_4s(),
+            "trn2.4s" => self.parse_simd_trn2_4s(),
             "movz" => self.parse_mov_wide("movz"),
             "movk" => self.parse_mov_wide("movk"),
             "movn" => self.parse_mov_wide("movn"),
@@ -3764,6 +3767,41 @@ impl<'a> Parser<'a> {
             "eor.16b" => Inst::EorV16B { rd, rn, rm },
             _ => unreachable!(),
         })
+    }
+
+    fn parse_simd_ext_16b(&mut self) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let index_value = self.parse_immediate_const_expr("vector extract offset")?;
+        let index = u8::try_from(index_value)
+            .map_err(|_| self.err(format!("vector extract offset {} out of range", index_value)))?;
+        if index > 15 {
+            return Err(self.err(format!(
+                "vector extract offset {} out of range",
+                index_value
+            )));
+        }
+        Ok(Inst::ExtV16B { rd, rn, rm, index })
+    }
+
+    fn parse_simd_rev64_4s(&mut self) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        Ok(Inst::Rev64V4S { rd, rn })
+    }
+
+    fn parse_simd_trn2_4s(&mut self) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(Inst::Trn2V4S { rd, rn, rm })
     }
 
     fn parse_simd_mov(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -6814,6 +6852,42 @@ mod tests {
                 rd: FpReg::new(12),
                 rn: FpReg::new(13),
                 rm: FpReg::new(14)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ext_16b() {
+        assert_eq!(
+            parse_inst("ext.16b v0, v0, v0, #8"),
+            Inst::ExtV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(0),
+                index: 8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_rev64_4s() {
+        assert_eq!(
+            parse_inst("rev64.4s v1, v2"),
+            Inst::Rev64V4S {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_trn2_4s() {
+        assert_eq!(
+            parse_inst("trn2.4s v3, v4, v5"),
+            Inst::Trn2V4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
             }
         );
     }

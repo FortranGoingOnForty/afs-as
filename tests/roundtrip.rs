@@ -829,6 +829,18 @@ fn rt_eor_16b() {
     roundtrip(".text\neor.16b v12, v13, v14\n");
 }
 #[test]
+fn rt_ext_16b() {
+    roundtrip(".text\next.16b v0, v0, v0, #8\n");
+}
+#[test]
+fn rt_rev64_4s() {
+    roundtrip(".text\nrev64.4s v1, v2\n");
+}
+#[test]
+fn rt_trn2_4s() {
+    roundtrip(".text\ntrn2.4s v3, v4, v5\n");
+}
+#[test]
 fn rt_mov_16b() {
     roundtrip(".text\nmov.16b v0, v2\n");
 }

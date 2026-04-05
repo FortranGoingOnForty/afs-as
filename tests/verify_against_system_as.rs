@@ -2022,6 +2022,39 @@ fn sys_eor_16b() {
     );
 }
 #[test]
+fn sys_ext_16b() {
+    verify(
+        "ext.16b v0, v0, v0, #8",
+        Inst::ExtV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+            rm: FpReg::new(0),
+            index: 8,
+        },
+    );
+}
+#[test]
+fn sys_rev64_4s() {
+    verify(
+        "rev64.4s v1, v2",
+        Inst::Rev64V4S {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_trn2_4s() {
+    verify(
+        "trn2.4s v3, v4, v5",
+        Inst::Trn2V4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
 fn sys_mov_16b() {
     verify(
         "mov.16b v0, v2",

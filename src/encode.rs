@@ -1149,6 +1149,17 @@ pub enum Inst {
     OrrV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// EOR.16B Vd, Vn, Vm
     EorV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// EXT.16B Vd, Vn, Vm, #index
+    ExtV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+        index: u8,
+    },
+    /// REV64.4S Vd, Vn
+    Rev64V4S { rd: FpReg, rn: FpReg },
+    /// TRN2.4S Vd, Vn, Vm
+    Trn2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// MOV Sd, Vn[index]
     MovFromLaneS { rd: FpReg, rn: FpReg, index: u8 },
     /// MOV Dd, Vn[index]
@@ -2246,6 +2257,9 @@ impl Inst {
             Inst::AndV16B { rd, rn, rm } => simd_binary(0x4E201C00, *rm, *rn, *rd),
             Inst::OrrV16B { rd, rn, rm } => simd_binary(0x4EA01C00, *rm, *rn, *rd),
             Inst::EorV16B { rd, rn, rm } => simd_binary(0x6E201C00, *rm, *rn, *rd),
+            Inst::ExtV16B { rd, rn, rm, index } => simd_ext_16b(*rm, *rn, *rd, *index),
+            Inst::Rev64V4S { rd, rn } => simd_unary(0x4EA00800, *rn, *rd),
+            Inst::Trn2V4S { rd, rn, rm } => simd_binary(0x4E806800, *rm, *rn, *rd),
             Inst::MovFromLaneS { rd, rn, index } => simd_extract_lane_s(*rn, *index, *rd),
             Inst::MovFromLaneD { rd, rn, index } => simd_extract_lane_d(*rn, *index, *rd),
             Inst::MovLaneS {
@@ -2669,8 +2683,16 @@ fn simd_binary(base: u32, rm: FpReg, rn: FpReg, rd: FpReg) -> u32 {
     base | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
+fn simd_unary(base: u32, rn: FpReg, rd: FpReg) -> u32 {
+    base | (rn.enc() << 5) | rd.enc()
+}
+
 fn simd_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
     base | (rn.enc() << 16) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_ext_16b(rm: FpReg, rn: FpReg, rd: FpReg, index: u8) -> u32 {
+    0x6E000000 | (rm.enc() << 16) | ((index as u32) << 11) | (rn.enc() << 5) | rd.enc()
 }
 
 fn fp_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
@@ -5224,6 +5246,42 @@ mod tests {
             }
             .encode(),
             0x6E2E1DAC
+        );
+    }
+    #[test]
+    fn ext_16b_v0_v0_v0_8() {
+        assert_eq!(
+            Inst::ExtV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(0),
+                index: 8
+            }
+            .encode(),
+            0x6E004000
+        );
+    }
+    #[test]
+    fn rev64_4s_v1_v2() {
+        assert_eq!(
+            Inst::Rev64V4S {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x4EA00841
+        );
+    }
+    #[test]
+    fn trn2_4s_v3_v4_v5() {
+        assert_eq!(
+            Inst::Trn2V4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+            .encode(),
+            0x4E856883
         );
     }
     #[test]
