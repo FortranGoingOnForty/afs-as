@@ -1192,6 +1192,7 @@ impl<'a> Parser<'a> {
             // Logic
             "and" => self.parse_logic("and"),
             "and.16b" => self.parse_simd_logic_16b("and.16b"),
+            "bic.16b" => self.parse_simd_logic_16b("bic.16b"),
             "bif.16b" => self.parse_simd_logic_16b("bif.16b"),
             "bit.16b" => self.parse_simd_logic_16b("bit.16b"),
             "bsl.16b" => self.parse_simd_logic_16b("bsl.16b"),
@@ -1264,6 +1265,7 @@ impl<'a> Parser<'a> {
             // FP arithmetic (double)
             "fadd" => self.parse_fp_arith("fadd"),
             "add.4s" | "sub.4s" => self.parse_simd_int_arith_4s(mnemonic),
+            "cmeq.4s" | "cmgt.4s" => self.parse_simd_compare_4s(mnemonic),
             "fadd.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" => self.parse_simd_fp_arith_4s(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
@@ -3924,11 +3926,25 @@ impl<'a> Parser<'a> {
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
             "and.16b" => Inst::AndV16B { rd, rn, rm },
+            "bic.16b" => Inst::BicV16B { rd, rn, rm },
             "bif.16b" => Inst::BifV16B { rd, rn, rm },
             "bit.16b" => Inst::BitV16B { rd, rn, rm },
             "bsl.16b" => Inst::BslV16B { rd, rn, rm },
             "orr.16b" => Inst::OrrV16B { rd, rn, rm },
             "eor.16b" => Inst::EorV16B { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_compare_4s(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "cmeq.4s" => Inst::CmeqV4S { rd, rn, rm },
+            "cmgt.4s" => Inst::CmgtV4S { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -7182,6 +7198,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_bic_16b() {
+        assert_eq!(
+            parse_inst("bic.16b v5, v6, v7"),
+            Inst::BicV16B {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6),
+                rm: FpReg::new(7)
+            }
+        );
+    }
+
+    #[test]
     fn parse_bif_16b() {
         assert_eq!(
             parse_inst("bif.16b v0, v1, v2"),
@@ -7213,6 +7241,30 @@ mod tests {
                 rd: FpReg::new(6),
                 rn: FpReg::new(7),
                 rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_cmeq_4s() {
+        assert_eq!(
+            parse_inst("cmeq.4s v0, v0, v1"),
+            Inst::CmeqV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_cmgt_4s() {
+        assert_eq!(
+            parse_inst("cmgt.4s v2, v3, v4"),
+            Inst::CmgtV4S {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3),
+                rm: FpReg::new(4)
             }
         );
     }

@@ -1161,6 +1161,8 @@ pub enum Inst {
     DupV2D { rd: FpReg, rn: FpReg, index: u8 },
     /// AND.16B Vd, Vn, Vm
     AndV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// BIC.16B Vd, Vn, Vm
+    BicV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// ORR.16B Vd, Vn, Vm
     OrrV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// EOR.16B Vd, Vn, Vm
@@ -1171,6 +1173,10 @@ pub enum Inst {
     BitV16B { rd: FpReg, rn: FpReg, rm: FpReg },
     /// BSL.16B Vd, Vn, Vm
     BslV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// CMEQ.4S Vd, Vn, Vm
+    CmeqV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// CMGT.4S Vd, Vn, Vm
+    CmgtV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// EXT.16B Vd, Vn, Vm, #index
     ExtV16B {
         rd: FpReg,
@@ -2330,11 +2336,14 @@ impl Inst {
             Inst::DupV4S { rd, rn, index } => simd_dup_lane(2, *rn, *index, *rd),
             Inst::DupV2D { rd, rn, index } => simd_dup_lane(3, *rn, *index, *rd),
             Inst::AndV16B { rd, rn, rm } => simd_binary(0x4E201C00, *rm, *rn, *rd),
+            Inst::BicV16B { rd, rn, rm } => simd_binary(0x4E601C00, *rm, *rn, *rd),
             Inst::OrrV16B { rd, rn, rm } => simd_binary(0x4EA01C00, *rm, *rn, *rd),
             Inst::EorV16B { rd, rn, rm } => simd_binary(0x6E201C00, *rm, *rn, *rd),
             Inst::BifV16B { rd, rn, rm } => simd_binary(0x6EE01C00, *rm, *rn, *rd),
             Inst::BitV16B { rd, rn, rm } => simd_binary(0x6EA01C00, *rm, *rn, *rd),
             Inst::BslV16B { rd, rn, rm } => simd_binary(0x6E601C00, *rm, *rn, *rd),
+            Inst::CmeqV4S { rd, rn, rm } => simd_binary(0x6EA08C00, *rm, *rn, *rd),
+            Inst::CmgtV4S { rd, rn, rm } => simd_binary(0x4EA03400, *rm, *rn, *rd),
             Inst::ExtV16B { rd, rn, rm, index } => simd_ext_16b(*rm, *rn, *rd, *index),
             Inst::Rev64V4S { rd, rn } => simd_unary(0x4EA00800, *rn, *rd),
             Inst::Zip1V4S { rd, rn, rm } => simd_binary(0x4E803800, *rm, *rn, *rd),
@@ -5418,6 +5427,18 @@ mod tests {
         );
     }
     #[test]
+    fn bic_16b_v5_v6_v7() {
+        assert_eq!(
+            Inst::BicV16B {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6),
+                rm: FpReg::new(7)
+            }
+            .encode(),
+            0x4E671CC5
+        );
+    }
+    #[test]
     fn bif_16b_v0_v1_v2() {
         assert_eq!(
             Inst::BifV16B {
@@ -5451,6 +5472,30 @@ mod tests {
             }
             .encode(),
             0x6E681CE6
+        );
+    }
+    #[test]
+    fn cmeq_4s_v0_v0_v1() {
+        assert_eq!(
+            Inst::CmeqV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+            .encode(),
+            0x6EA18C00
+        );
+    }
+    #[test]
+    fn cmgt_4s_v2_v3_v4() {
+        assert_eq!(
+            Inst::CmgtV4S {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3),
+                rm: FpReg::new(4)
+            }
+            .encode(),
+            0x4EA43462
         );
     }
     #[test]

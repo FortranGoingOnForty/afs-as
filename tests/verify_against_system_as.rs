@@ -2060,6 +2060,17 @@ fn sys_bit_16b() {
     );
 }
 #[test]
+fn sys_bic_16b() {
+    verify(
+        "bic.16b v5, v6, v7",
+        Inst::BicV16B {
+            rd: FpReg::new(5),
+            rn: FpReg::new(6),
+            rm: FpReg::new(7),
+        },
+    );
+}
+#[test]
 fn sys_bsl_16b() {
     verify(
         "bsl.16b v6, v7, v8",
@@ -2067,6 +2078,28 @@ fn sys_bsl_16b() {
             rd: FpReg::new(6),
             rn: FpReg::new(7),
             rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
+fn sys_cmeq_4s() {
+    verify(
+        "cmeq.4s v0, v0, v1",
+        Inst::CmeqV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+            rm: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_cmgt_4s() {
+    verify(
+        "cmgt.4s v2, v3, v4",
+        Inst::CmgtV4S {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+            rm: FpReg::new(4),
         },
     );
 }

@@ -837,6 +837,10 @@ fn rt_and_16b() {
     roundtrip(".text\nand.16b v6, v7, v8\n");
 }
 #[test]
+fn rt_bic_16b() {
+    roundtrip(".text\nbic.16b v5, v6, v7\n");
+}
+#[test]
 fn rt_bif_16b() {
     roundtrip(".text\nbif.16b v0, v1, v2\n");
 }
@@ -847,6 +851,14 @@ fn rt_bit_16b() {
 #[test]
 fn rt_bsl_16b() {
     roundtrip(".text\nbsl.16b v6, v7, v8\n");
+}
+#[test]
+fn rt_cmeq_4s() {
+    roundtrip(".text\ncmeq.4s v0, v0, v1\n");
+}
+#[test]
+fn rt_cmgt_4s() {
+    roundtrip(".text\ncmgt.4s v2, v3, v4\n");
 }
 #[test]
 fn rt_orr_16b() {
