@@ -191,8 +191,9 @@ Major covered families include:
   - `fcvtzs`, `scvtf`, `fmov`
 - SIMD / vector:
   - `add.4s`, `sub.4s`
-  - `and.16b`, `orr.16b`, `eor.16b`
+  - `and.16b`, `bic.16b`, `orr.16b`, `eor.16b`
   - `bif.16b`, `bit.16b`, `bsl.16b`
+  - `cmeq.4s`, `cmgt.4s`
   - `ext.16b`, `rev64.4s`, `zip1.4s`, `zip2.4s`, `uzp1.4s`, `uzp2.4s`, `trn1.4s`, `trn2.4s`
   - `tbl.16b`, `tbx.16b`
   - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`

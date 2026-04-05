@@ -204,6 +204,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_cmp",
+        source: "vector_cmp.c",
+        driver: "typedef unsigned v4u __attribute__((vector_size(16)));\ntypedef int v4i __attribute__((vector_size(16)));\nextern v4u eq_mask_u32(v4u, v4u);\nextern v4i gt_mask_s32(v4i, v4i);\nextern v4u select_eq_u32(v4u, v4u);\nint main(void) {\n    v4u au = {1u, 2u, 3u, 4u};\n    v4u bu = {1u, 9u, 3u, 8u};\n    v4i as = {-1, 5, 7, -3};\n    v4i bs = {-2, 5, 6, 4};\n    v4u eq = eq_mask_u32(au, bu);\n    v4i gt = gt_mask_s32(as, bs);\n    v4u sel = select_eq_u32(au, bu);\n    return (eq[0] != 0xFFFFFFFFu) || (eq[1] != 0u) || (eq[2] != 0xFFFFFFFFu) || (eq[3] != 0u)\n        || ((unsigned)gt[0] != 0xFFFFFFFFu) || ((unsigned)gt[1] != 0u) || ((unsigned)gt[2] != 0xFFFFFFFFu) || ((unsigned)gt[3] != 0u)\n        || (sel[0] != 1u) || (sel[1] != 9u) || (sel[2] != 3u) || (sel[3] != 8u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_shuffle",
         source: "vector_shuffle.c",
         driver: "typedef float v4f __attribute__((vector_size(16)));\nextern v4f swap_halves(v4f);\nextern v4f blend_even(v4f, v4f);\nint main(void) {\n    v4f a = {1.0f, 2.0f, 3.0f, 4.0f};\n    v4f b = {10.0f, 20.0f, 30.0f, 40.0f};\n    v4f s = swap_halves(a);\n    v4f t = blend_even(a, b);\n    return (s[0] != 3.0f) || (s[1] != 4.0f) || (s[2] != 1.0f) || (s[3] != 2.0f)\n        || (t[0] != 1.0f) || (t[1] != 20.0f) || (t[2] != 3.0f) || (t[3] != 40.0f);\n}\n",
