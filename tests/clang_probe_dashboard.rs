@@ -270,6 +270,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fp_convert",
+        source: "vector_fp_convert.c",
+        driver: "#include <arm_neon.h>\nextern float32x4_t to_float_s32(int32x4_t);\nextern float32x4_t to_float_u32(uint32x4_t);\nextern int32x4_t to_int_s32(float32x4_t);\nextern uint32x4_t to_uint_u32(float32x4_t);\nint main(void) {\n    int32x4_t si = {-1, 2, -3, 4};\n    uint32x4_t ui = {1u, 2u, 3u, 4u};\n    float32x4_t sf = {-1.0f, 2.0f, -3.0f, 4.0f};\n    float32x4_t uf = {1.0f, 2.0f, 3.0f, 4.0f};\n    float32x4_t xs = to_float_s32(si);\n    float32x4_t xu = to_float_u32(ui);\n    int32x4_t ys = to_int_s32(sf);\n    uint32x4_t yu = to_uint_u32(uf);\n    return (xs[0] != -1.0f) || (xs[1] != 2.0f) || (xs[2] != -3.0f) || (xs[3] != 4.0f)\n        || (xu[0] != 1.0f) || (xu[1] != 2.0f) || (xu[2] != 3.0f) || (xu[3] != 4.0f)\n        || (ys[0] != -1) || (ys[1] != 2) || (ys[2] != -3) || (ys[3] != 4)\n        || (yu[0] != 1u) || (yu[1] != 2u) || (yu[2] != 3u) || (yu[3] != 4u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp",
         source: "vector_fcmp.c",
         driver: "#include <arm_neon.h>\nextern uint32x4_t eq_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t ge_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t gt_mask_f32(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {1.0f, 7.0f, -5.0f, 8.0f};\n    uint32x4_t eq = eq_mask_f32(a, b);\n    uint32x4_t ge = ge_mask_f32(a, b);\n    uint32x4_t gt = gt_mask_f32(a, b);\n    return (eq[0] != 0xFFFFFFFFu) || (eq[1] != 0u) || (eq[2] != 0u) || (eq[3] != 0u)\n        || (ge[0] != 0xFFFFFFFFu) || (ge[1] != 0xFFFFFFFFu) || (ge[2] != 0xFFFFFFFFu) || (ge[3] != 0u)\n        || (gt[0] != 0u) || (gt[1] != 0xFFFFFFFFu) || (gt[2] != 0xFFFFFFFFu) || (gt[3] != 0u);\n}\n",
