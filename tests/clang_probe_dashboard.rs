@@ -222,6 +222,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_minmax_unsigned",
+        source: "vector_minmax_unsigned.c",
+        driver: "#include <arm_neon.h>\nextern uint32x4_t max4u(uint32x4_t, uint32x4_t);\nextern uint32x4_t min4u(uint32x4_t, uint32x4_t);\nint main(void) {\n    uint32x4_t a = {1u, 9u, 3u, 4u};\n    uint32x4_t b = {2u, 7u, 5u, 8u};\n    uint32x4_t x = max4u(a, b);\n    uint32x4_t n = min4u(a, b);\n    return (x[0] != 2u) || (x[1] != 9u) || (x[2] != 5u) || (x[3] != 8u)\n        || (n[0] != 1u) || (n[1] != 7u) || (n[2] != 3u) || (n[3] != 4u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_shuffle",
         source: "vector_shuffle.c",
         driver: "typedef float v4f __attribute__((vector_size(16)));\nextern v4f swap_halves(v4f);\nextern v4f blend_even(v4f, v4f);\nint main(void) {\n    v4f a = {1.0f, 2.0f, 3.0f, 4.0f};\n    v4f b = {10.0f, 20.0f, 30.0f, 40.0f};\n    v4f s = swap_halves(a);\n    v4f t = blend_even(a, b);\n    return (s[0] != 3.0f) || (s[1] != 4.0f) || (s[2] != 1.0f) || (s[3] != 2.0f)\n        || (t[0] != 1.0f) || (t[1] != 20.0f) || (t[2] != 3.0f) || (t[3] != 40.0f);\n}\n",
