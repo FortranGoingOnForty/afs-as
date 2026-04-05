@@ -216,6 +216,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_dup",
+        source: "vector_dup.c",
+        driver: "typedef float v4f __attribute__((vector_size(16)));\ntypedef double v2d __attribute__((vector_size(16)));\ntypedef short v8h __attribute__((vector_size(16)));\ntypedef signed char v16b __attribute__((vector_size(16)));\nextern v4f dup_f32(v4f);\nextern v2d dup_f64(v2d);\nextern v8h dup_s16(v8h);\nextern v16b dup_s8(v16b);\nint main(void) {\n    v4f f = {1.0f, 2.0f, 3.0f, 4.0f};\n    v2d d = {1.5, 2.5};\n    v8h h = {1, 2, 3, 4, 5, 6, 7, 8};\n    v16b b = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};\n    v4f rf = dup_f32(f);\n    v2d rd = dup_f64(d);\n    v8h rh = dup_s16(h);\n    v16b rb = dup_s8(b);\n    return (rf[0] != 4.0f) || (rf[1] != 4.0f) || (rf[2] != 4.0f) || (rf[3] != 4.0f)\n        || (rd[0] != 2.5) || (rd[1] != 2.5)\n        || (rh[0] != 8) || (rh[1] != 8) || (rh[2] != 8) || (rh[3] != 8)\n        || (rh[4] != 8) || (rh[5] != 8) || (rh[6] != 8) || (rh[7] != 8)\n        || (rb[0] != 16) || (rb[1] != 16) || (rb[2] != 16) || (rb[3] != 16)\n        || (rb[4] != 16) || (rb[5] != 16) || (rb[6] != 16) || (rb[7] != 16)\n        || (rb[8] != 16) || (rb[9] != 16) || (rb[10] != 16) || (rb[11] != 16)\n        || (rb[12] != 16) || (rb[13] != 16) || (rb[14] != 16) || (rb[15] != 16);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "bitops",
         source: "bitops.c",
         driver: "extern unsigned bit_mix(unsigned);\nint main(void) { return bit_mix(0xABu) != 117u; }\n",
