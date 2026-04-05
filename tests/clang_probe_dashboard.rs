@@ -182,6 +182,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_lane_transfer",
+        source: "vector_lane_transfer.c",
+        driver: "typedef float v4f __attribute__((vector_size(16)));\ntypedef double v2d __attribute__((vector_size(16)));\nextern float lane2f(v4f);\nextern v4f set_lane0f(v4f, float);\nextern double lane1d(v2d);\nextern v2d set_lane1d(v2d, double);\nint main(void) {\n    v4f xf = {1.0f, 2.0f, 3.0f, 4.0f};\n    v2d xd = {1.5, 2.5};\n    v4f yf = set_lane0f(xf, 9.0f);\n    v2d yd = set_lane1d(xd, 7.5);\n    return (lane2f(xf) != 3.0f)\n        || (yf[0] != 9.0f) || (yf[1] != 2.0f) || (yf[2] != 3.0f) || (yf[3] != 4.0f)\n        || (lane1d(xd) != 2.5)\n        || (yd[0] != 1.5) || (yd[1] != 7.5);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "bitops",
         source: "bitops.c",
         driver: "extern unsigned bit_mix(unsigned);\nint main(void) { return bit_mix(0xABu) != 117u; }\n",
