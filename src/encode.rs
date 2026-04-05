@@ -1127,6 +1127,10 @@ pub enum Inst {
     FaddpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FADDP.2S Sd, Vn
     FaddpV2S { rd: FpReg, rn: FpReg },
+    /// FMLA.4S Vd, Vn, Vm
+    FmlaV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FMLS.4S Vd, Vn, Vm
+    FmlsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// ADD.4S Vd, Vn, Vm
     AddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMAX.4S Vd, Vn, Vm
@@ -1175,6 +1179,8 @@ pub enum Inst {
     FmulS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FDIV.4S Vd, Vn, Vm
     FdivV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FNEG.4S Vd, Vn
+    FnegV4S { rd: FpReg, rn: FpReg },
     /// FDIV Sd, Sn, Sm  (single)
     FdivS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMOV Dd, Dn
@@ -2369,6 +2375,8 @@ impl Inst {
             Inst::FaddV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20D400, *rm, *rn, *rd),
             Inst::FaddpV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20D400, *rm, *rn, *rd),
             Inst::FaddpV2S { rd, rn } => simd_reduce_4s(0x7E30D800, *rn, *rd),
+            Inst::FmlaV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20CC00, *rm, *rn, *rd),
+            Inst::FmlsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0CC00, *rm, *rn, *rd),
             Inst::AddV4S { rd, rn, rm } => simd_binary(0x4EA08400, *rm, *rn, *rd),
             Inst::FmaxV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20F400, *rm, *rn, *rd),
             Inst::FminV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0F400, *rm, *rn, *rd),
@@ -2393,6 +2401,7 @@ impl Inst {
             Inst::FmulV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20DC00, *rm, *rn, *rd),
             Inst::FmulS { rd, rn, rm } => fp_arith(0b00, 0b0000, *rm, *rn, *rd),
             Inst::FdivV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20FC00, *rm, *rn, *rd),
+            Inst::FnegV4S { rd, rn } => simd_unary(0x6EA0F800, *rn, *rd),
             Inst::FdivS { rd, rn, rm } => fp_arith(0b00, 0b0001, *rm, *rn, *rd),
             Inst::FmovRegD { rd, rn } => fp_mov_reg(0x1E604000, *rn, *rd),
             Inst::FmovRegS { rd, rn } => fp_mov_reg(0x1E204000, *rn, *rd),
@@ -5521,6 +5530,30 @@ mod tests {
         );
     }
     #[test]
+    fn fmla_4s_v0_v1_v2() {
+        assert_eq!(
+            Inst::FmlaV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+            .encode(),
+            0x4E22CC20
+        );
+    }
+    #[test]
+    fn fmls_4s_v3_v4_v5() {
+        assert_eq!(
+            Inst::FmlsV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+            .encode(),
+            0x4EA5CC83
+        );
+    }
+    #[test]
     fn faddp_2s_s3_v4() {
         assert_eq!(
             Inst::FaddpV2S {
@@ -5665,6 +5698,17 @@ mod tests {
             }
             .encode(),
             0x6E21FC00
+        );
+    }
+    #[test]
+    fn fneg_4s_v6_v7() {
+        assert_eq!(
+            Inst::FnegV4S {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7)
+            }
+            .encode(),
+            0x6EA0F8E6
         );
     }
     #[test]

@@ -18,9 +18,10 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Assemble with Apple `as` and return the code bytes.
 fn system_assemble(asm: &str) -> Vec<u8> {
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
     let dir = std::env::temp_dir();
-    let s_path = dir.join(format!("afs_rt_{}.s", id));
-    let o_path = dir.join(format!("afs_rt_{}.o", id));
+    let s_path = dir.join(format!("afs_rt_{}_{}.s", pid, id));
+    let o_path = dir.join(format!("afs_rt_{}_{}.o", pid, id));
 
     let mut f = std::fs::File::create(&s_path).unwrap();
     write!(f, "{}", asm).unwrap();
@@ -857,6 +858,14 @@ fn rt_faddp_4s() {
     roundtrip(".text\nfaddp.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_fmla_4s() {
+    roundtrip(".text\nfmla.4s v0, v1, v2\n");
+}
+#[test]
+fn rt_fmls_4s() {
+    roundtrip(".text\nfmls.4s v3, v4, v5\n");
+}
+#[test]
 fn rt_faddp_2s() {
     roundtrip(".text\nfaddp.2s s3, v4\n");
 }
@@ -907,6 +916,10 @@ fn rt_fmul_4s() {
 #[test]
 fn rt_fdiv_4s() {
     roundtrip(".text\nfdiv.4s v9, v10, v11\n");
+}
+#[test]
+fn rt_fneg_4s() {
+    roundtrip(".text\nfneg.4s v6, v7\n");
 }
 #[test]
 fn rt_and_16b() {
@@ -1382,9 +1395,10 @@ fn rt_clang_output() {
     // Generate a real .s file from clang and parse it.
     let c_src = "int square(int x) { return x * x; }\n";
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
     let dir = std::env::temp_dir();
-    let c_path = dir.join(format!("afs_rt_clang_{}.c", id));
-    let s_path = dir.join(format!("afs_rt_clang_{}.s", id));
+    let c_path = dir.join(format!("afs_rt_clang_{}_{}.c", pid, id));
+    let s_path = dir.join(format!("afs_rt_clang_{}_{}.s", pid, id));
 
     std::fs::write(&c_path, c_src).unwrap();
 

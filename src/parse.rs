@@ -1275,10 +1275,11 @@ impl<'a> Parser<'a> {
             | "fcmge.4s" | "fcmgt.4s" => {
                 self.parse_simd_compare_4s(mnemonic)
             }
-            "fadd.4s" | "faddp.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" | "fmax.4s"
-            | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" => {
+            "fadd.4s" | "faddp.4s" | "fmla.4s" | "fmls.4s" | "fsub.4s" | "fmul.4s"
+            | "fdiv.4s" | "fmax.4s" | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
+            "fneg.4s" => self.parse_simd_fp_unary_4s(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -3911,6 +3912,8 @@ impl<'a> Parser<'a> {
         Ok(match mnemonic {
             "fadd.4s" => Inst::FaddV4S { rd, rn, rm },
             "faddp.4s" => Inst::FaddpV4S { rd, rn, rm },
+            "fmla.4s" => Inst::FmlaV4S { rd, rn, rm },
+            "fmls.4s" => Inst::FmlsV4S { rd, rn, rm },
             "fmax.4s" => Inst::FmaxV4S { rd, rn, rm },
             "fmin.4s" => Inst::FminV4S { rd, rn, rm },
             "fmaxnm.4s" => Inst::FmaxnmV4S { rd, rn, rm },
@@ -3918,6 +3921,16 @@ impl<'a> Parser<'a> {
             "fsub.4s" => Inst::FsubV4S { rd, rn, rm },
             "fmul.4s" => Inst::FmulV4S { rd, rn, rm },
             "fdiv.4s" => Inst::FdivV4S { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_fp_unary_4s(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "fneg.4s" => Inst::FnegV4S { rd, rn },
             _ => unreachable!(),
         })
     }

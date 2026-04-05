@@ -20,10 +20,11 @@ fn system_encode(asm: &str) -> u32 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
     let tid = std::thread::current().id();
     let dir = std::env::temp_dir();
-    let s_path = dir.join(format!("afs_as_test_{:?}_{}.s", tid, id));
-    let o_path = dir.join(format!("afs_as_test_{:?}_{}.o", tid, id));
+    let s_path = dir.join(format!("afs_as_test_{}_{:?}_{}.s", pid, tid, id));
+    let o_path = dir.join(format!("afs_as_test_{}_{:?}_{}.o", pid, tid, id));
 
     // Write assembly file
     let mut f = std::fs::File::create(&s_path).expect("create .s");
@@ -2092,6 +2093,28 @@ fn sys_faddp_4s() {
     );
 }
 #[test]
+fn sys_fmla_4s() {
+    verify(
+        "fmla.4s v0, v1, v2",
+        Inst::FmlaV4S {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_fmls_4s() {
+    verify(
+        "fmls.4s v3, v4, v5",
+        Inst::FmlsV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
 fn sys_faddp_2s() {
     verify(
         "faddp.2s s3, v4",
@@ -2222,6 +2245,16 @@ fn sys_fdiv_4s() {
             rd: FpReg::new(9),
             rn: FpReg::new(10),
             rm: FpReg::new(11),
+        },
+    );
+}
+#[test]
+fn sys_fneg_4s() {
+    verify(
+        "fneg.4s v6, v7",
+        Inst::FnegV4S {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
         },
     );
 }
