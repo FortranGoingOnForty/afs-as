@@ -853,6 +853,14 @@ fn rt_smaxv_4s() {
     roundtrip(".text\nsmaxv.4s s3, v4\n");
 }
 #[test]
+fn rt_uminv_4s() {
+    roundtrip(".text\numinv.4s s1, v2\n");
+}
+#[test]
+fn rt_sminv_4s() {
+    roundtrip(".text\nsminv.4s s3, v4\n");
+}
+#[test]
 fn rt_fsub_4s() {
     roundtrip(".text\nfsub.4s v3, v4, v5\n");
 }

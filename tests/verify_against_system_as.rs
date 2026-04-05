@@ -2079,6 +2079,26 @@ fn sys_smaxv_4s() {
     );
 }
 #[test]
+fn sys_uminv_4s() {
+    verify(
+        "uminv.4s s1, v2",
+        Inst::UminvV4S {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_sminv_4s() {
+    verify(
+        "sminv.4s s3, v4",
+        Inst::SminvV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+        },
+    );
+}
+#[test]
 fn sys_fsub_4s() {
     verify(
         "fsub.4s v3, v4, v5",

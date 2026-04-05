@@ -1267,7 +1267,9 @@ impl<'a> Parser<'a> {
             "add.4s" | "sub.4s" | "smax.4s" | "smin.4s" | "umax.4s" | "umin.4s" => {
                 self.parse_simd_int_arith_4s(mnemonic)
             }
-            "addv.4s" | "smaxv.4s" | "umaxv.4s" => self.parse_simd_reduce_4s(mnemonic),
+            "addv.4s" | "smaxv.4s" | "umaxv.4s" | "sminv.4s" | "uminv.4s" => {
+                self.parse_simd_reduce_4s(mnemonic)
+            }
             "cmeq.4s" | "cmhs.4s" | "cmhi.4s" | "cmge.4s" | "cmgt.4s" => {
                 self.parse_simd_compare_4s(mnemonic)
             }
@@ -3942,6 +3944,8 @@ impl<'a> Parser<'a> {
             "addv.4s" => Inst::AddvV4S { rd, rn },
             "umaxv.4s" => Inst::UmaxvV4S { rd, rn },
             "smaxv.4s" => Inst::SmaxvV4S { rd, rn },
+            "uminv.4s" => Inst::UminvV4S { rd, rn },
+            "sminv.4s" => Inst::SminvV4S { rd, rn },
             _ => unreachable!(),
         })
     }
@@ -7267,6 +7271,28 @@ mod tests {
         assert_eq!(
             parse_inst("smaxv.4s s3, v4"),
             Inst::SmaxvV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_uminv_4s() {
+        assert_eq!(
+            parse_inst("uminv.4s s1, v2"),
+            Inst::UminvV4S {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sminv_4s() {
+        assert_eq!(
+            parse_inst("sminv.4s s3, v4"),
+            Inst::SminvV4S {
                 rd: FpReg::new(3),
                 rn: FpReg::new(4)
             }
