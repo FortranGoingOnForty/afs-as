@@ -307,7 +307,7 @@ fn generate_garbage_case(seed: u64) -> String {
 
 #[test]
 fn differential_seeded_surface_matches_system_as() {
-    for seed in 1..=24u64 {
+    for seed in 1..=128u64 {
         let src = generate_supported_case(seed);
         let paths = common::TempPaths::new(&format!("afs_diff_fuzz_{}", seed));
         fs::write(&paths.asm, &src).expect("write differential fuzz assembly");
