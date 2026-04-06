@@ -214,7 +214,7 @@ Major covered families include:
   - `fcmge.2d #0.0`, `fcmgt.2d #0.0`, `fcmle.2d #0.0`, `fcmlt.2d #0.0`
   - `ext.16b`, `rev64.4s`, `zip1.4s`, `zip2.4s`, `uzp1.4s`, `uzp2.4s`, `trn1.4s`, `trn2.4s`
   - `tbl.16b`, `tbx.16b`
-  - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`, `fadd.2d`, `fsub.2d`, `fmul.2d`, `fdiv.2d`, `fmax.4s`, `fmin.4s`, `fmax.2d`, `fmin.2d`
+  - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`, `fadd.2d`, `fsub.2d`, `fmul.2d`, `fdiv.2d`, `fabd.2d`, `fmax.4s`, `fmin.4s`, `fmax.2d`, `fmin.2d`
   - `fmaxnm.4s`, `fminnm.4s`, `fmaxnm.2d`, `fminnm.2d`
   - `mov.8b`, `mov.16b`, `mov.4s`, `mov.2d`
   - `dup.16b`, `dup.8h`, `dup.4s`, `dup.2d`

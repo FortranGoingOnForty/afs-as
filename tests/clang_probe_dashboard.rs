@@ -408,6 +408,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fabd_2d",
+        source: "vector_fabd_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t absdiff2d(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {8.0, 9.0};\n    float64x2_t b = {2.0, 13.0};\n    float64x2_t r = absdiff2d(a, b);\n    return (r[0] != 6.0) || (r[1] != 4.0);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fmla_2d",
         source: "vector_fmla_2d.c",
         driver: "#include <arm_neon.h>\nextern float64x2_t mla2d(float64x2_t, float64x2_t, float64x2_t);\nextern float64x2_t mls2d(float64x2_t, float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {100.0, 100.0};\n    float64x2_t b = {1.0, 2.0};\n    float64x2_t c = {10.0, 20.0};\n    float64x2_t x = mla2d(a, b, c);\n    float64x2_t y = mls2d(a, b, c);\n    return (x[0] != 110.0) || (x[1] != 140.0)\n        || (y[0] != 90.0) || (y[1] != 60.0);\n}\n",
