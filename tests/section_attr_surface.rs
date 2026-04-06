@@ -27,22 +27,27 @@ fn section_attrs_match_system_as() {
 _use_sections:
     ret
 
-.section __TEXT,__cstring,cstring_literals
+.section __TEXT,__cstring,regular
 msg:
     .asciz "hello"
 
-.section __TEXT,__literal16,16byte_literals
+.section __TEXT,__const,regular
+.p2align 3
+const_word:
+    .quad 42
+
+.section __TEXT,__literal16,regular
 .p2align 4
 lit16:
     .quad 1
     .quad 2
 
-.section __DATA,__thread_data,thread_local_regular
+.section __DATA,__thread_data,thread_local_variables
 .p2align 2
 _tls_value$tlv$init:
     .long 5
 
-.section __DATA,__thread_vars,thread_local_variables
+.section __DATA,__thread_vars,thread_local_regular
 .globl _tls_value
 _tls_value:
     .quad __tlv_bootstrap

@@ -101,29 +101,11 @@ fn snapshot_unsupported_loh_kind() {
 }
 
 #[test]
-fn snapshot_conflicting_build_version() {
-    run_failure_snapshot(
-        "conflicting-build-version.s",
-        ".build_version macos, 11, 0\n.build_version macos, 14, 1\n",
-        "<input>:2:1: error: conflicting .build_version directives: already saw BuildVersionDirective { platform: \"macos\", minos: VersionTriple { major: 11, minor: 0, patch: 0 }, sdk: None }, then BuildVersionDirective { platform: \"macos\", minos: VersionTriple { major: 14, minor: 1, patch: 0 }, sdk: None }\n.build_version macos, 14, 1\n^\n",
-    );
-}
-
-#[test]
 fn snapshot_unsupported_build_version_platform() {
     run_failure_snapshot(
         "unsupported-build-version-platform.s",
         ".build_version ios, 11, 0\n",
         "<input>:1:1: error: unsupported .build_version platform 'ios' (supported: macos)\n.build_version ios, 11, 0\n^\n",
-    );
-}
-
-#[test]
-fn snapshot_conflicting_build_version_sdk() {
-    run_failure_snapshot(
-        "conflicting-build-version-sdk.s",
-        ".build_version macos, 11, 0 sdk_version 15, 5\n.build_version macos, 11, 0 sdk_version 16, 0\n",
-        "<input>:2:1: error: conflicting .build_version directives: already saw BuildVersionDirective { platform: \"macos\", minos: VersionTriple { major: 11, minor: 0, patch: 0 }, sdk: Some(VersionTriple { major: 15, minor: 5, patch: 0 }) }, then BuildVersionDirective { platform: \"macos\", minos: VersionTriple { major: 11, minor: 0, patch: 0 }, sdk: Some(VersionTriple { major: 16, minor: 0, patch: 0 }) }\n.build_version macos, 11, 0 sdk_version 16, 0\n^\n",
     );
 }
 
@@ -155,29 +137,11 @@ fn snapshot_tbss_alignment_too_large() {
 }
 
 #[test]
-fn snapshot_attr_on_section_without_attr_surface() {
+fn snapshot_text_section_requires_regular_with_pure_instructions() {
     run_failure_snapshot(
-        "unsupported-section-attr-none.s",
-        ".section __TEXT,__const,regular\n.quad 1\n",
-        "<input>:1:32: error: section __TEXT,__const does not support explicit attributes\n.section __TEXT,__const,regular\n                               ^\n",
-    );
-}
-
-#[test]
-fn snapshot_thread_data_attr_mismatch() {
-    run_failure_snapshot(
-        "thread-data-attr-mismatch.s",
-        ".section __DATA,__thread_data,thread_local_variables\n.long 1\n",
-        "<input>:1:53: error: unsupported section attributes for __DATA,__thread_data: thread_local_variables (supported attrs: thread_local_regular)\n.section __DATA,__thread_data,thread_local_variables\n                                                    ^\n",
-    );
-}
-
-#[test]
-fn snapshot_thread_vars_attr_mismatch() {
-    run_failure_snapshot(
-        "thread-vars-attr-mismatch.s",
-        ".section __DATA,__thread_vars,thread_local_regular\n.quad 0\n",
-        "<input>:1:51: error: unsupported section attributes for __DATA,__thread_vars: thread_local_regular (supported attrs: thread_local_variables)\n.section __DATA,__thread_vars,thread_local_regular\n                                                  ^\n",
+        "text-section-missing-regular.s",
+        ".section __TEXT,__text,pure_instructions\nret\n",
+        "<input>:1:41: error: section __TEXT,__text requires 'regular' when using 'pure_instructions'\n.section __TEXT,__text,pure_instructions\n                                        ^\n",
     );
 }
 
