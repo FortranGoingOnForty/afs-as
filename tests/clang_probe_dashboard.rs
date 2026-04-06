@@ -402,6 +402,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fp_arith_2d",
+        source: "vector_fp_arith_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t add2d(float64x2_t, float64x2_t);\nextern float64x2_t sub2d(float64x2_t, float64x2_t);\nextern float64x2_t mul2d(float64x2_t, float64x2_t);\nextern float64x2_t div2d(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {8.0, 9.0};\n    float64x2_t b = {2.0, 3.0};\n    float64x2_t add = add2d(a, b);\n    float64x2_t sub = sub2d(a, b);\n    float64x2_t mul = mul2d(a, b);\n    float64x2_t div = div2d(a, b);\n    return (add[0] != 10.0) || (add[1] != 12.0)\n        || (sub[0] != 6.0) || (sub[1] != 6.0)\n        || (mul[0] != 16.0) || (mul[1] != 27.0)\n        || (div[0] != 4.0) || (div[1] != 3.0);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp_2d",
         source: "vector_fcmp_2d.c",
         driver: "#include <arm_neon.h>\nextern uint64x2_t eq_mask_f64(float64x2_t, float64x2_t);\nextern uint64x2_t ge_mask_f64(float64x2_t, float64x2_t);\nextern uint64x2_t gt_mask_f64(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {1.0, 9.0};\n    float64x2_t b = {1.0, 7.0};\n    uint64x2_t eq = eq_mask_f64(a, b);\n    uint64x2_t ge = ge_mask_f64(a, b);\n    uint64x2_t gt = gt_mask_f64(a, b);\n    return (eq[0] != 0xFFFFFFFFFFFFFFFFull) || (eq[1] != 0ull)\n        || (ge[0] != 0xFFFFFFFFFFFFFFFFull) || (ge[1] != 0xFFFFFFFFFFFFFFFFull)\n        || (gt[0] != 0ull) || (gt[1] != 0xFFFFFFFFFFFFFFFFull);\n}\n",
