@@ -201,7 +201,7 @@ Major covered families include:
   - `fmaxp.4s`, `fminp.4s`
   - `fmaxnmp.4s`, `fminnmp.4s`
   - `fmaxnmv.4s`, `fminnmv.4s`
-  - `fmla.4s`, `fmls.4s`, `fneg.4s`, `fneg.2d`
+  - `fmla.4s`, `fmls.4s`, `fmla.2d`, `fmls.2d`, `fneg.4s`, `fneg.2d`
   - `fabs.4s`, `fabs.2d`, `fsqrt.4s`, `fsqrt.2d`
   - `scvtf.4s`, `scvtf.2d`, `ucvtf.4s`, `ucvtf.2d`, `fcvtzs.4s`, `fcvtzs.2d`, `fcvtzu.4s`, `fcvtzu.2d`
   - `frecpe.4s`, `frecpe.2d`, `frecps.4s`, `frecps.2d`, `frsqrte.4s`, `frsqrte.2d`, `frsqrts.4s`, `frsqrts.2d`

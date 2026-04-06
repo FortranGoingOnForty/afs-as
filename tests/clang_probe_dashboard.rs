@@ -408,6 +408,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fmla_2d",
+        source: "vector_fmla_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t mla2d(float64x2_t, float64x2_t, float64x2_t);\nextern float64x2_t mls2d(float64x2_t, float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {100.0, 100.0};\n    float64x2_t b = {1.0, 2.0};\n    float64x2_t c = {10.0, 20.0};\n    float64x2_t x = mla2d(a, b, c);\n    float64x2_t y = mls2d(a, b, c);\n    return (x[0] != 110.0) || (x[1] != 140.0)\n        || (y[0] != 90.0) || (y[1] != 60.0);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp_2d",
         source: "vector_fcmp_2d.c",
         driver: "#include <arm_neon.h>\nextern uint64x2_t eq_mask_f64(float64x2_t, float64x2_t);\nextern uint64x2_t ge_mask_f64(float64x2_t, float64x2_t);\nextern uint64x2_t gt_mask_f64(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {1.0, 9.0};\n    float64x2_t b = {1.0, 7.0};\n    uint64x2_t eq = eq_mask_f64(a, b);\n    uint64x2_t ge = ge_mask_f64(a, b);\n    uint64x2_t gt = gt_mask_f64(a, b);\n    return (eq[0] != 0xFFFFFFFFFFFFFFFFull) || (eq[1] != 0ull)\n        || (ge[0] != 0xFFFFFFFFFFFFFFFFull) || (ge[1] != 0xFFFFFFFFFFFFFFFFull)\n        || (gt[0] != 0ull) || (gt[1] != 0xFFFFFFFFFFFFFFFFull);\n}\n",
