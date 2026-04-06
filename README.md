@@ -64,7 +64,8 @@ Supported directive families include:
 
 - symbol directives: `.global` / `.globl`, `.extern`, `.private_extern`, `.weak_reference`, `.weak_definition`, `.set`, `.equ`
 - data/layout directives: `.byte`, `.short`, `.word`, `.long`, `.quad`, `.ascii`, `.asciz`, `.string`, `.space`, `.skip`, `.zero`, `.fill`, `.align`, `.p2align`, `.comm`, `.zerofill`, `.tbss`
-- metadata directives: `.section` for the supported section set, `.subsections_via_symbols`, `.build_version` for `macos`
+- section-selection directives: `.text`, `.data`, `.cstring`, and `.section` for the supported section set
+- metadata directives: `.subsections_via_symbols`, `.build_version` for `macos`
 - linker-optimization hints: `.loh AdrpAdd`, `.loh AdrpLdr`, `.loh AdrpLdrGot`, `.loh AdrpLdrGotLdr`
 - CFI subset: `.cfi_startproc`, `.cfi_endproc`, `.cfi_def_cfa`, `.cfi_def_cfa_offset`, `.cfi_def_cfa_register`, `.cfi_offset`, `.cfi_restore`, `.cfi_adjust_cfa_offset`
 
@@ -92,6 +93,9 @@ let obj = assemble::assemble_instructions(
     &["_main"],
 );
 ```
+
+`assemble_instructions` is the compiler-facing fast path. It assumes callers build valid
+`Inst` values; source-level validation and diagnostics live in `assemble_source`.
 
 ## Tests
 
