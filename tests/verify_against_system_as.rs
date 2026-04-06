@@ -2774,6 +2774,66 @@ fn sys_fcvtzu_2d() {
     );
 }
 #[test]
+fn sys_frintn_2d() {
+    verify(
+        "frintn.2d v0, v0",
+        Inst::FrintnV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_frintm_2d() {
+    verify(
+        "frintm.2d v1, v2",
+        Inst::FrintmV2D {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_frintp_2d() {
+    verify(
+        "frintp.2d v3, v4",
+        Inst::FrintpV2D {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_frintz_2d() {
+    verify(
+        "frintz.2d v5, v6",
+        Inst::FrintzV2D {
+            rd: FpReg::new(5),
+            rn: FpReg::new(6),
+        },
+    );
+}
+#[test]
+fn sys_frinta_2d() {
+    verify(
+        "frinta.2d v7, v8",
+        Inst::FrintaV2D {
+            rd: FpReg::new(7),
+            rn: FpReg::new(8),
+        },
+    );
+}
+#[test]
+fn sys_frinti_2d() {
+    verify(
+        "frinti.2d v9, v10",
+        Inst::FrintiV2D {
+            rd: FpReg::new(9),
+            rn: FpReg::new(10),
+        },
+    );
+}
+#[test]
 fn sys_scvtf_4s() {
     verify(
         "scvtf.4s v0, v1",

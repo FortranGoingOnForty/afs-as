@@ -1304,7 +1304,8 @@ impl<'a> Parser<'a> {
                 self.parse_simd_fp_unary_4s(mnemonic)
             }
             "fabs.2d" | "fneg.2d" | "fsqrt.2d" | "scvtf.2d" | "ucvtf.2d" | "fcvtzs.2d"
-            | "fcvtzu.2d" => self.parse_simd_fp_unary_2d(mnemonic),
+            | "fcvtzu.2d" | "frintn.2d" | "frintm.2d" | "frintp.2d" | "frintz.2d"
+            | "frinta.2d" | "frinti.2d" => self.parse_simd_fp_unary_2d(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -4024,6 +4025,12 @@ impl<'a> Parser<'a> {
             "ucvtf.2d" => Inst::UcvtfV2D { rd, rn },
             "fcvtzs.2d" => Inst::FcvtzsV2D { rd, rn },
             "fcvtzu.2d" => Inst::FcvtzuV2D { rd, rn },
+            "frintn.2d" => Inst::FrintnV2D { rd, rn },
+            "frintm.2d" => Inst::FrintmV2D { rd, rn },
+            "frintp.2d" => Inst::FrintpV2D { rd, rn },
+            "frintz.2d" => Inst::FrintzV2D { rd, rn },
+            "frinta.2d" => Inst::FrintaV2D { rd, rn },
+            "frinti.2d" => Inst::FrintiV2D { rd, rn },
             _ => unreachable!(),
         })
     }
@@ -7602,6 +7609,72 @@ mod tests {
             Inst::FcvtzuV2D {
                 rd: FpReg::new(5),
                 rn: FpReg::new(6)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frintn_2d() {
+        assert_eq!(
+            parse_inst("frintn.2d v0, v0"),
+            Inst::FrintnV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frintm_2d() {
+        assert_eq!(
+            parse_inst("frintm.2d v1, v2"),
+            Inst::FrintmV2D {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frintp_2d() {
+        assert_eq!(
+            parse_inst("frintp.2d v3, v4"),
+            Inst::FrintpV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frintz_2d() {
+        assert_eq!(
+            parse_inst("frintz.2d v5, v6"),
+            Inst::FrintzV2D {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frinta_2d() {
+        assert_eq!(
+            parse_inst("frinta.2d v7, v8"),
+            Inst::FrintaV2D {
+                rd: FpReg::new(7),
+                rn: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frinti_2d() {
+        assert_eq!(
+            parse_inst("frinti.2d v9, v10"),
+            Inst::FrintiV2D {
+                rd: FpReg::new(9),
+                rn: FpReg::new(10)
             }
         );
     }

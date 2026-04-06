@@ -1297,16 +1297,28 @@ pub enum Inst {
     FrsqrtsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FRINTN.4S Vd, Vn
     FrintnV4S { rd: FpReg, rn: FpReg },
+    /// FRINTN.2D Vd, Vn
+    FrintnV2D { rd: FpReg, rn: FpReg },
     /// FRINTM.4S Vd, Vn
     FrintmV4S { rd: FpReg, rn: FpReg },
+    /// FRINTM.2D Vd, Vn
+    FrintmV2D { rd: FpReg, rn: FpReg },
     /// FRINTP.4S Vd, Vn
     FrintpV4S { rd: FpReg, rn: FpReg },
+    /// FRINTP.2D Vd, Vn
+    FrintpV2D { rd: FpReg, rn: FpReg },
     /// FRINTZ.4S Vd, Vn
     FrintzV4S { rd: FpReg, rn: FpReg },
+    /// FRINTZ.2D Vd, Vn
+    FrintzV2D { rd: FpReg, rn: FpReg },
     /// FRINTA.4S Vd, Vn
     FrintaV4S { rd: FpReg, rn: FpReg },
+    /// FRINTA.2D Vd, Vn
+    FrintaV2D { rd: FpReg, rn: FpReg },
     /// FRINTI.4S Vd, Vn
     FrintiV4S { rd: FpReg, rn: FpReg },
+    /// FRINTI.2D Vd, Vn
+    FrintiV2D { rd: FpReg, rn: FpReg },
     /// FDIV Sd, Sn, Sm  (single)
     FdivS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMOV Dd, Dn
@@ -2590,11 +2602,17 @@ impl Inst {
             Inst::FrsqrteV4S { rd, rn } => simd_unary(0x6EA1D800, *rn, *rd),
             Inst::FrsqrtsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0FC00, *rm, *rn, *rd),
             Inst::FrintnV4S { rd, rn } => simd_unary(0x4E218800, *rn, *rd),
+            Inst::FrintnV2D { rd, rn } => simd_unary(0x4E618800, *rn, *rd),
             Inst::FrintmV4S { rd, rn } => simd_unary(0x4E219800, *rn, *rd),
+            Inst::FrintmV2D { rd, rn } => simd_unary(0x4E619800, *rn, *rd),
             Inst::FrintpV4S { rd, rn } => simd_unary(0x4EA18800, *rn, *rd),
+            Inst::FrintpV2D { rd, rn } => simd_unary(0x4EE18800, *rn, *rd),
             Inst::FrintzV4S { rd, rn } => simd_unary(0x4EA19800, *rn, *rd),
+            Inst::FrintzV2D { rd, rn } => simd_unary(0x4EE19800, *rn, *rd),
             Inst::FrintaV4S { rd, rn } => simd_unary(0x6E218800, *rn, *rd),
+            Inst::FrintaV2D { rd, rn } => simd_unary(0x6E618800, *rn, *rd),
             Inst::FrintiV4S { rd, rn } => simd_unary(0x6EA19800, *rn, *rd),
+            Inst::FrintiV2D { rd, rn } => simd_unary(0x6EE19800, *rn, *rd),
             Inst::FdivS { rd, rn, rm } => fp_arith(0b00, 0b0001, *rm, *rn, *rd),
             Inst::FmovRegD { rd, rn } => fp_mov_reg(0x1E604000, *rn, *rd),
             Inst::FmovRegS { rd, rn } => fp_mov_reg(0x1E204000, *rn, *rd),
@@ -6636,6 +6654,72 @@ mod tests {
             }
             .encode(),
             0x6EA19862
+        );
+    }
+    #[test]
+    fn frintn_2d_v0_v0() {
+        assert_eq!(
+            Inst::FrintnV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4E618800
+        );
+    }
+    #[test]
+    fn frintm_2d_v1_v2() {
+        assert_eq!(
+            Inst::FrintmV2D {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x4E619841
+        );
+    }
+    #[test]
+    fn frintp_2d_v3_v4() {
+        assert_eq!(
+            Inst::FrintpV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+            .encode(),
+            0x4EE18883
+        );
+    }
+    #[test]
+    fn frintz_2d_v5_v6() {
+        assert_eq!(
+            Inst::FrintzV2D {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6)
+            }
+            .encode(),
+            0x4EE198C5
+        );
+    }
+    #[test]
+    fn frinta_2d_v7_v8() {
+        assert_eq!(
+            Inst::FrintaV2D {
+                rd: FpReg::new(7),
+                rn: FpReg::new(8)
+            }
+            .encode(),
+            0x6E618907
+        );
+    }
+    #[test]
+    fn frinti_2d_v9_v10() {
+        assert_eq!(
+            Inst::FrintiV2D {
+                rd: FpReg::new(9),
+                rn: FpReg::new(10)
+            }
+            .encode(),
+            0x6EE19949
         );
     }
     #[test]

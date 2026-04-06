@@ -1118,6 +1118,30 @@ fn rt_fcvtzu_2d() {
     roundtrip(".text\nfcvtzu.2d v5, v6\n");
 }
 #[test]
+fn rt_frintn_2d() {
+    roundtrip(".text\nfrintn.2d v0, v0\n");
+}
+#[test]
+fn rt_frintm_2d() {
+    roundtrip(".text\nfrintm.2d v1, v2\n");
+}
+#[test]
+fn rt_frintp_2d() {
+    roundtrip(".text\nfrintp.2d v3, v4\n");
+}
+#[test]
+fn rt_frintz_2d() {
+    roundtrip(".text\nfrintz.2d v5, v6\n");
+}
+#[test]
+fn rt_frinta_2d() {
+    roundtrip(".text\nfrinta.2d v7, v8\n");
+}
+#[test]
+fn rt_frinti_2d() {
+    roundtrip(".text\nfrinti.2d v9, v10\n");
+}
+#[test]
 fn rt_scvtf_4s() {
     roundtrip(".text\nscvtf.4s v0, v1\n");
 }
