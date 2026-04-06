@@ -92,6 +92,15 @@ fn snapshot_unsupported_section_attr() {
 }
 
 #[test]
+fn snapshot_attr_on_section_without_attr_surface() {
+    run_failure_snapshot(
+        "unsupported-section-attr-none.s",
+        ".section __TEXT,__const,regular\n.quad 1\n",
+        "<input>:1:32: error: section __TEXT,__const does not support explicit attributes\n.section __TEXT,__const,regular\n                               ^\n",
+    );
+}
+
+#[test]
 fn snapshot_external_literal_target_requires_local_label() {
     run_failure_snapshot(
         "literal-local-label.s",

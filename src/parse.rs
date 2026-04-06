@@ -172,8 +172,14 @@ fn allowed_section_attrs(seg: &str, sect: &str) -> Option<&'static [&'static str
 }
 
 fn validate_section_attrs(seg: &str, sect: &str, attrs: &[String]) -> Result<(), String> {
-    let Some(allowed) = allowed_section_attrs(seg, sect) else {
+    if attrs.is_empty() {
         return Ok(());
+    }
+    let Some(allowed) = allowed_section_attrs(seg, sect) else {
+        return Err(format!(
+            "section {},{} does not support explicit attributes",
+            seg, sect
+        ));
     };
     let unsupported: Vec<_> = attrs
         .iter()
@@ -9963,6 +9969,16 @@ mod tests {
             err.contains(
                 "unsupported section attributes for __TEXT,__text: garbage (supported attrs: regular, pure_instructions)"
             ),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn parse_const_section_with_attrs_errors() {
+        let err = parse_err(".section __TEXT,__const,regular");
+        assert!(
+            err.contains("section __TEXT,__const does not support explicit attributes"),
             "got: {}",
             err
         );
