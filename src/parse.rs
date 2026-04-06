@@ -1303,7 +1303,8 @@ impl<'a> Parser<'a> {
             | "frintp.4s" | "frintz.4s" | "frinta.4s" | "frinti.4s" => {
                 self.parse_simd_fp_unary_4s(mnemonic)
             }
-            "fabs.2d" | "fneg.2d" | "fsqrt.2d" => self.parse_simd_fp_unary_2d(mnemonic),
+            "fabs.2d" | "fneg.2d" | "fsqrt.2d" | "scvtf.2d" | "ucvtf.2d" | "fcvtzs.2d"
+            | "fcvtzu.2d" => self.parse_simd_fp_unary_2d(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -4019,6 +4020,10 @@ impl<'a> Parser<'a> {
             "fabs.2d" => Inst::FabsV2D { rd, rn },
             "fneg.2d" => Inst::FnegV2D { rd, rn },
             "fsqrt.2d" => Inst::FsqrtV2D { rd, rn },
+            "scvtf.2d" => Inst::ScvtfV2D { rd, rn },
+            "ucvtf.2d" => Inst::UcvtfV2D { rd, rn },
+            "fcvtzs.2d" => Inst::FcvtzsV2D { rd, rn },
+            "fcvtzu.2d" => Inst::FcvtzuV2D { rd, rn },
             _ => unreachable!(),
         })
     }
@@ -7553,6 +7558,50 @@ mod tests {
             Inst::FsqrtV2D {
                 rd: FpReg::new(1),
                 rn: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_scvtf_2d() {
+        assert_eq!(
+            parse_inst("scvtf.2d v0, v0"),
+            Inst::ScvtfV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ucvtf_2d() {
+        assert_eq!(
+            parse_inst("ucvtf.2d v1, v2"),
+            Inst::UcvtfV2D {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fcvtzs_2d() {
+        assert_eq!(
+            parse_inst("fcvtzs.2d v3, v4"),
+            Inst::FcvtzsV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fcvtzu_2d() {
+        assert_eq!(
+            parse_inst("fcvtzu.2d v5, v6"),
+            Inst::FcvtzuV2D {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6)
             }
         );
     }

@@ -2734,6 +2734,46 @@ fn sys_fsqrt_2d() {
     );
 }
 #[test]
+fn sys_scvtf_2d() {
+    verify(
+        "scvtf.2d v0, v0",
+        Inst::ScvtfV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_ucvtf_2d() {
+    verify(
+        "ucvtf.2d v1, v2",
+        Inst::UcvtfV2D {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_fcvtzs_2d() {
+    verify(
+        "fcvtzs.2d v3, v4",
+        Inst::FcvtzsV2D {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_fcvtzu_2d() {
+    verify(
+        "fcvtzu.2d v5, v6",
+        Inst::FcvtzuV2D {
+            rd: FpReg::new(5),
+            rn: FpReg::new(6),
+        },
+    );
+}
+#[test]
 fn sys_scvtf_4s() {
     verify(
         "scvtf.4s v0, v1",

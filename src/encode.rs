@@ -1273,12 +1273,20 @@ pub enum Inst {
     FsqrtV2D { rd: FpReg, rn: FpReg },
     /// SCVTF.4S Vd, Vn
     ScvtfV4S { rd: FpReg, rn: FpReg },
+    /// SCVTF.2D Vd, Vn
+    ScvtfV2D { rd: FpReg, rn: FpReg },
     /// UCVTF.4S Vd, Vn
     UcvtfV4S { rd: FpReg, rn: FpReg },
+    /// UCVTF.2D Vd, Vn
+    UcvtfV2D { rd: FpReg, rn: FpReg },
     /// FCVTZS.4S Vd, Vn
     FcvtzsV4S { rd: FpReg, rn: FpReg },
+    /// FCVTZS.2D Vd, Vn
+    FcvtzsV2D { rd: FpReg, rn: FpReg },
     /// FCVTZU.4S Vd, Vn
     FcvtzuV4S { rd: FpReg, rn: FpReg },
+    /// FCVTZU.2D Vd, Vn
+    FcvtzuV2D { rd: FpReg, rn: FpReg },
     /// FRECPE.4S Vd, Vn
     FrecpeV4S { rd: FpReg, rn: FpReg },
     /// FRECPS.4S Vd, Vn, Vm
@@ -2570,9 +2578,13 @@ impl Inst {
             Inst::FsqrtV4S { rd, rn } => simd_unary(0x6EA1F800, *rn, *rd),
             Inst::FsqrtV2D { rd, rn } => simd_unary(0x6EE1F800, *rn, *rd),
             Inst::ScvtfV4S { rd, rn } => simd_unary(0x4E21D800, *rn, *rd),
+            Inst::ScvtfV2D { rd, rn } => simd_unary(0x4E61D800, *rn, *rd),
             Inst::UcvtfV4S { rd, rn } => simd_unary(0x6E21D800, *rn, *rd),
+            Inst::UcvtfV2D { rd, rn } => simd_unary(0x6E61D800, *rn, *rd),
             Inst::FcvtzsV4S { rd, rn } => simd_unary(0x4EA1B800, *rn, *rd),
+            Inst::FcvtzsV2D { rd, rn } => simd_unary(0x4EE1B800, *rn, *rd),
             Inst::FcvtzuV4S { rd, rn } => simd_unary(0x6EA1B800, *rn, *rd),
+            Inst::FcvtzuV2D { rd, rn } => simd_unary(0x6EE1B800, *rn, *rd),
             Inst::FrecpeV4S { rd, rn } => simd_unary(0x4EA1D800, *rn, *rd),
             Inst::FrecpsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20FC00, *rm, *rn, *rd),
             Inst::FrsqrteV4S { rd, rn } => simd_unary(0x6EA1D800, *rn, *rd),
@@ -6438,6 +6450,17 @@ mod tests {
         );
     }
     #[test]
+    fn scvtf_2d_v0_v0() {
+        assert_eq!(
+            Inst::ScvtfV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4E61D800
+        );
+    }
+    #[test]
     fn ucvtf_4s_v2_v3() {
         assert_eq!(
             Inst::UcvtfV4S {
@@ -6446,6 +6469,17 @@ mod tests {
             }
             .encode(),
             0x6E21D862
+        );
+    }
+    #[test]
+    fn ucvtf_2d_v1_v2() {
+        assert_eq!(
+            Inst::UcvtfV2D {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x6E61D841
         );
     }
     #[test]
@@ -6460,6 +6494,17 @@ mod tests {
         );
     }
     #[test]
+    fn fcvtzs_2d_v3_v4() {
+        assert_eq!(
+            Inst::FcvtzsV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+            .encode(),
+            0x4EE1B883
+        );
+    }
+    #[test]
     fn fcvtzu_4s_v6_v7() {
         assert_eq!(
             Inst::FcvtzuV4S {
@@ -6468,6 +6513,17 @@ mod tests {
             }
             .encode(),
             0x6EA1B8E6
+        );
+    }
+    #[test]
+    fn fcvtzu_2d_v5_v6() {
+        assert_eq!(
+            Inst::FcvtzuV2D {
+                rd: FpReg::new(5),
+                rn: FpReg::new(6)
+            }
+            .encode(),
+            0x6EE1B8C5
         );
     }
     #[test]

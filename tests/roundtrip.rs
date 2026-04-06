@@ -1102,6 +1102,22 @@ fn rt_fsqrt_2d() {
     roundtrip(".text\nfsqrt.2d v1, v2\n");
 }
 #[test]
+fn rt_scvtf_2d() {
+    roundtrip(".text\nscvtf.2d v0, v0\n");
+}
+#[test]
+fn rt_ucvtf_2d() {
+    roundtrip(".text\nucvtf.2d v1, v2\n");
+}
+#[test]
+fn rt_fcvtzs_2d() {
+    roundtrip(".text\nfcvtzs.2d v3, v4\n");
+}
+#[test]
+fn rt_fcvtzu_2d() {
+    roundtrip(".text\nfcvtzu.2d v5, v6\n");
+}
+#[test]
 fn rt_scvtf_4s() {
     roundtrip(".text\nscvtf.4s v0, v1\n");
 }
