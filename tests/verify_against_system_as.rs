@@ -1962,6 +1962,17 @@ fn sys_fadd_s() {
     );
 }
 #[test]
+fn sys_fadd_2d() {
+    verify(
+        "fadd.2d v0, v1, v2",
+        Inst::FaddV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_fadd_4s() {
     verify(
         "fadd.4s v0, v1, v2",
@@ -2674,6 +2685,17 @@ fn sys_sminv_8h() {
     );
 }
 #[test]
+fn sys_fsub_2d() {
+    verify(
+        "fsub.2d v3, v4, v5",
+        Inst::FsubV2D {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
 fn sys_fsub_4s() {
     verify(
         "fsub.4s v3, v4, v5",
@@ -2696,6 +2718,17 @@ fn sys_sub_4s() {
     );
 }
 #[test]
+fn sys_fmul_2d() {
+    verify(
+        "fmul.2d v6, v7, v8",
+        Inst::FmulV2D {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
 fn sys_fmul_4s() {
     verify(
         "fmul.4s v6, v7, v8",
@@ -2703,6 +2736,17 @@ fn sys_fmul_4s() {
             rd: FpReg::new(6),
             rn: FpReg::new(7),
             rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
+fn sys_fdiv_2d() {
+    verify(
+        "fdiv.2d v9, v10, v11",
+        Inst::FdivV2D {
+            rd: FpReg::new(9),
+            rn: FpReg::new(10),
+            rm: FpReg::new(11),
         },
     );
 }

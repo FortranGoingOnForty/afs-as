@@ -810,6 +810,10 @@ fn rt_fadd_s() {
     roundtrip(".text\nfadd s0, s1, s2\n");
 }
 #[test]
+fn rt_fadd_2d() {
+    roundtrip(".text\nfadd.2d v0, v1, v2\n");
+}
+#[test]
 fn rt_fadd_4s() {
     roundtrip(".text\nfadd.4s v0, v1, v2\n");
 }
@@ -1078,6 +1082,10 @@ fn rt_sminv_8h() {
     roundtrip(".text\nsminv.8h h0, v0\n");
 }
 #[test]
+fn rt_fsub_2d() {
+    roundtrip(".text\nfsub.2d v3, v4, v5\n");
+}
+#[test]
 fn rt_fsub_4s() {
     roundtrip(".text\nfsub.4s v3, v4, v5\n");
 }
@@ -1086,8 +1094,16 @@ fn rt_sub_4s() {
     roundtrip(".text\nsub.4s v3, v4, v5\n");
 }
 #[test]
+fn rt_fmul_2d() {
+    roundtrip(".text\nfmul.2d v6, v7, v8\n");
+}
+#[test]
 fn rt_fmul_4s() {
     roundtrip(".text\nfmul.4s v6, v7, v8\n");
+}
+#[test]
+fn rt_fdiv_2d() {
+    roundtrip(".text\nfdiv.2d v9, v10, v11\n");
 }
 #[test]
 fn rt_fdiv_4s() {

@@ -1296,7 +1296,8 @@ impl<'a> Parser<'a> {
             | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
-            "fmax.2d" | "fmin.2d" | "fmaxnm.2d" | "fminnm.2d" | "frecps.2d" | "frsqrts.2d" => {
+            "fadd.2d" | "fsub.2d" | "fmul.2d" | "fdiv.2d" | "fmax.2d" | "fmin.2d"
+            | "fmaxnm.2d" | "fminnm.2d" | "frecps.2d" | "frsqrts.2d" => {
                 self.parse_simd_fp_arith_2d(mnemonic)
             }
             "faddp.2d" | "fmaxp.2d" | "fminp.2d" | "fmaxnmp.2d" | "fminnmp.2d" => {
@@ -3984,6 +3985,10 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
+            "fadd.2d" => Inst::FaddV2D { rd, rn, rm },
+            "fsub.2d" => Inst::FsubV2D { rd, rn, rm },
+            "fmul.2d" => Inst::FmulV2D { rd, rn, rm },
+            "fdiv.2d" => Inst::FdivV2D { rd, rn, rm },
             "fmax.2d" => Inst::FmaxV2D { rd, rn, rm },
             "fmin.2d" => Inst::FminV2D { rd, rn, rm },
             "fmaxnm.2d" => Inst::FmaxnmV2D { rd, rn, rm },
@@ -7422,6 +7427,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_fadd_2d() {
+        assert_eq!(
+            parse_inst("fadd.2d v0, v1, v2"),
+            Inst::FaddV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
     fn parse_faddp_4s() {
         assert_eq!(
             parse_inst("faddp.4s v0, v1, v2"),
@@ -8366,6 +8383,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_fsub_2d() {
+        assert_eq!(
+            parse_inst("fsub.2d v3, v4, v5"),
+            Inst::FsubV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
     fn parse_sub_4s() {
         assert_eq!(
             parse_inst("sub.4s v3, v4, v5"),
@@ -8390,10 +8419,34 @@ mod tests {
     }
 
     #[test]
+    fn parse_fmul_2d() {
+        assert_eq!(
+            parse_inst("fmul.2d v6, v7, v8"),
+            Inst::FmulV2D {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
     fn parse_fdiv_4s() {
         assert_eq!(
             parse_inst("fdiv.4s v9, v10, v11"),
             Inst::FdivV4S {
+                rd: FpReg::new(9),
+                rn: FpReg::new(10),
+                rm: FpReg::new(11)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fdiv_2d() {
+        assert_eq!(
+            parse_inst("fdiv.2d v9, v10, v11"),
+            Inst::FdivV2D {
                 rd: FpReg::new(9),
                 rn: FpReg::new(10),
                 rm: FpReg::new(11)
