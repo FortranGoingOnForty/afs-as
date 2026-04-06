@@ -390,6 +390,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fp_recip_2d",
+        source: "vector_fp_recip_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t recip_est2(float64x2_t);\nextern float64x2_t recip_step2(float64x2_t, float64x2_t);\nextern float64x2_t rsqrt_est2(float64x2_t);\nextern float64x2_t rsqrt_step2(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t ones = {1.0, 1.0};\n    float64x2_t re = recip_est2(ones);\n    float64x2_t rs = recip_step2(ones, ones);\n    float64x2_t se = rsqrt_est2(ones);\n    float64x2_t ss = rsqrt_step2(ones, ones);\n    return (re[0] < 0.99) || (re[0] > 1.01) || (re[1] < 0.99) || (re[1] > 1.01)\n        || (rs[0] != 1.0) || (rs[1] != 1.0)\n        || (se[0] < 0.99) || (se[0] > 1.01) || (se[1] < 0.99) || (se[1] > 1.01)\n        || (ss[0] != 1.0) || (ss[1] != 1.0);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp",
         source: "vector_fcmp.c",
         driver: "#include <arm_neon.h>\nextern uint32x4_t eq_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t ge_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t gt_mask_f32(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {1.0f, 7.0f, -5.0f, 8.0f};\n    uint32x4_t eq = eq_mask_f32(a, b);\n    uint32x4_t ge = ge_mask_f32(a, b);\n    uint32x4_t gt = gt_mask_f32(a, b);\n    return (eq[0] != 0xFFFFFFFFu) || (eq[1] != 0u) || (eq[2] != 0u) || (eq[3] != 0u)\n        || (ge[0] != 0xFFFFFFFFu) || (ge[1] != 0xFFFFFFFFu) || (ge[2] != 0xFFFFFFFFu) || (ge[3] != 0u)\n        || (gt[0] != 0u) || (gt[1] != 0xFFFFFFFFu) || (gt[2] != 0xFFFFFFFFu) || (gt[3] != 0u);\n}\n",
