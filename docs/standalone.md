@@ -193,6 +193,7 @@ Major covered families include:
   - `add.4s`, `sub.4s`, `smax.4s`, `smin.4s`, `umax.4s`, `umin.4s`
   - `addp.4s`, `smaxp.4s`, `sminp.4s`, `umaxp.4s`, `uminp.4s`
   - `smaxp.8h`, `sminp.8h`, `umaxp.8h`, `uminp.8h`
+  - `smaxp.16b`, `sminp.16b`, `umaxp.16b`, `uminp.16b`
   - `addv.4s`, `smaxv.4s`, `umaxv.4s`
   - `sminv.4s`, `uminv.4s`
   - `faddp.4s`, `faddp.2s`, `fmaxv.4s`, `fminv.4s`
