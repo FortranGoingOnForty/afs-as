@@ -1264,6 +1264,9 @@ impl<'a> Parser<'a> {
 
             // FP arithmetic (double)
             "fadd" => self.parse_fp_arith("fadd"),
+            "smaxp.8h" | "sminp.8h" | "umaxp.8h" | "uminp.8h" => {
+                self.parse_simd_int_arith_8h(mnemonic)
+            }
             "add.4s" | "addp.4s" | "sub.4s" | "smax.4s" | "smaxp.4s" | "smin.4s"
             | "sminp.4s" | "umax.4s" | "umaxp.4s" | "umin.4s" | "uminp.4s" => {
                 self.parse_simd_int_arith_4s(mnemonic)
@@ -3979,6 +3982,21 @@ impl<'a> Parser<'a> {
             "umaxp.4s" => Inst::UmaxpV4S { rd, rn, rm },
             "umin.4s" => Inst::UminV4S { rd, rn, rm },
             "uminp.4s" => Inst::UminpV4S { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_int_arith_8h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "smaxp.8h" => Inst::SmaxpV8H { rd, rn, rm },
+            "sminp.8h" => Inst::SminpV8H { rd, rn, rm },
+            "umaxp.8h" => Inst::UmaxpV8H { rd, rn, rm },
+            "uminp.8h" => Inst::UminpV8H { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -7375,6 +7393,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_smaxp_8h() {
+        assert_eq!(
+            parse_inst("smaxp.8h v6, v7, v8"),
+            Inst::SmaxpV8H {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
     fn parse_smin_4s() {
         assert_eq!(
             parse_inst("smin.4s v8, v9, v10"),
@@ -7391,6 +7421,18 @@ mod tests {
         assert_eq!(
             parse_inst("sminp.4s v9, v10, v11"),
             Inst::SminpV4S {
+                rd: FpReg::new(9),
+                rn: FpReg::new(10),
+                rm: FpReg::new(11)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sminp_8h() {
+        assert_eq!(
+            parse_inst("sminp.8h v9, v10, v11"),
+            Inst::SminpV8H {
                 rd: FpReg::new(9),
                 rn: FpReg::new(10),
                 rm: FpReg::new(11)
@@ -7423,6 +7465,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_umaxp_8h() {
+        assert_eq!(
+            parse_inst("umaxp.8h v0, v1, v2"),
+            Inst::UmaxpV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
     fn parse_umin_4s() {
         assert_eq!(
             parse_inst("umin.4s v2, v3, v4"),
@@ -7439,6 +7493,18 @@ mod tests {
         assert_eq!(
             parse_inst("uminp.4s v3, v4, v5"),
             Inst::UminpV4S {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_uminp_8h() {
+        assert_eq!(
+            parse_inst("uminp.8h v3, v4, v5"),
+            Inst::UminpV8H {
                 rd: FpReg::new(3),
                 rn: FpReg::new(4),
                 rm: FpReg::new(5)
