@@ -28,69 +28,14 @@ jobs:
           components: clippy
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
-  test-unit:
-    name: "Tests: unit"
+  test-lib:
+    name: "Tests: lib + doc"
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --lib
-
-  test-differential-harness:
-    name: "Tests: differential harness"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test differential_harness
-
-  test-corpus:
-    name: "Tests: corpus compatibility"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test corpus_compat
-
-  test-roundtrip:
-    name: "Tests: round-trip"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test roundtrip
-
-  test-system:
-    name: "Tests: system assembler parity"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test verify_against_system_as
-
-  test-e2e:
-    name: "Tests: end-to-end"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test hello_world
-
-  test-cli:
-    name: "Tests: cli smoke"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test cli_smoke
-
-  test-diagnostics:
-    name: "Tests: diagnostic snapshots"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test diagnostic_snapshots
+      - run: cargo test -p afs-as --lib
+      - run: cargo test -p afs-as --doc
 
   test-clang-dashboard:
     name: "Tests: clang probe dashboard"
@@ -98,36 +43,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test clang_probe_dashboard
+      - run: cargo test -p afs-as --test clang_probe_dashboard
 
-  test-generated-stress:
-    name: "Tests: generated stress"
+  test-integration:
+    name: "Tests: integration suite"
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test generated_stress
-
-  test-differential-fuzz:
-    name: "Tests: differential fuzz"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test differential_fuzz
-
-  test-malformed-mutation:
-    name: "Tests: malformed mutation"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test malformed_mutation
-
-  test-perf:
-    name: "Tests: performance sanity"
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --test perf_sanity
+      - name: Run every integration test except the clang probe dashboard
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for test_path in tests/*.rs; do
+            test_name="$(basename "${test_path}" .rs)"
+            if [ "${test_name}" = "clang_probe_dashboard" ]; then
+              continue
+            fi
+            echo "::group::cargo test --test ${test_name}"
+            cargo test -p afs-as --test "${test_name}"
+            echo "::endgroup::"
+          done
