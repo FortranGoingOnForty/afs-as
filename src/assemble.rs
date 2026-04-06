@@ -1097,17 +1097,9 @@ impl Assembler {
                 build_version.platform
             )));
         }
-        match &self.build_version {
-            Some(existing) if existing == build_version => Ok(()),
-            Some(existing) => Err(AsmError(format!(
-                "conflicting .build_version directives: already saw {:?}, then {:?}",
-                existing, build_version
-            ))),
-            None => {
-                self.build_version = Some(build_version.clone());
-                Ok(())
-            }
-        }
+        // Apple `as` accepts repeated .build_version directives and uses the last one.
+        self.build_version = Some(build_version.clone());
+        Ok(())
     }
 
     fn record_linker_optimization_hint(&mut self, hint: &LinkerOptimizationHintDirective) {

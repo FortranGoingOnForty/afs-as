@@ -163,10 +163,18 @@ fn allowed_section_attrs(seg: &str, sect: &str) -> Option<&'static [&'static str
     let sect = sect.to_ascii_lowercase();
     match (seg.as_str(), sect.as_str()) {
         ("__text", "__text") => Some(&["regular", "pure_instructions"]),
-        ("__text", "__cstring") => Some(&["cstring_literals"]),
-        ("__text", "__literal16") => Some(&["16byte_literals"]),
-        ("__data", "__thread_data") => Some(&["thread_local_regular"]),
-        ("__data", "__thread_vars") => Some(&["thread_local_variables"]),
+        ("__text", "__cstring") => Some(&["regular", "cstring_literals"]),
+        ("__text", "__literal16") => Some(&["regular", "16byte_literals"]),
+        ("__text", "__const") => Some(&["regular"]),
+        ("__data", "__data") => Some(&["regular"]),
+        // Apple `as` accepts either thread-local attr spelling here and
+        // canonicalizes based on the section name.
+        ("__data", "__thread_data") => {
+            Some(&["regular", "thread_local_regular", "thread_local_variables"])
+        }
+        ("__data", "__thread_vars") => {
+            Some(&["regular", "thread_local_regular", "thread_local_variables"])
+        }
         _ => None,
     }
 }
@@ -191,6 +199,17 @@ fn validate_section_attrs(seg: &str, sect: &str, attrs: &[String]) -> Result<(),
         .cloned()
         .collect();
     if unsupported.is_empty() {
+        if seg.eq_ignore_ascii_case("__TEXT")
+            && sect.eq_ignore_ascii_case("__text")
+            && attrs.iter().any(|attr| attr.eq_ignore_ascii_case("pure_instructions"))
+            && !attrs.iter().any(|attr| attr.eq_ignore_ascii_case("regular"))
+        {
+            return Err(format!(
+                "section {},{} requires 'regular' when using 'pure_instructions'",
+                seg, sect
+            ));
+        }
+
         return Ok(());
     }
 
@@ -9979,10 +9998,22 @@ mod tests {
     }
 
     #[test]
-    fn parse_const_section_with_attrs_errors() {
-        let err = parse_err(".section __TEXT,__const,regular");
+    fn parse_const_section_with_regular_attr() {
+        let stmts = parse_stmts(".section __TEXT,__const,regular");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__TEXT".into(),
+                "__const".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_text_section_pure_without_regular_errors() {
+        let err = parse_err(".section __TEXT,__text,pure_instructions");
         assert!(
-            err.contains("section __TEXT,__const does not support explicit attributes"),
+            err.contains("section __TEXT,__text requires 'regular' when using 'pure_instructions'"),
             "got: {}",
             err
         );
