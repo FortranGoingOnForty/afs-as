@@ -1984,6 +1984,17 @@ fn sys_add_4s() {
     );
 }
 #[test]
+fn sys_addp_2d() {
+    verify(
+        "addp.2d v0, v1, v2",
+        Inst::AddpV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_addp_16b() {
     verify(
         "addp.16b v6, v7, v8",
@@ -2258,6 +2269,17 @@ fn sys_faddp_4s() {
     );
 }
 #[test]
+fn sys_fmaxp_2d() {
+    verify(
+        "fmaxp.2d v3, v4, v5",
+        Inst::FmaxpV2D {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
 fn sys_fmaxp_4s() {
     verify(
         "fmaxp.4s v0, v1, v2",
@@ -2265,6 +2287,17 @@ fn sys_fmaxp_4s() {
             rd: FpReg::new(0),
             rn: FpReg::new(1),
             rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_fminp_2d() {
+    verify(
+        "fminp.2d v6, v7, v8",
+        Inst::FminpV2D {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
         },
     );
 }

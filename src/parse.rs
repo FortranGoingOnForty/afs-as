@@ -1267,6 +1267,7 @@ impl<'a> Parser<'a> {
             "addp.16b" | "smaxp.16b" | "sminp.16b" | "umaxp.16b" | "uminp.16b" => {
                 self.parse_simd_int_arith_16b(mnemonic)
             }
+            "addp.2d" => self.parse_simd_int_arith_2d(mnemonic),
             "addp.8h" | "smaxp.8h" | "sminp.8h" | "umaxp.8h" | "uminp.8h" => {
                 self.parse_simd_int_arith_8h(mnemonic)
             }
@@ -1287,6 +1288,7 @@ impl<'a> Parser<'a> {
             | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
+            "fmaxp.2d" | "fminp.2d" => self.parse_simd_fp_arith_2d(mnemonic),
             "fabs.4s" | "fneg.4s" | "fsqrt.4s" | "scvtf.4s" | "ucvtf.4s" | "fcvtzs.4s"
             | "fcvtzu.4s" | "frecpe.4s" | "frsqrte.4s" | "frintn.4s" | "frintm.4s"
             | "frintp.4s" | "frintz.4s" | "frinta.4s" | "frinti.4s" => {
@@ -3943,6 +3945,19 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_simd_fp_arith_2d(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "fmaxp.2d" => Inst::FmaxpV2D { rd, rn, rm },
+            "fminp.2d" => Inst::FminpV2D { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
     fn parse_simd_fp_unary_4s(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let rd = self.parse_simd_reg()?;
         self.expect(&Tok::Comma)?;
@@ -4017,6 +4032,18 @@ impl<'a> Parser<'a> {
             "sminp.16b" => Inst::SminpV16B { rd, rn, rm },
             "umaxp.16b" => Inst::UmaxpV16B { rd, rn, rm },
             "uminp.16b" => Inst::UminpV16B { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_int_arith_2d(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "addp.2d" => Inst::AddpV2D { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -7281,6 +7308,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_fmaxp_2d() {
+        assert_eq!(
+            parse_inst("fmaxp.2d v3, v4, v5"),
+            Inst::FmaxpV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
     fn parse_fminp_4s() {
         assert_eq!(
             parse_inst("fminp.4s v3, v4, v5"),
@@ -7329,10 +7368,34 @@ mod tests {
     }
 
     #[test]
+    fn parse_fminp_2d() {
+        assert_eq!(
+            parse_inst("fminp.2d v6, v7, v8"),
+            Inst::FminpV2D {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
     fn parse_addp_4s() {
         assert_eq!(
             parse_inst("addp.4s v0, v1, v2"),
             Inst::AddpV4S {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_addp_2d() {
+        assert_eq!(
+            parse_inst("addp.2d v0, v1, v2"),
+            Inst::AddpV2D {
                 rd: FpReg::new(0),
                 rn: FpReg::new(1),
                 rm: FpReg::new(2)

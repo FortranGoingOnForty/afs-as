@@ -818,6 +818,10 @@ fn rt_add_4s() {
     roundtrip(".text\nadd.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_addp_2d() {
+    roundtrip(".text\naddp.2d v0, v1, v2\n");
+}
+#[test]
 fn rt_addp_16b() {
     roundtrip(".text\naddp.16b v6, v7, v8\n");
 }
@@ -918,8 +922,16 @@ fn rt_faddp_4s() {
     roundtrip(".text\nfaddp.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_fmaxp_2d() {
+    roundtrip(".text\nfmaxp.2d v3, v4, v5\n");
+}
+#[test]
 fn rt_fmaxp_4s() {
     roundtrip(".text\nfmaxp.4s v0, v1, v2\n");
+}
+#[test]
+fn rt_fminp_2d() {
+    roundtrip(".text\nfminp.2d v6, v7, v8\n");
 }
 #[test]
 fn rt_fminp_4s() {
