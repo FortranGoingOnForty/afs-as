@@ -360,6 +360,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fp_convert_2d",
+        source: "vector_fp_convert_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t to_float_s64(int64x2_t);\nextern float64x2_t to_float_u64(uint64x2_t);\nextern int64x2_t to_int_s64(float64x2_t);\nextern uint64x2_t to_uint_u64(float64x2_t);\nint main(void) {\n    int64x2_t si = {-1, 2};\n    uint64x2_t ui = {1u, 2u};\n    float64x2_t sf = {-1.0, 2.0};\n    float64x2_t uf = {1.0, 2.0};\n    float64x2_t xs = to_float_s64(si);\n    float64x2_t xu = to_float_u64(ui);\n    int64x2_t ys = to_int_s64(sf);\n    uint64x2_t yu = to_uint_u64(uf);\n    return (xs[0] != -1.0) || (xs[1] != 2.0)\n        || (xu[0] != 1.0) || (xu[1] != 2.0)\n        || (ys[0] != -1) || (ys[1] != 2)\n        || (yu[0] != 1u) || (yu[1] != 2u);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fp_recip",
         source: "vector_fp_recip.c",
         driver: "#include <arm_neon.h>\nextern float32x4_t recip_est(float32x4_t);\nextern float32x4_t recip_step(float32x4_t, float32x4_t);\nextern float32x4_t rsqrt_est(float32x4_t);\nextern float32x4_t rsqrt_step(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t ones = {1.0f, 1.0f, 1.0f, 1.0f};\n    float32x4_t re = recip_est(ones);\n    float32x4_t rs = recip_step(ones, ones);\n    float32x4_t se = rsqrt_est(ones);\n    float32x4_t ss = rsqrt_step(ones, ones);\n    return (re[0] < 0.99f) || (re[0] > 1.01f) || (re[1] < 0.99f) || (re[1] > 1.01f)\n        || (re[2] < 0.99f) || (re[2] > 1.01f) || (re[3] < 0.99f) || (re[3] > 1.01f)\n        || (rs[0] != 1.0f) || (rs[1] != 1.0f) || (rs[2] != 1.0f) || (rs[3] != 1.0f)\n        || (se[0] < 0.99f) || (se[0] > 1.01f) || (se[1] < 0.99f) || (se[1] > 1.01f)\n        || (se[2] < 0.99f) || (se[2] > 1.01f) || (se[3] < 0.99f) || (se[3] > 1.01f)\n        || (ss[0] != 1.0f) || (ss[1] != 1.0f) || (ss[2] != 1.0f) || (ss[3] != 1.0f);\n}\n",
