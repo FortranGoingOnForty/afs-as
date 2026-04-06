@@ -2454,10 +2454,32 @@ fn sys_fmla_4s() {
     );
 }
 #[test]
+fn sys_fmla_2d() {
+    verify(
+        "fmla.2d v0, v1, v2",
+        Inst::FmlaV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_fmls_4s() {
     verify(
         "fmls.4s v3, v4, v5",
         Inst::FmlsV4S {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_fmls_2d() {
+    verify(
+        "fmls.2d v3, v4, v5",
+        Inst::FmlsV2D {
             rd: FpReg::new(3),
             rn: FpReg::new(4),
             rm: FpReg::new(5),

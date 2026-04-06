@@ -1296,8 +1296,9 @@ impl<'a> Parser<'a> {
             | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
-            "fadd.2d" | "fsub.2d" | "fmul.2d" | "fdiv.2d" | "fmax.2d" | "fmin.2d"
-            | "fmaxnm.2d" | "fminnm.2d" | "frecps.2d" | "frsqrts.2d" => {
+            "fadd.2d" | "fsub.2d" | "fmul.2d" | "fdiv.2d" | "fmla.2d" | "fmls.2d"
+            | "fmax.2d" | "fmin.2d" | "fmaxnm.2d" | "fminnm.2d" | "frecps.2d"
+            | "frsqrts.2d" => {
                 self.parse_simd_fp_arith_2d(mnemonic)
             }
             "faddp.2d" | "fmaxp.2d" | "fminp.2d" | "fmaxnmp.2d" | "fminnmp.2d" => {
@@ -3989,6 +3990,8 @@ impl<'a> Parser<'a> {
             "fsub.2d" => Inst::FsubV2D { rd, rn, rm },
             "fmul.2d" => Inst::FmulV2D { rd, rn, rm },
             "fdiv.2d" => Inst::FdivV2D { rd, rn, rm },
+            "fmla.2d" => Inst::FmlaV2D { rd, rn, rm },
+            "fmls.2d" => Inst::FmlsV2D { rd, rn, rm },
             "fmax.2d" => Inst::FmaxV2D { rd, rn, rm },
             "fmin.2d" => Inst::FminV2D { rd, rn, rm },
             "fmaxnm.2d" => Inst::FmaxnmV2D { rd, rn, rm },
@@ -7434,6 +7437,30 @@ mod tests {
                 rd: FpReg::new(0),
                 rn: FpReg::new(1),
                 rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fmla_2d() {
+        assert_eq!(
+            parse_inst("fmla.2d v0, v1, v2"),
+            Inst::FmlaV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fmls_2d() {
+        assert_eq!(
+            parse_inst("fmls.2d v3, v4, v5"),
+            Inst::FmlsV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
             }
         );
     }

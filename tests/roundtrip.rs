@@ -990,8 +990,16 @@ fn rt_fmla_4s() {
     roundtrip(".text\nfmla.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_fmla_2d() {
+    roundtrip(".text\nfmla.2d v0, v1, v2\n");
+}
+#[test]
 fn rt_fmls_4s() {
     roundtrip(".text\nfmls.4s v3, v4, v5\n");
+}
+#[test]
+fn rt_fmls_2d() {
+    roundtrip(".text\nfmls.2d v3, v4, v5\n");
 }
 #[test]
 fn rt_faddp_2s() {
