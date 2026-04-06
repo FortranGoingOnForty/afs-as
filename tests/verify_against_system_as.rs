@@ -2420,6 +2420,36 @@ fn sys_faddp_2s() {
     );
 }
 #[test]
+fn sys_faddp_2d_scalar() {
+    verify(
+        "faddp.2d d0, v0",
+        Inst::FaddpV2DScalar {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_fmaxp_2d_scalar() {
+    verify(
+        "fmaxp.2d d1, v2",
+        Inst::FmaxpV2DScalar {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_fminp_2d_scalar() {
+    verify(
+        "fminp.2d d3, v4",
+        Inst::FminpV2DScalar {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+        },
+    );
+}
+#[test]
 fn sys_fmaxv_4s() {
     verify(
         "fmaxv.4s s1, v2",

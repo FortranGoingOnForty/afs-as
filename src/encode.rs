@@ -1141,6 +1141,12 @@ pub enum Inst {
     FminnmpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FADDP.2S Sd, Vn
     FaddpV2S { rd: FpReg, rn: FpReg },
+    /// FADDP.2D Dd, Vn
+    FaddpV2DScalar { rd: FpReg, rn: FpReg },
+    /// FMAXP.2D Dd, Vn
+    FmaxpV2DScalar { rd: FpReg, rn: FpReg },
+    /// FMINP.2D Dd, Vn
+    FminpV2DScalar { rd: FpReg, rn: FpReg },
     /// FMLA.4S Vd, Vn, Vm
     FmlaV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMLS.4S Vd, Vn, Vm
@@ -2490,6 +2496,9 @@ impl Inst {
             Inst::FminnmpV2D { rd, rn, rm } => simd_fp_arith_2d(0x6EE0C400, *rm, *rn, *rd),
             Inst::FminnmpV4S { rd, rn, rm } => simd_fp_arith_4s(0x6EA0C400, *rm, *rn, *rd),
             Inst::FaddpV2S { rd, rn } => simd_reduce_4s(0x7E30D800, *rn, *rd),
+            Inst::FaddpV2DScalar { rd, rn } => simd_reduce(0x7E70D800, *rn, *rd),
+            Inst::FmaxpV2DScalar { rd, rn } => simd_reduce(0x7E70F800, *rn, *rd),
+            Inst::FminpV2DScalar { rd, rn } => simd_reduce(0x7EF0F800, *rn, *rd),
             Inst::FmlaV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20CC00, *rm, *rn, *rd),
             Inst::FmlsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0CC00, *rm, *rn, *rd),
             Inst::AddV4S { rd, rn, rm } => simd_binary(0x4EA08400, *rm, *rn, *rd),
@@ -6055,6 +6064,39 @@ mod tests {
             }
             .encode(),
             0x7E30D883
+        );
+    }
+    #[test]
+    fn faddp_2d_d0_v0() {
+        assert_eq!(
+            Inst::FaddpV2DScalar {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x7E70D800
+        );
+    }
+    #[test]
+    fn fmaxp_2d_d1_v2() {
+        assert_eq!(
+            Inst::FmaxpV2DScalar {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x7E70F841
+        );
+    }
+    #[test]
+    fn fminp_2d_d3_v4() {
+        assert_eq!(
+            Inst::FminpV2DScalar {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+            .encode(),
+            0x7EF0F883
         );
     }
     #[test]

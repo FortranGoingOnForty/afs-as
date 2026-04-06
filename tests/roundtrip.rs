@@ -978,6 +978,18 @@ fn rt_faddp_2s() {
     roundtrip(".text\nfaddp.2s s3, v4\n");
 }
 #[test]
+fn rt_faddp_2d_scalar() {
+    roundtrip(".text\nfaddp.2d d0, v0\n");
+}
+#[test]
+fn rt_fmaxp_2d_scalar() {
+    roundtrip(".text\nfmaxp.2d d1, v2\n");
+}
+#[test]
+fn rt_fminp_2d_scalar() {
+    roundtrip(".text\nfminp.2d d3, v4\n");
+}
+#[test]
 fn rt_fmaxv_4s() {
     roundtrip(".text\nfmaxv.4s s1, v2\n");
 }
