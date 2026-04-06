@@ -2773,6 +2773,17 @@ fn sys_fdiv_2d() {
     );
 }
 #[test]
+fn sys_fabd_2d() {
+    verify(
+        "fabd.2d v0, v1, v2",
+        Inst::FabdV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_fdiv_4s() {
     verify(
         "fdiv.4s v9, v10, v11",

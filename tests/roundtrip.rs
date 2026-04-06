@@ -1114,6 +1114,10 @@ fn rt_fdiv_2d() {
     roundtrip(".text\nfdiv.2d v9, v10, v11\n");
 }
 #[test]
+fn rt_fabd_2d() {
+    roundtrip(".text\nfabd.2d v0, v1, v2\n");
+}
+#[test]
 fn rt_fdiv_4s() {
     roundtrip(".text\nfdiv.4s v9, v10, v11\n");
 }
