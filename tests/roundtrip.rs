@@ -826,12 +826,20 @@ fn rt_smaxp_8h() {
     roundtrip(".text\nsmaxp.8h v6, v7, v8\n");
 }
 #[test]
+fn rt_smaxp_16b() {
+    roundtrip(".text\nsmaxp.16b v6, v7, v8\n");
+}
+#[test]
 fn rt_smaxp_4s() {
     roundtrip(".text\nsmaxp.4s v6, v7, v8\n");
 }
 #[test]
 fn rt_sminp_8h() {
     roundtrip(".text\nsminp.8h v9, v10, v11\n");
+}
+#[test]
+fn rt_sminp_16b() {
+    roundtrip(".text\nsminp.16b v9, v10, v11\n");
 }
 #[test]
 fn rt_sminp_4s() {
@@ -870,6 +878,10 @@ fn rt_umaxp_8h() {
     roundtrip(".text\numaxp.8h v0, v1, v2\n");
 }
 #[test]
+fn rt_umaxp_16b() {
+    roundtrip(".text\numaxp.16b v0, v1, v2\n");
+}
+#[test]
 fn rt_umaxp_4s() {
     roundtrip(".text\numaxp.4s v0, v1, v2\n");
 }
@@ -880,6 +892,10 @@ fn rt_umin_4s() {
 #[test]
 fn rt_uminp_8h() {
     roundtrip(".text\numinp.8h v3, v4, v5\n");
+}
+#[test]
+fn rt_uminp_16b() {
+    roundtrip(".text\numinp.16b v3, v4, v5\n");
 }
 #[test]
 fn rt_uminp_4s() {

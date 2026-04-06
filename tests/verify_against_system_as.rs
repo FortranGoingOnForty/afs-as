@@ -2061,6 +2061,17 @@ fn sys_smaxp_4s() {
     );
 }
 #[test]
+fn sys_smaxp_16b() {
+    verify(
+        "smaxp.16b v6, v7, v8",
+        Inst::SmaxpV16B {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
 fn sys_smaxp_8h() {
     verify(
         "smaxp.8h v6, v7, v8",
@@ -2079,6 +2090,17 @@ fn sys_smin_4s() {
             rd: FpReg::new(8),
             rn: FpReg::new(9),
             rm: FpReg::new(10),
+        },
+    );
+}
+#[test]
+fn sys_sminp_16b() {
+    verify(
+        "sminp.16b v9, v10, v11",
+        Inst::SminpV16B {
+            rd: FpReg::new(9),
+            rn: FpReg::new(10),
+            rm: FpReg::new(11),
         },
     );
 }
@@ -2116,6 +2138,17 @@ fn sys_umax_4s() {
     );
 }
 #[test]
+fn sys_umaxp_16b() {
+    verify(
+        "umaxp.16b v0, v1, v2",
+        Inst::UmaxpV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_umaxp_8h() {
     verify(
         "umaxp.8h v0, v1, v2",
@@ -2134,6 +2167,17 @@ fn sys_umaxp_4s() {
             rd: FpReg::new(0),
             rn: FpReg::new(1),
             rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_uminp_16b() {
+    verify(
+        "uminp.16b v3, v4, v5",
+        Inst::UminpV16B {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
         },
     );
 }
