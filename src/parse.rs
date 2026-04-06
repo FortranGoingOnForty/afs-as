@@ -1303,6 +1303,7 @@ impl<'a> Parser<'a> {
             | "frintp.4s" | "frintz.4s" | "frinta.4s" | "frinti.4s" => {
                 self.parse_simd_fp_unary_4s(mnemonic)
             }
+            "fabs.2d" | "fneg.2d" | "fsqrt.2d" => self.parse_simd_fp_unary_2d(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -4006,6 +4007,18 @@ impl<'a> Parser<'a> {
             "frintz.4s" => Inst::FrintzV4S { rd, rn },
             "frinta.4s" => Inst::FrintaV4S { rd, rn },
             "frinti.4s" => Inst::FrintiV4S { rd, rn },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_fp_unary_2d(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "fabs.2d" => Inst::FabsV2D { rd, rn },
+            "fneg.2d" => Inst::FnegV2D { rd, rn },
+            "fsqrt.2d" => Inst::FsqrtV2D { rd, rn },
             _ => unreachable!(),
         })
     }
@@ -7505,6 +7518,39 @@ mod tests {
         assert_eq!(
             parse_inst("fminnmp.2d d1, v2"),
             Inst::FminnmpV2DScalar {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fabs_2d() {
+        assert_eq!(
+            parse_inst("fabs.2d v0, v0"),
+            Inst::FabsV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fneg_2d() {
+        assert_eq!(
+            parse_inst("fneg.2d v3, v4"),
+            Inst::FnegV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fsqrt_2d() {
+        assert_eq!(
+            parse_inst("fsqrt.2d v1, v2"),
+            Inst::FsqrtV2D {
                 rd: FpReg::new(1),
                 rn: FpReg::new(2)
             }

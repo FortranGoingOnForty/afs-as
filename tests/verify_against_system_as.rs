@@ -2704,6 +2704,36 @@ fn sys_fsqrt_4s() {
     );
 }
 #[test]
+fn sys_fabs_2d() {
+    verify(
+        "fabs.2d v0, v0",
+        Inst::FabsV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_fneg_2d() {
+    verify(
+        "fneg.2d v3, v4",
+        Inst::FnegV2D {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_fsqrt_2d() {
+    verify(
+        "fsqrt.2d v1, v2",
+        Inst::FsqrtV2D {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_scvtf_4s() {
     verify(
         "scvtf.4s v0, v1",

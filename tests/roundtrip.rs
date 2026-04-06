@@ -1090,6 +1090,18 @@ fn rt_fsqrt_4s() {
     roundtrip(".text\nfsqrt.4s v1, v2\n");
 }
 #[test]
+fn rt_fabs_2d() {
+    roundtrip(".text\nfabs.2d v0, v0\n");
+}
+#[test]
+fn rt_fneg_2d() {
+    roundtrip(".text\nfneg.2d v3, v4\n");
+}
+#[test]
+fn rt_fsqrt_2d() {
+    roundtrip(".text\nfsqrt.2d v1, v2\n");
+}
+#[test]
 fn rt_scvtf_4s() {
     roundtrip(".text\nscvtf.4s v0, v1\n");
 }
