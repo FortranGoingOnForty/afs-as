@@ -246,6 +246,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_reduce_hb",
+        source: "vector_reduce_hb.c",
+        driver: "#include <arm_neon.h>\nextern uint16_t add_u8_reduce(uint8x16_t);\nextern int16_t add_s8_reduce(int8x16_t);\nextern uint16_t add_u16_reduce(uint16x8_t);\nextern int16_t add_s16_reduce(int16x8_t);\nextern uint8_t max_u8_reduce(uint8x16_t);\nextern int8_t max_s8_reduce(int8x16_t);\nextern uint16_t max_u16_reduce(uint16x8_t);\nextern int16_t max_s16_reduce(int16x8_t);\nextern uint8_t min_u8_reduce(uint8x16_t);\nextern int8_t min_s8_reduce(int8x16_t);\nextern uint16_t min_u16_reduce(uint16x8_t);\nextern int16_t min_s16_reduce(int16x8_t);\nint main(void) {\n    uint8x16_t u8 = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u};\n    int8x16_t s8 = {1, -2, 3, -4, 5, -6, 7, -8, 9, -10, 11, -12, 13, -14, 15, -16};\n    uint16x8_t u16 = {10u, 20u, 30u, 40u, 50u, 60u, 70u, 80u};\n    int16x8_t s16 = {10, -20, 30, -40, 50, -60, 70, -80};\n    return (add_u8_reduce(u8) != 136u) || (add_s8_reduce(s8) != -8)\n        || (add_u16_reduce(u16) != 360u) || (add_s16_reduce(s16) != -40)\n        || (max_u8_reduce(u8) != 16u) || (max_s8_reduce(s8) != 15)\n        || (max_u16_reduce(u16) != 80u) || (max_s16_reduce(s16) != 70)\n        || (min_u8_reduce(u8) != 1u) || (min_s8_reduce(s8) != -16)\n        || (min_u16_reduce(u16) != 10u) || (min_s16_reduce(s16) != -80);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_reduce_fp",
         source: "vector_reduce_fp.c",
         driver: "#include <arm_neon.h>\nextern float add4f_reduce(float32x4_t);\nextern float max4f_reduce(float32x4_t);\nextern float min4f_reduce(float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    return (add4f_reduce(a) != 11.0f) || (max4f_reduce(a) != 9.0f) || (min4f_reduce(a) != -3.0f);\n}\n",

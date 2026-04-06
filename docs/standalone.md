@@ -194,8 +194,9 @@ Major covered families include:
   - `addp.16b`, `addp.8h`, `addp.4s`, `addp.2d`, `smaxp.4s`, `sminp.4s`, `umaxp.4s`, `uminp.4s`
   - `smaxp.8h`, `sminp.8h`, `umaxp.8h`, `uminp.8h`
   - `smaxp.16b`, `sminp.16b`, `umaxp.16b`, `uminp.16b`
-  - `addv.4s`, `smaxv.4s`, `umaxv.4s`
-  - `sminv.4s`, `uminv.4s`
+  - `addv.16b`, `addv.8h`, `addv.4s`
+  - `smaxv.16b`, `smaxv.8h`, `smaxv.4s`, `umaxv.16b`, `umaxv.8h`, `umaxv.4s`
+  - `sminv.16b`, `sminv.8h`, `sminv.4s`, `uminv.16b`, `uminv.8h`, `uminv.4s`
   - `faddp.4s`, `faddp.2s`, `faddp.2d`, `fmaxp.2d`, `fminp.2d`, `fmaxnmp.2d`, `fminnmp.2d`, `fmaxv.4s`, `fminv.4s`
   - `fmaxp.4s`, `fminp.4s`
   - `fmaxnmp.4s`, `fminnmp.4s`
@@ -217,7 +218,7 @@ Major covered families include:
   - `mov.8b`, `mov.16b`, `mov.4s`, `mov.2d`
   - `dup.16b`, `dup.8h`, `dup.4s`, `dup.2d`
   - `mov sN, vM[idx]`, `mov dN, vM[idx]`
-  - `mov.s wN, vM[idx]`, `mov.d xN, vM[idx]`, `umov.h wN, vM[idx]`, `umov.b wN, vM[idx]`
+  - `mov.s wN, vM[idx]`, `mov.d xN, vM[idx]`, `umov.h wN, vM[idx]`, `umov.b wN, vM[idx]`, `smov.h wN, vM[idx]`, `smov.b wN, vM[idx]`
   - `mov.s vN[idx], vM[idx]`, `mov.d vN[idx], vM[idx]`, `mov.h vN[idx], vM[idx]`, `mov.b vN[idx], vM[idx]`
   - `mov.s vN[idx], wM`, `mov.d vN[idx], xM`, `mov.h vN[idx], wM`, `mov.b vN[idx], wM`
 - system / hint:
