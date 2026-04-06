@@ -95,7 +95,10 @@ let obj = assemble::assemble_instructions(
 ```
 
 `assemble_instructions` is the compiler-facing fast path. It assumes callers build valid
-`Inst` values; source-level validation and diagnostics live in `assemble_source`.
+`Inst` values; source-level validation and diagnostics live in `assemble_source`. Passing an
+`Inst` that fails encoder preconditions (for example, a logical-immediate `AndImm` with an
+unencodable bit pattern) will **panic** rather than return an error — the contract is that
+the compiler is responsible for emitting only valid instructions on this path.
 
 ## Tests
 
