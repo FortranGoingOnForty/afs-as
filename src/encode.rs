@@ -1171,8 +1171,12 @@ pub enum Inst {
     FminV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMAXNM.4S Vd, Vn, Vm
     FmaxnmV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FMAXNMP.2D Vd, Vn, Vm
+    FmaxnmpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMINNM.4S Vd, Vn, Vm
     FminnmV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FMINNMP.2D Vd, Vn, Vm
+    FminnmpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// SMAX.4S Vd, Vn, Vm
     SmaxV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// SMIN.4S Vd, Vn, Vm
@@ -2454,7 +2458,9 @@ impl Inst {
             Inst::FmaxpV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20F400, *rm, *rn, *rd),
             Inst::FminpV2D { rd, rn, rm } => simd_fp_arith_2d(0x6EE0F400, *rm, *rn, *rd),
             Inst::FminpV4S { rd, rn, rm } => simd_fp_arith_4s(0x6EA0F400, *rm, *rn, *rd),
+            Inst::FmaxnmpV2D { rd, rn, rm } => simd_fp_arith_2d(0x6E60C400, *rm, *rn, *rd),
             Inst::FmaxnmpV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20C400, *rm, *rn, *rd),
+            Inst::FminnmpV2D { rd, rn, rm } => simd_fp_arith_2d(0x6EE0C400, *rm, *rn, *rd),
             Inst::FminnmpV4S { rd, rn, rm } => simd_fp_arith_4s(0x6EA0C400, *rm, *rn, *rd),
             Inst::FaddpV2S { rd, rn } => simd_reduce_4s(0x7E30D800, *rn, *rd),
             Inst::FmlaV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20CC00, *rm, *rn, *rd),
@@ -5900,6 +5906,18 @@ mod tests {
         );
     }
     #[test]
+    fn fmaxnmp_2d_v0_v1_v2() {
+        assert_eq!(
+            Inst::FmaxnmpV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+            .encode(),
+            0x6E62C420
+        );
+    }
+    #[test]
     fn fminnmp_4s_v3_v4_v5() {
         assert_eq!(
             Inst::FminnmpV4S {
@@ -5909,6 +5927,18 @@ mod tests {
             }
             .encode(),
             0x6EA5C483
+        );
+    }
+    #[test]
+    fn fminnmp_2d_v3_v4_v5() {
+        assert_eq!(
+            Inst::FminnmpV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+            .encode(),
+            0x6EE5C483
         );
     }
     #[test]
