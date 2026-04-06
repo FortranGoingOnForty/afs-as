@@ -107,7 +107,10 @@ Supported metadata directives:
 
 - `.subsections_via_symbols`
 - `.build_version` for `macos`
-- `.loh` for the linker-optimization hint forms currently emitted by `clang`
+- `.loh AdrpAdd`
+- `.loh AdrpLdr`
+- `.loh AdrpLdrGot`
+- `.loh AdrpLdrGotLdr`
 
 Supported CFI subset:
 
@@ -242,6 +245,7 @@ Current examples:
 
 - unknown directives
 - unsupported `.cfi_*` directives outside the modeled subset
+- unsupported `.loh` kinds outside the modeled subset
 - unsupported section names outside the small Mach-O section set listed above
 - `.build_version` platforms other than `macos`
 - operand classes that require assembler-local labels when given externals instead

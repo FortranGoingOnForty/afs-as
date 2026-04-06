@@ -92,6 +92,15 @@ fn snapshot_unsupported_section_attr() {
 }
 
 #[test]
+fn snapshot_unsupported_loh_kind() {
+    run_failure_snapshot(
+        "unsupported-loh-kind.s",
+        ".loh UnknownKind Lloh0\n",
+        "<input>:1:18: error: unsupported .loh kind 'UnknownKind' (supported: AdrpAdd, AdrpLdr, AdrpLdrGot, AdrpLdrGotLdr)\n.loh UnknownKind Lloh0\n                 ^\n",
+    );
+}
+
+#[test]
 fn snapshot_attr_on_section_without_attr_surface() {
     run_failure_snapshot(
         "unsupported-section-attr-none.s",

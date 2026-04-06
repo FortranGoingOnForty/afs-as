@@ -739,6 +739,12 @@ impl<'a> Parser<'a> {
             }
             ".loh" => {
                 let kind = self.expect_ident()?;
+                let Some(expected) = linker_optimization_hint_label_count(&kind) else {
+                    return Err(self.err(format!(
+                        "unsupported .loh kind '{}' (supported: AdrpAdd, AdrpLdr, AdrpLdrGot, AdrpLdrGotLdr)",
+                        kind
+                    )));
+                };
                 let mut labels = Vec::new();
                 if !self.at_end_of_stmt() {
                     labels.push(self.expect_ident()?);
@@ -747,16 +753,14 @@ impl<'a> Parser<'a> {
                         labels.push(self.expect_ident()?);
                     }
                 }
-                if let Some(expected) = linker_optimization_hint_label_count(&kind) {
-                    if labels.len() != expected {
-                        return Err(self.err(format!(
-                            ".loh {} expects {} label{}, got {}",
-                            kind,
-                            expected,
-                            if expected == 1 { "" } else { "s" },
-                            labels.len()
-                        )));
-                    }
+                if labels.len() != expected {
+                    return Err(self.err(format!(
+                        ".loh {} expects {} label{}, got {}",
+                        kind,
+                        expected,
+                        if expected == 1 { "" } else { "s" },
+                        labels.len()
+                    )));
                 }
                 Directive::LinkerOptimizationHint(LinkerOptimizationHintDirective { kind, labels })
             }
@@ -10104,6 +10108,17 @@ mod tests {
         assert_eq!(err.line, 1);
         assert_eq!(err.col, 20);
         assert_eq!(err.msg, "expected ,, got Lloh1");
+    }
+
+    #[test]
+    fn parse_linker_optimization_hint_unknown_kind_errors() {
+        let err = parse(".loh UnknownKind Lloh0").unwrap_err();
+        assert_eq!(err.line, 1);
+        assert_eq!(err.col, 18);
+        assert_eq!(
+            err.msg,
+            "unsupported .loh kind 'UnknownKind' (supported: AdrpAdd, AdrpLdr, AdrpLdrGot, AdrpLdrGotLdr)"
+        );
     }
 
     // ---- Multi-line programs ----
