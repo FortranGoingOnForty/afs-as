@@ -1123,6 +1123,8 @@ pub enum Inst {
     FaddS { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FADD.4S Vd, Vn, Vm
     FaddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FADDP.2D Vd, Vn, Vm
+    FaddpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FADDP.4S Vd, Vn, Vm
     FaddpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMAXP.2D Vd, Vn, Vm
@@ -2453,6 +2455,7 @@ impl Inst {
             Inst::FdivD { rd, rn, rm } => fp_arith(0b01, 0b0001, *rm, *rn, *rd),
             Inst::FaddS { rd, rn, rm } => fp_arith(0b00, 0b0010, *rm, *rn, *rd),
             Inst::FaddV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20D400, *rm, *rn, *rd),
+            Inst::FaddpV2D { rd, rn, rm } => simd_fp_arith_2d(0x6E60D400, *rm, *rn, *rd),
             Inst::FaddpV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20D400, *rm, *rn, *rd),
             Inst::FmaxpV2D { rd, rn, rm } => simd_fp_arith_2d(0x6E60F400, *rm, *rn, *rd),
             Inst::FmaxpV4S { rd, rn, rm } => simd_fp_arith_4s(0x6E20F400, *rm, *rn, *rd),
@@ -5843,6 +5846,18 @@ mod tests {
             }
             .encode(),
             0x6E22D420
+        );
+    }
+    #[test]
+    fn faddp_2d_v0_v1_v2() {
+        assert_eq!(
+            Inst::FaddpV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+            .encode(),
+            0x6E62D420
         );
     }
     #[test]

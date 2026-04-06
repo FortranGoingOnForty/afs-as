@@ -2258,6 +2258,17 @@ fn sys_addv_4s() {
     );
 }
 #[test]
+fn sys_faddp_2d() {
+    verify(
+        "faddp.2d v0, v1, v2",
+        Inst::FaddpV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_faddp_4s() {
     verify(
         "faddp.4s v0, v1, v2",

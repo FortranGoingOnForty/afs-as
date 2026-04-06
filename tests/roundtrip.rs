@@ -918,6 +918,10 @@ fn rt_addv_4s() {
     roundtrip(".text\naddv.4s s0, v0\n");
 }
 #[test]
+fn rt_faddp_2d() {
+    roundtrip(".text\nfaddp.2d v0, v1, v2\n");
+}
+#[test]
 fn rt_faddp_4s() {
     roundtrip(".text\nfaddp.4s v0, v1, v2\n");
 }
