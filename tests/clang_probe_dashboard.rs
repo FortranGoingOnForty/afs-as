@@ -384,6 +384,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fp_round_2d",
+        source: "vector_fp_round_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t round_nearest2(float64x2_t);\nextern float64x2_t round_down2(float64x2_t);\nextern float64x2_t round_up2(float64x2_t);\nextern float64x2_t round_zero2(float64x2_t);\nextern float64x2_t round_away2(float64x2_t);\nextern float64x2_t round_current2(float64x2_t);\nint main(void) {\n    float64x2_t a = {1.2, -1.7};\n    float64x2_t rn = round_nearest2(a);\n    float64x2_t rd = round_down2(a);\n    float64x2_t ru = round_up2(a);\n    float64x2_t rz = round_zero2(a);\n    float64x2_t ra = round_away2(a);\n    float64x2_t rc = round_current2((float64x2_t){2.5, -3.5});\n    return (rn[0] != 1.0) || (rn[1] != -2.0)\n        || (rd[0] != 1.0) || (rd[1] != -2.0)\n        || (ru[0] != 2.0) || (ru[1] != -1.0)\n        || (rz[0] != 1.0) || (rz[1] != -1.0)\n        || (ra[0] != 1.0) || (ra[1] != -2.0)\n        || (rc[0] != 2.0) || (rc[1] != -4.0);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp",
         source: "vector_fcmp.c",
         driver: "#include <arm_neon.h>\nextern uint32x4_t eq_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t ge_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t gt_mask_f32(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {1.0f, 7.0f, -5.0f, 8.0f};\n    uint32x4_t eq = eq_mask_f32(a, b);\n    uint32x4_t ge = ge_mask_f32(a, b);\n    uint32x4_t gt = gt_mask_f32(a, b);\n    return (eq[0] != 0xFFFFFFFFu) || (eq[1] != 0u) || (eq[2] != 0u) || (eq[3] != 0u)\n        || (ge[0] != 0xFFFFFFFFu) || (ge[1] != 0xFFFFFFFFu) || (ge[2] != 0xFFFFFFFFu) || (ge[3] != 0u)\n        || (gt[0] != 0u) || (gt[1] != 0xFFFFFFFFu) || (gt[2] != 0xFFFFFFFFu) || (gt[3] != 0u);\n}\n",

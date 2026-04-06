@@ -205,8 +205,8 @@ Major covered families include:
   - `fabs.4s`, `fabs.2d`, `fsqrt.4s`, `fsqrt.2d`
   - `scvtf.4s`, `scvtf.2d`, `ucvtf.4s`, `ucvtf.2d`, `fcvtzs.4s`, `fcvtzs.2d`, `fcvtzu.4s`, `fcvtzu.2d`
   - `frecpe.4s`, `frecps.4s`, `frsqrte.4s`, `frsqrts.4s`
-  - `frintn.4s`, `frintm.4s`, `frintp.4s`, `frintz.4s`
-  - `frinta.4s`, `frinti.4s`
+  - `frintn.4s`, `frintn.2d`, `frintm.4s`, `frintm.2d`, `frintp.4s`, `frintp.2d`, `frintz.4s`, `frintz.2d`
+  - `frinta.4s`, `frinta.2d`, `frinti.4s`, `frinti.2d`
   - `and.16b`, `bic.16b`, `orr.16b`, `eor.16b`
   - `bif.16b`, `bit.16b`, `bsl.16b`
   - `cmeq.4s`, `cmhs.4s`, `cmhi.4s`, `cmge.4s`, `cmgt.4s`
