@@ -822,6 +822,14 @@ fn rt_addp_4s() {
     roundtrip(".text\naddp.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_smaxp_4s() {
+    roundtrip(".text\nsmaxp.4s v6, v7, v8\n");
+}
+#[test]
+fn rt_sminp_4s() {
+    roundtrip(".text\nsminp.4s v9, v10, v11\n");
+}
+#[test]
 fn rt_fmax_4s() {
     roundtrip(".text\nfmax.4s v0, v0, v1\n");
 }
@@ -850,8 +858,16 @@ fn rt_umax_4s() {
     roundtrip(".text\numax.4s v0, v0, v1\n");
 }
 #[test]
+fn rt_umaxp_4s() {
+    roundtrip(".text\numaxp.4s v0, v1, v2\n");
+}
+#[test]
 fn rt_umin_4s() {
     roundtrip(".text\numin.4s v2, v3, v4\n");
+}
+#[test]
+fn rt_uminp_4s() {
+    roundtrip(".text\numinp.4s v3, v4, v5\n");
 }
 #[test]
 fn rt_addv_4s() {
