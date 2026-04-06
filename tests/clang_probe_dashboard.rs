@@ -288,6 +288,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_pairwise_add_fp_2d",
+        source: "vector_pairwise_add_fp_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t pairwise_add_f64(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {1.5, 9.0};\n    float64x2_t b = {3.25, -4.5};\n    float64x2_t x = pairwise_add_f64(a, b);\n    return (x[0] != 10.5) || (x[1] != -1.25);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_pairwise_extrema",
         source: "vector_pairwise_extrema.c",
         driver: "#include <arm_neon.h>\nextern uint32x4_t pairwise_max_u32(uint32x4_t, uint32x4_t);\nextern uint32x4_t pairwise_min_u32(uint32x4_t, uint32x4_t);\nextern int32x4_t pairwise_max_s32(int32x4_t, int32x4_t);\nextern int32x4_t pairwise_min_s32(int32x4_t, int32x4_t);\nint main(void) {\n    uint32x4_t au = {1u, 9u, 3u, 4u};\n    uint32x4_t bu = {2u, 7u, 5u, 8u};\n    int32x4_t as = {1, 9, -3, 4};\n    int32x4_t bs = {2, 7, -5, 8};\n    uint32x4_t xu = pairwise_max_u32(au, bu);\n    uint32x4_t nu = pairwise_min_u32(au, bu);\n    int32x4_t xs = pairwise_max_s32(as, bs);\n    int32x4_t ns = pairwise_min_s32(as, bs);\n    return (xu[0] != 9u) || (xu[1] != 4u) || (xu[2] != 7u) || (xu[3] != 8u)\n        || (nu[0] != 1u) || (nu[1] != 3u) || (nu[2] != 2u) || (nu[3] != 5u)\n        || (xs[0] != 9) || (xs[1] != 4) || (xs[2] != 7) || (xs[3] != 8)\n        || (ns[0] != 1) || (ns[1] != -3) || (ns[2] != 2) || (ns[3] != -5);\n}\n",
