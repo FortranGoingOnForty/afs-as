@@ -101,11 +101,11 @@ fn snapshot_unsupported_loh_kind() {
 }
 
 #[test]
-fn snapshot_conflicting_build_version() {
+fn snapshot_unsupported_build_version_platform() {
     run_failure_snapshot(
-        "conflicting-build-version.s",
-        ".build_version macos, 11, 0\n.build_version macos, 14, 1\n",
-        "<input>:2:1: error: conflicting .build_version directives: already saw BuildVersionDirective { platform: \"macos\", minos: VersionTriple { major: 11, minor: 0, patch: 0 }, sdk: None }, then BuildVersionDirective { platform: \"macos\", minos: VersionTriple { major: 14, minor: 1, patch: 0 }, sdk: None }\n.build_version macos, 14, 1\n^\n",
+        "unsupported-build-version-platform.s",
+        ".build_version ios, 11, 0\n",
+        "<input>:1:1: error: unsupported .build_version platform 'ios' (supported: macos)\n.build_version ios, 11, 0\n^\n",
     );
 }
 
@@ -119,11 +119,29 @@ fn snapshot_zerofill_requires_zero_fill_section() {
 }
 
 #[test]
-fn snapshot_attr_on_section_without_attr_surface() {
+fn snapshot_zerofill_alignment_too_large() {
     run_failure_snapshot(
-        "unsupported-section-attr-none.s",
-        ".section __TEXT,__const,regular\n.quad 1\n",
-        "<input>:1:32: error: section __TEXT,__const does not support explicit attributes\n.section __TEXT,__const,regular\n                               ^\n",
+        "zerofill-alignment-too-large.s",
+        ".zerofill __DATA,__bss,_bad,8,31\n",
+        "<input>:1:1: error: zerofill alignment power 31 too large (max 30)\n.zerofill __DATA,__bss,_bad,8,31\n^\n",
+    );
+}
+
+#[test]
+fn snapshot_tbss_alignment_too_large() {
+    run_failure_snapshot(
+        "tbss-alignment-too-large.s",
+        ".tbss _tls_counter$tlv$init, 8, 31\n",
+        "<input>:1:1: error: zerofill alignment power 31 too large (max 30)\n.tbss _tls_counter$tlv$init, 8, 31\n^\n",
+    );
+}
+
+#[test]
+fn snapshot_text_section_requires_regular_with_pure_instructions() {
+    run_failure_snapshot(
+        "text-section-missing-regular.s",
+        ".section __TEXT,__text,pure_instructions\nret\n",
+        "<input>:1:41: error: section __TEXT,__text requires 'regular' when using 'pure_instructions'\n.section __TEXT,__text,pure_instructions\n                                        ^\n",
     );
 }
 
