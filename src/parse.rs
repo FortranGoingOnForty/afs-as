@@ -1290,6 +1290,7 @@ impl<'a> Parser<'a> {
             | "fcmge.4s" | "fcmgt.4s" => {
                 self.parse_simd_compare_4s(mnemonic)
             }
+            "fcmeq.2d" | "fcmge.2d" | "fcmgt.2d" => self.parse_simd_compare_2d(mnemonic),
             "fadd.4s" | "faddp.4s" | "fmaxp.4s" | "fminp.4s" | "fmaxnmp.4s" | "fminnmp.4s"
             | "fmla.4s" | "fmls.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" | "fmax.4s"
             | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
@@ -4220,6 +4221,20 @@ impl<'a> Parser<'a> {
             "fcmge.4s" => Inst::FcmgeV4S { rd, rn, rm },
             "cmgt.4s" => Inst::CmgtV4S { rd, rn, rm },
             "fcmgt.4s" => Inst::FcmgtV4S { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_compare_2d(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "fcmeq.2d" => Inst::FcmeqV2D { rd, rn, rm },
+            "fcmge.2d" => Inst::FcmgeV2D { rd, rn, rm },
+            "fcmgt.2d" => Inst::FcmgtV2D { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -8417,6 +8432,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_fcmeq_2d() {
+        assert_eq!(
+            parse_inst("fcmeq.2d v0, v1, v2"),
+            Inst::FcmeqV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
     fn parse_cmhs_4s() {
         assert_eq!(
             parse_inst("cmhs.4s v0, v0, v1"),
@@ -8465,6 +8492,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_fcmge_2d() {
+        assert_eq!(
+            parse_inst("fcmge.2d v3, v4, v5"),
+            Inst::FcmgeV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
     fn parse_cmgt_4s() {
         assert_eq!(
             parse_inst("cmgt.4s v2, v3, v4"),
@@ -8481,6 +8520,18 @@ mod tests {
         assert_eq!(
             parse_inst("fcmgt.4s v6, v7, v8"),
             Inst::FcmgtV4S {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fcmgt_2d() {
+        assert_eq!(
+            parse_inst("fcmgt.2d v6, v7, v8"),
+            Inst::FcmgtV2D {
                 rd: FpReg::new(6),
                 rn: FpReg::new(7),
                 rm: FpReg::new(8)

@@ -3095,6 +3095,17 @@ fn sys_fcmeq_4s() {
     );
 }
 #[test]
+fn sys_fcmeq_2d() {
+    verify(
+        "fcmeq.2d v0, v1, v2",
+        Inst::FcmeqV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_cmhs_4s() {
     verify(
         "cmhs.4s v0, v0, v1",
@@ -3139,6 +3150,17 @@ fn sys_fcmge_4s() {
     );
 }
 #[test]
+fn sys_fcmge_2d() {
+    verify(
+        "fcmge.2d v3, v4, v5",
+        Inst::FcmgeV2D {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
 fn sys_cmgt_4s() {
     verify(
         "cmgt.4s v2, v3, v4",
@@ -3154,6 +3176,17 @@ fn sys_fcmgt_4s() {
     verify(
         "fcmgt.4s v6, v7, v8",
         Inst::FcmgtV4S {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
+fn sys_fcmgt_2d() {
+    verify(
+        "fcmgt.2d v6, v7, v8",
+        Inst::FcmgtV2D {
             rd: FpReg::new(6),
             rn: FpReg::new(7),
             rm: FpReg::new(8),
