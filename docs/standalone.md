@@ -196,7 +196,7 @@ Major covered families include:
   - `smaxp.16b`, `sminp.16b`, `umaxp.16b`, `uminp.16b`
   - `addv.4s`, `smaxv.4s`, `umaxv.4s`
   - `sminv.4s`, `uminv.4s`
-  - `faddp.4s`, `faddp.2s`, `fmaxp.2d`, `fminp.2d`, `fmaxv.4s`, `fminv.4s`
+  - `faddp.4s`, `faddp.2s`, `fmaxp.2d`, `fminp.2d`, `fmaxnmp.2d`, `fminnmp.2d`, `fmaxv.4s`, `fminv.4s`
   - `fmaxp.4s`, `fminp.4s`
   - `fmaxnmp.4s`, `fminnmp.4s`
   - `fmaxnmv.4s`, `fminnmv.4s`
