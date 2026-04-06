@@ -37,6 +37,19 @@ pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
 }
 
 /// Assemble source text into an ObjectFile (library API).
+///
+/// # Examples
+///
+/// ```
+/// let obj = afs_as::assemble::assemble_source(
+///     ".global _main\n.text\n_main:\n    ret\n",
+/// )
+/// .unwrap();
+/// // `ret` encodes to 0xD65F03C0 (little-endian).
+/// assert_eq!(obj.text_section().data, [0xC0, 0x03, 0x5F, 0xD6]);
+/// assert_eq!(obj.text_section().size, 4);
+/// assert!(obj.symbols.iter().any(|s| s.name == "_main" && s.global));
+/// ```
 pub fn assemble_source(src: &str) -> Result<ObjectFile, AsmError> {
     let stmts = parse::parse_with_locations(src).map_err(AsmError::from)?;
     assemble_located_stmts(&stmts)
@@ -68,6 +81,25 @@ fn assemble_located_stmts(stmts: &[LocatedStmt]) -> Result<ObjectFile, AsmError>
 
 /// Assemble a list of pre-encoded instructions into an ObjectFile (compiler API).
 /// No parsing needed — the compiler builds Inst values directly.
+///
+/// This is a trusted fast path: it assumes every `Inst` is valid and will
+/// **panic** on encoder precondition failures. Source-level validation lives
+/// in [`assemble_source`].
+///
+/// # Examples
+///
+/// ```
+/// use afs_as::assemble::assemble_instructions;
+/// use afs_as::encode::Inst;
+/// use afs_as::reg::X30;
+///
+/// let obj = assemble_instructions(&[Inst::Nop, Inst::Ret { rn: X30 }], &["_main"]);
+/// assert_eq!(
+///     obj.text_section().data,
+///     [0x1F, 0x20, 0x03, 0xD5, 0xC0, 0x03, 0x5F, 0xD6],
+/// );
+/// assert!(obj.symbols.iter().any(|s| s.name == "_main" && s.global));
+/// ```
 pub fn assemble_instructions(insts: &[Inst], globals: &[&str]) -> ObjectFile {
     let mut obj = ObjectFile::new();
     let text = obj.text_section_mut();
