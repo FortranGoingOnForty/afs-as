@@ -420,6 +420,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fcmp_zero_2d",
+        source: "vector_fcmp_zero_2d.c",
+        driver: "#include <arm_neon.h>\nextern uint64x2_t ge_zero_f64(float64x2_t);\nextern uint64x2_t gt_zero_f64(float64x2_t);\nextern uint64x2_t le_zero_f64(float64x2_t);\nextern uint64x2_t lt_zero_f64(float64x2_t);\nint main(void) {\n    float64x2_t a = {-1.0, 0.0};\n    uint64x2_t ge = ge_zero_f64(a);\n    uint64x2_t gt = gt_zero_f64(a);\n    uint64x2_t le = le_zero_f64(a);\n    uint64x2_t lt = lt_zero_f64(a);\n    return (ge[0] != 0ull) || (ge[1] != 0xFFFFFFFFFFFFFFFFull)\n        || (gt[0] != 0ull) || (gt[1] != 0ull)\n        || (le[0] != 0xFFFFFFFFFFFFFFFFull) || (le[1] != 0xFFFFFFFFFFFFFFFFull)\n        || (lt[0] != 0xFFFFFFFFFFFFFFFFull) || (lt[1] != 0ull);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_minmax_2d",
         source: "vector_minmax_2d.c",
         driver: "#include <arm_neon.h>\nextern float64x2_t max2d(float64x2_t, float64x2_t);\nextern float64x2_t min2d(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {1.0, 9.0};\n    float64x2_t b = {2.0, 7.0};\n    float64x2_t x = max2d(a, b);\n    float64x2_t n = min2d(a, b);\n    return (x[0] != 2.0) || (x[1] != 9.0)\n        || (n[0] != 1.0) || (n[1] != 7.0);\n}\n",
