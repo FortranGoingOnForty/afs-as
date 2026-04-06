@@ -1289,12 +1289,20 @@ pub enum Inst {
     FcvtzuV2D { rd: FpReg, rn: FpReg },
     /// FRECPE.4S Vd, Vn
     FrecpeV4S { rd: FpReg, rn: FpReg },
+    /// FRECPE.2D Vd, Vn
+    FrecpeV2D { rd: FpReg, rn: FpReg },
     /// FRECPS.4S Vd, Vn, Vm
     FrecpsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FRECPS.2D Vd, Vn, Vm
+    FrecpsV2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FRSQRTE.4S Vd, Vn
     FrsqrteV4S { rd: FpReg, rn: FpReg },
+    /// FRSQRTE.2D Vd, Vn
+    FrsqrteV2D { rd: FpReg, rn: FpReg },
     /// FRSQRTS.4S Vd, Vn, Vm
     FrsqrtsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FRSQRTS.2D Vd, Vn, Vm
+    FrsqrtsV2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FRINTN.4S Vd, Vn
     FrintnV4S { rd: FpReg, rn: FpReg },
     /// FRINTN.2D Vd, Vn
@@ -2598,9 +2606,13 @@ impl Inst {
             Inst::FcvtzuV4S { rd, rn } => simd_unary(0x6EA1B800, *rn, *rd),
             Inst::FcvtzuV2D { rd, rn } => simd_unary(0x6EE1B800, *rn, *rd),
             Inst::FrecpeV4S { rd, rn } => simd_unary(0x4EA1D800, *rn, *rd),
+            Inst::FrecpeV2D { rd, rn } => simd_unary(0x4EE1D800, *rn, *rd),
             Inst::FrecpsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20FC00, *rm, *rn, *rd),
+            Inst::FrecpsV2D { rd, rn, rm } => simd_fp_arith_2d(0x4E60FC00, *rm, *rn, *rd),
             Inst::FrsqrteV4S { rd, rn } => simd_unary(0x6EA1D800, *rn, *rd),
+            Inst::FrsqrteV2D { rd, rn } => simd_unary(0x6EE1D800, *rn, *rd),
             Inst::FrsqrtsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0FC00, *rm, *rn, *rd),
+            Inst::FrsqrtsV2D { rd, rn, rm } => simd_fp_arith_2d(0x4EE0FC00, *rm, *rn, *rd),
             Inst::FrintnV4S { rd, rn } => simd_unary(0x4E218800, *rn, *rd),
             Inst::FrintnV2D { rd, rn } => simd_unary(0x4E618800, *rn, *rd),
             Inst::FrintmV4S { rd, rn } => simd_unary(0x4E219800, *rn, *rd),
@@ -6556,6 +6568,17 @@ mod tests {
         );
     }
     #[test]
+    fn frecpe_2d_v0_v0() {
+        assert_eq!(
+            Inst::FrecpeV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4EE1D800
+        );
+    }
+    #[test]
     fn frecps_4s_v2_v3_v4() {
         assert_eq!(
             Inst::FrecpsV4S {
@@ -6565,6 +6588,18 @@ mod tests {
             }
             .encode(),
             0x4E24FC62
+        );
+    }
+    #[test]
+    fn frecps_2d_v1_v2_v3() {
+        assert_eq!(
+            Inst::FrecpsV2D {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2),
+                rm: FpReg::new(3)
+            }
+            .encode(),
+            0x4E63FC41
         );
     }
     #[test]
@@ -6579,6 +6614,17 @@ mod tests {
         );
     }
     #[test]
+    fn frsqrte_2d_v4_v5() {
+        assert_eq!(
+            Inst::FrsqrteV2D {
+                rd: FpReg::new(4),
+                rn: FpReg::new(5)
+            }
+            .encode(),
+            0x6EE1D8A4
+        );
+    }
+    #[test]
     fn frsqrts_4s_v7_v8_v9() {
         assert_eq!(
             Inst::FrsqrtsV4S {
@@ -6588,6 +6634,18 @@ mod tests {
             }
             .encode(),
             0x4EA9FD07
+        );
+    }
+    #[test]
+    fn frsqrts_2d_v6_v7_v8() {
+        assert_eq!(
+            Inst::FrsqrtsV2D {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+            .encode(),
+            0x4EE8FCE6
         );
     }
     #[test]

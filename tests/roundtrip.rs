@@ -1118,6 +1118,22 @@ fn rt_fcvtzu_2d() {
     roundtrip(".text\nfcvtzu.2d v5, v6\n");
 }
 #[test]
+fn rt_frecpe_2d() {
+    roundtrip(".text\nfrecpe.2d v0, v0\n");
+}
+#[test]
+fn rt_frecps_2d() {
+    roundtrip(".text\nfrecps.2d v1, v2, v3\n");
+}
+#[test]
+fn rt_frsqrte_2d() {
+    roundtrip(".text\nfrsqrte.2d v4, v5\n");
+}
+#[test]
+fn rt_frsqrts_2d() {
+    roundtrip(".text\nfrsqrts.2d v6, v7, v8\n");
+}
+#[test]
 fn rt_frintn_2d() {
     roundtrip(".text\nfrintn.2d v0, v0\n");
 }

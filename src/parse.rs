@@ -1295,6 +1295,7 @@ impl<'a> Parser<'a> {
             | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
+            "frecps.2d" | "frsqrts.2d" => self.parse_simd_fp_arith_2d(mnemonic),
             "faddp.2d" | "fmaxp.2d" | "fminp.2d" | "fmaxnmp.2d" | "fminnmp.2d" => {
                 self.parse_fpairwise_or_reduce_2d(mnemonic)
             }
@@ -1304,7 +1305,7 @@ impl<'a> Parser<'a> {
                 self.parse_simd_fp_unary_4s(mnemonic)
             }
             "fabs.2d" | "fneg.2d" | "fsqrt.2d" | "scvtf.2d" | "ucvtf.2d" | "fcvtzs.2d"
-            | "fcvtzu.2d" | "frintn.2d" | "frintm.2d" | "frintp.2d" | "frintz.2d"
+            | "fcvtzu.2d" | "frecpe.2d" | "frsqrte.2d" | "frintn.2d" | "frintm.2d" | "frintp.2d" | "frintz.2d"
             | "frinta.2d" | "frinti.2d" => self.parse_simd_fp_unary_2d(mnemonic),
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
@@ -3985,6 +3986,8 @@ impl<'a> Parser<'a> {
             "fminp.2d" => Inst::FminpV2D { rd, rn, rm },
             "fmaxnmp.2d" => Inst::FmaxnmpV2D { rd, rn, rm },
             "fminnmp.2d" => Inst::FminnmpV2D { rd, rn, rm },
+            "frecps.2d" => Inst::FrecpsV2D { rd, rn, rm },
+            "frsqrts.2d" => Inst::FrsqrtsV2D { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -4025,6 +4028,8 @@ impl<'a> Parser<'a> {
             "ucvtf.2d" => Inst::UcvtfV2D { rd, rn },
             "fcvtzs.2d" => Inst::FcvtzsV2D { rd, rn },
             "fcvtzu.2d" => Inst::FcvtzuV2D { rd, rn },
+            "frecpe.2d" => Inst::FrecpeV2D { rd, rn },
+            "frsqrte.2d" => Inst::FrsqrteV2D { rd, rn },
             "frintn.2d" => Inst::FrintnV2D { rd, rn },
             "frintm.2d" => Inst::FrintmV2D { rd, rn },
             "frintp.2d" => Inst::FrintpV2D { rd, rn },
@@ -7609,6 +7614,52 @@ mod tests {
             Inst::FcvtzuV2D {
                 rd: FpReg::new(5),
                 rn: FpReg::new(6)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frecpe_2d() {
+        assert_eq!(
+            parse_inst("frecpe.2d v0, v0"),
+            Inst::FrecpeV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frecps_2d() {
+        assert_eq!(
+            parse_inst("frecps.2d v1, v2, v3"),
+            Inst::FrecpsV2D {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2),
+                rm: FpReg::new(3)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frsqrte_2d() {
+        assert_eq!(
+            parse_inst("frsqrte.2d v4, v5"),
+            Inst::FrsqrteV2D {
+                rd: FpReg::new(4),
+                rn: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_frsqrts_2d() {
+        assert_eq!(
+            parse_inst("frsqrts.2d v6, v7, v8"),
+            Inst::FrsqrtsV2D {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
             }
         );
     }

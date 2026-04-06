@@ -2774,6 +2774,48 @@ fn sys_fcvtzu_2d() {
     );
 }
 #[test]
+fn sys_frecpe_2d() {
+    verify(
+        "frecpe.2d v0, v0",
+        Inst::FrecpeV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_frecps_2d() {
+    verify(
+        "frecps.2d v1, v2, v3",
+        Inst::FrecpsV2D {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+            rm: FpReg::new(3),
+        },
+    );
+}
+#[test]
+fn sys_frsqrte_2d() {
+    verify(
+        "frsqrte.2d v4, v5",
+        Inst::FrsqrteV2D {
+            rd: FpReg::new(4),
+            rn: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_frsqrts_2d() {
+    verify(
+        "frsqrts.2d v6, v7, v8",
+        Inst::FrsqrtsV2D {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
 fn sys_frintn_2d() {
     verify(
         "frintn.2d v0, v0",
