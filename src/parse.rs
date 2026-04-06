@@ -1230,6 +1230,9 @@ impl<'a> Parser<'a> {
             "zip1.4s" | "zip2.4s" | "uzp1.4s" | "uzp2.4s" | "trn1.4s" | "trn2.4s" => {
                 self.parse_simd_shuffle_4s(mnemonic)
             }
+            "zip1.2d" | "zip2.2d" | "uzp1.2d" | "uzp2.2d" | "trn1.2d" | "trn2.2d" => {
+                self.parse_simd_shuffle_2d(mnemonic)
+            }
             "movz" => self.parse_mov_wide("movz"),
             "movk" => self.parse_mov_wide("movk"),
             "movn" => self.parse_mov_wide("movn"),
@@ -4363,6 +4366,23 @@ impl<'a> Parser<'a> {
             "uzp2.4s" => Inst::Uzp2V4S { rd, rn, rm },
             "trn1.4s" => Inst::Trn1V4S { rd, rn, rm },
             "trn2.4s" => Inst::Trn2V4S { rd, rn, rm },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_shuffle_2d(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "zip1.2d" => Inst::Zip1V2D { rd, rn, rm },
+            "zip2.2d" => Inst::Zip2V2D { rd, rn, rm },
+            "uzp1.2d" => Inst::Uzp1V2D { rd, rn, rm },
+            "uzp2.2d" => Inst::Uzp2V2D { rd, rn, rm },
+            "trn1.2d" => Inst::Trn1V2D { rd, rn, rm },
+            "trn2.2d" => Inst::Trn2V2D { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -8885,6 +8905,78 @@ mod tests {
                 rd: FpReg::new(3),
                 rn: FpReg::new(4),
                 rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_zip1_2d() {
+        assert_eq!(
+            parse_inst("zip1.2d v0, v1, v2"),
+            Inst::Zip1V2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_zip2_2d() {
+        assert_eq!(
+            parse_inst("zip2.2d v3, v4, v5"),
+            Inst::Zip2V2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_uzp1_2d() {
+        assert_eq!(
+            parse_inst("uzp1.2d v6, v7, v8"),
+            Inst::Uzp1V2D {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_uzp2_2d() {
+        assert_eq!(
+            parse_inst("uzp2.2d v9, v10, v11"),
+            Inst::Uzp2V2D {
+                rd: FpReg::new(9),
+                rn: FpReg::new(10),
+                rm: FpReg::new(11)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_trn1_2d() {
+        assert_eq!(
+            parse_inst("trn1.2d v12, v13, v14"),
+            Inst::Trn1V2D {
+                rd: FpReg::new(12),
+                rn: FpReg::new(13),
+                rm: FpReg::new(14)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_trn2_2d() {
+        assert_eq!(
+            parse_inst("trn2.2d v15, v16, v17"),
+            Inst::Trn2V2D {
+                rd: FpReg::new(15),
+                rn: FpReg::new(16),
+                rm: FpReg::new(17)
             }
         );
     }

@@ -1358,24 +1358,48 @@ fn rt_zip1_4s() {
     roundtrip(".text\nzip1.4s v0, v0, v1\n");
 }
 #[test]
+fn rt_zip1_2d() {
+    roundtrip(".text\nzip1.2d v0, v1, v2\n");
+}
+#[test]
 fn rt_zip2_4s() {
     roundtrip(".text\nzip2.4s v2, v3, v4\n");
+}
+#[test]
+fn rt_zip2_2d() {
+    roundtrip(".text\nzip2.2d v3, v4, v5\n");
 }
 #[test]
 fn rt_uzp1_4s() {
     roundtrip(".text\nuzp1.4s v5, v6, v7\n");
 }
 #[test]
+fn rt_uzp1_2d() {
+    roundtrip(".text\nuzp1.2d v6, v7, v8\n");
+}
+#[test]
 fn rt_uzp2_4s() {
     roundtrip(".text\nuzp2.4s v8, v9, v10\n");
+}
+#[test]
+fn rt_uzp2_2d() {
+    roundtrip(".text\nuzp2.2d v9, v10, v11\n");
 }
 #[test]
 fn rt_trn1_4s() {
     roundtrip(".text\ntrn1.4s v11, v12, v13\n");
 }
 #[test]
+fn rt_trn1_2d() {
+    roundtrip(".text\ntrn1.2d v12, v13, v14\n");
+}
+#[test]
 fn rt_trn2_4s() {
     roundtrip(".text\ntrn2.4s v3, v4, v5\n");
+}
+#[test]
+fn rt_trn2_2d() {
+    roundtrip(".text\ntrn2.2d v15, v16, v17\n");
 }
 #[test]
 fn rt_tbl_16b_single() {

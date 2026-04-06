@@ -1426,16 +1426,28 @@ pub enum Inst {
     Rev64V4S { rd: FpReg, rn: FpReg },
     /// ZIP1.4S Vd, Vn, Vm
     Zip1V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// ZIP1.2D Vd, Vn, Vm
+    Zip1V2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// ZIP2.4S Vd, Vn, Vm
     Zip2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// ZIP2.2D Vd, Vn, Vm
+    Zip2V2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// UZP1.4S Vd, Vn, Vm
     Uzp1V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// UZP1.2D Vd, Vn, Vm
+    Uzp1V2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// UZP2.4S Vd, Vn, Vm
     Uzp2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// UZP2.2D Vd, Vn, Vm
+    Uzp2V2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// TRN1.4S Vd, Vn, Vm
     Trn1V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// TRN1.2D Vd, Vn, Vm
+    Trn1V2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// TRN2.4S Vd, Vn, Vm
     Trn2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// TRN2.2D Vd, Vn, Vm
+    Trn2V2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// TBL.16B Vd, { Vn... }, Vm
     TblV16B {
         rd: FpReg,
@@ -2708,11 +2720,17 @@ impl Inst {
             Inst::ExtV16B { rd, rn, rm, index } => simd_ext_16b(*rm, *rn, *rd, *index),
             Inst::Rev64V4S { rd, rn } => simd_unary(0x4EA00800, *rn, *rd),
             Inst::Zip1V4S { rd, rn, rm } => simd_binary(0x4E803800, *rm, *rn, *rd),
+            Inst::Zip1V2D { rd, rn, rm } => simd_binary(0x4EC03800, *rm, *rn, *rd),
             Inst::Zip2V4S { rd, rn, rm } => simd_binary(0x4E807800, *rm, *rn, *rd),
+            Inst::Zip2V2D { rd, rn, rm } => simd_binary(0x4EC07800, *rm, *rn, *rd),
             Inst::Uzp1V4S { rd, rn, rm } => simd_binary(0x4E801800, *rm, *rn, *rd),
+            Inst::Uzp1V2D { rd, rn, rm } => simd_binary(0x4EC01800, *rm, *rn, *rd),
             Inst::Uzp2V4S { rd, rn, rm } => simd_binary(0x4E805800, *rm, *rn, *rd),
+            Inst::Uzp2V2D { rd, rn, rm } => simd_binary(0x4EC05800, *rm, *rn, *rd),
             Inst::Trn1V4S { rd, rn, rm } => simd_binary(0x4E802800, *rm, *rn, *rd),
+            Inst::Trn1V2D { rd, rn, rm } => simd_binary(0x4EC02800, *rm, *rn, *rd),
             Inst::Trn2V4S { rd, rn, rm } => simd_binary(0x4E806800, *rm, *rn, *rd),
+            Inst::Trn2V2D { rd, rn, rm } => simd_binary(0x4EC06800, *rm, *rn, *rd),
             Inst::TblV16B {
                 rd,
                 table,
@@ -7307,6 +7325,18 @@ mod tests {
         );
     }
     #[test]
+    fn zip1_2d_v0_v1_v2() {
+        assert_eq!(
+            Inst::Zip1V2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+            .encode(),
+            0x4EC23820
+        );
+    }
+    #[test]
     fn zip2_4s_v2_v3_v4() {
         assert_eq!(
             Inst::Zip2V4S {
@@ -7316,6 +7346,18 @@ mod tests {
             }
             .encode(),
             0x4E847862
+        );
+    }
+    #[test]
+    fn zip2_2d_v3_v4_v5() {
+        assert_eq!(
+            Inst::Zip2V2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(4),
+                rm: FpReg::new(5)
+            }
+            .encode(),
+            0x4EC57883
         );
     }
     #[test]
@@ -7331,6 +7373,18 @@ mod tests {
         );
     }
     #[test]
+    fn uzp1_2d_v6_v7_v8() {
+        assert_eq!(
+            Inst::Uzp1V2D {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
+            }
+            .encode(),
+            0x4EC818E6
+        );
+    }
+    #[test]
     fn uzp2_4s_v8_v9_v10() {
         assert_eq!(
             Inst::Uzp2V4S {
@@ -7340,6 +7394,18 @@ mod tests {
             }
             .encode(),
             0x4E8A5928
+        );
+    }
+    #[test]
+    fn uzp2_2d_v9_v10_v11() {
+        assert_eq!(
+            Inst::Uzp2V2D {
+                rd: FpReg::new(9),
+                rn: FpReg::new(10),
+                rm: FpReg::new(11)
+            }
+            .encode(),
+            0x4ECB5949
         );
     }
     #[test]
@@ -7355,6 +7421,18 @@ mod tests {
         );
     }
     #[test]
+    fn trn1_2d_v12_v13_v14() {
+        assert_eq!(
+            Inst::Trn1V2D {
+                rd: FpReg::new(12),
+                rn: FpReg::new(13),
+                rm: FpReg::new(14)
+            }
+            .encode(),
+            0x4ECE29AC
+        );
+    }
+    #[test]
     fn trn2_4s_v3_v4_v5() {
         assert_eq!(
             Inst::Trn2V4S {
@@ -7364,6 +7442,18 @@ mod tests {
             }
             .encode(),
             0x4E856883
+        );
+    }
+    #[test]
+    fn trn2_2d_v15_v16_v17() {
+        assert_eq!(
+            Inst::Trn2V2D {
+                rd: FpReg::new(15),
+                rn: FpReg::new(16),
+                rm: FpReg::new(17)
+            }
+            .encode(),
+            0x4ED16A0F
         );
     }
     #[test]

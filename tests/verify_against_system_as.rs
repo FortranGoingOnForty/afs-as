@@ -3410,6 +3410,17 @@ fn sys_zip1_4s() {
     );
 }
 #[test]
+fn sys_zip1_2d() {
+    verify(
+        "zip1.2d v0, v1, v2",
+        Inst::Zip1V2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_zip2_4s() {
     verify(
         "zip2.4s v2, v3, v4",
@@ -3417,6 +3428,17 @@ fn sys_zip2_4s() {
             rd: FpReg::new(2),
             rn: FpReg::new(3),
             rm: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_zip2_2d() {
+    verify(
+        "zip2.2d v3, v4, v5",
+        Inst::Zip2V2D {
+            rd: FpReg::new(3),
+            rn: FpReg::new(4),
+            rm: FpReg::new(5),
         },
     );
 }
@@ -3432,6 +3454,17 @@ fn sys_uzp1_4s() {
     );
 }
 #[test]
+fn sys_uzp1_2d() {
+    verify(
+        "uzp1.2d v6, v7, v8",
+        Inst::Uzp1V2D {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
 fn sys_uzp2_4s() {
     verify(
         "uzp2.4s v8, v9, v10",
@@ -3439,6 +3472,17 @@ fn sys_uzp2_4s() {
             rd: FpReg::new(8),
             rn: FpReg::new(9),
             rm: FpReg::new(10),
+        },
+    );
+}
+#[test]
+fn sys_uzp2_2d() {
+    verify(
+        "uzp2.2d v9, v10, v11",
+        Inst::Uzp2V2D {
+            rd: FpReg::new(9),
+            rn: FpReg::new(10),
+            rm: FpReg::new(11),
         },
     );
 }
@@ -3454,6 +3498,17 @@ fn sys_trn1_4s() {
     );
 }
 #[test]
+fn sys_trn1_2d() {
+    verify(
+        "trn1.2d v12, v13, v14",
+        Inst::Trn1V2D {
+            rd: FpReg::new(12),
+            rn: FpReg::new(13),
+            rm: FpReg::new(14),
+        },
+    );
+}
+#[test]
 fn sys_trn2_4s() {
     verify(
         "trn2.4s v3, v4, v5",
@@ -3461,6 +3516,17 @@ fn sys_trn2_4s() {
             rd: FpReg::new(3),
             rn: FpReg::new(4),
             rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_trn2_2d() {
+    verify(
+        "trn2.2d v15, v16, v17",
+        Inst::Trn2V2D {
+            rd: FpReg::new(15),
+            rn: FpReg::new(16),
+            rm: FpReg::new(17),
         },
     );
 }
