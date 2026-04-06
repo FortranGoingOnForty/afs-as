@@ -5,6 +5,7 @@ mod common;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
+use std::panic::{self, AssertUnwindSafe};
 
 use afs_as::assemble;
 use afs_as::macho::{self, ObjectFile, SectionKind};
@@ -175,7 +176,12 @@ fn assert_object_semantics(obj: &ObjectFile, src: &str) {
                 let symbol = obj
                     .symbols
                     .get(reloc.symbol_idx as usize)
-                    .unwrap_or_else(|| panic!("missing relocation symbol index {}\n---source---\n{}", reloc.symbol_idx, src));
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "missing relocation symbol index {}\n---source---\n{}",
+                            reloc.symbol_idx, src
+                        )
+                    });
                 assert!(
                     !symbol.name.is_empty(),
                     "empty relocation symbol name in section {},{}\n---source---\n{}",
@@ -250,8 +256,11 @@ fn assert_object_semantics(obj: &ObjectFile, src: &str) {
 fn generated_stress_objects_have_valid_internal_semantics() {
     for seed in 1..=24u64 {
         let src = generate_case(seed);
-        let obj = assemble::assemble_source(&src)
-            .unwrap_or_else(|err| panic!("assemble stress seed {} failed: {}\n{}", seed, err, src));
+        let obj = panic::catch_unwind(AssertUnwindSafe(|| assemble::assemble_source(&src)))
+            .unwrap_or_else(|_| panic!("assemble stress seed {} panicked\n{}", seed, src))
+            .unwrap_or_else(|err| {
+                panic!("assemble stress seed {} failed: {}\n{}", seed, err, src)
+            });
         assert_object_semantics(&obj, &src);
         let mut bytes = Vec::new();
         macho::write_macho(&obj, &mut bytes)
@@ -271,7 +280,8 @@ fn generated_stress_objects_match_system_as() {
         let src = generate_case(seed);
         let paths = common::TempPaths::new(&format!("afs_stress_{}", seed));
         fs::write(&paths.asm, &src).expect("write generated stress assembly");
-        common::assemble_with_ours(&src, &paths.obj);
+        panic::catch_unwind(AssertUnwindSafe(|| common::assemble_with_ours(&src, &paths.obj)))
+            .unwrap_or_else(|_| panic!("assemble_with_ours stress seed {} panicked\n{}", seed, src));
         common::assemble_with_system(&paths.asm, &paths.ref_obj);
         let ours = fs::read(&paths.obj).expect("read afs-as object");
         let reference = fs::read(&paths.ref_obj).expect("read system object");
