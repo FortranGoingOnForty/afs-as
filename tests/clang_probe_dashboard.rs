@@ -234,6 +234,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_minmax_nm_2d",
+        source: "vector_minmax_nm_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t maxnm2d(float64x2_t, float64x2_t);\nextern float64x2_t minnm2d(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {1.0, 9.0};\n    float64x2_t b = {2.0, 7.0};\n    float64x2_t x = maxnm2d(a, b);\n    float64x2_t n = minnm2d(a, b);\n    return (x[0] != 2.0) || (x[1] != 9.0)\n        || (n[0] != 1.0) || (n[1] != 7.0);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_reduce",
         source: "vector_reduce.c",
         driver: "#include <arm_neon.h>\nextern unsigned sum4u(uint32x4_t);\nextern unsigned max4u_reduce(uint32x4_t);\nextern int max4s_reduce(int32x4_t);\nint main(void) {\n    uint32x4_t au = {1u, 9u, 3u, 4u};\n    int32x4_t as = {-1, 5, 7, -3};\n    return (sum4u(au) != 17u) || (max4u_reduce(au) != 9u) || (max4s_reduce(as) != 7);\n}\n",
