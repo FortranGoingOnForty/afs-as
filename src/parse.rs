@@ -1296,7 +1296,7 @@ impl<'a> Parser<'a> {
             | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
-            "fmax.2d" | "fmin.2d" | "frecps.2d" | "frsqrts.2d" => {
+            "fmax.2d" | "fmin.2d" | "fmaxnm.2d" | "fminnm.2d" | "frecps.2d" | "frsqrts.2d" => {
                 self.parse_simd_fp_arith_2d(mnemonic)
             }
             "faddp.2d" | "fmaxp.2d" | "fminp.2d" | "fmaxnmp.2d" | "fminnmp.2d" => {
@@ -3986,6 +3986,8 @@ impl<'a> Parser<'a> {
         Ok(match mnemonic {
             "fmax.2d" => Inst::FmaxV2D { rd, rn, rm },
             "fmin.2d" => Inst::FminV2D { rd, rn, rm },
+            "fmaxnm.2d" => Inst::FmaxnmV2D { rd, rn, rm },
+            "fminnm.2d" => Inst::FminnmV2D { rd, rn, rm },
             "faddp.2d" => Inst::FaddpV2D { rd, rn, rm },
             "fmaxp.2d" => Inst::FmaxpV2D { rd, rn, rm },
             "fminp.2d" => Inst::FminpV2D { rd, rn, rm },
@@ -7881,6 +7883,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_fmaxnm_2d() {
+        assert_eq!(
+            parse_inst("fmaxnm.2d v0, v0, v1"),
+            Inst::FmaxnmV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+        );
+    }
+
+    #[test]
     fn parse_fmin_4s() {
         assert_eq!(
             parse_inst("fmin.4s v2, v3, v4"),
@@ -7900,6 +7914,18 @@ mod tests {
                 rd: FpReg::new(3),
                 rn: FpReg::new(4),
                 rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fminnm_2d() {
+        assert_eq!(
+            parse_inst("fminnm.2d v2, v3, v4"),
+            Inst::FminnmV2D {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3),
+                rm: FpReg::new(4)
             }
         );
     }

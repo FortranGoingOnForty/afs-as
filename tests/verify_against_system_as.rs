@@ -2061,6 +2061,17 @@ fn sys_fmaxnm_4s() {
     );
 }
 #[test]
+fn sys_fmaxnm_2d() {
+    verify(
+        "fmaxnm.2d v0, v0, v1",
+        Inst::FmaxnmV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+            rm: FpReg::new(1),
+        },
+    );
+}
+#[test]
 fn sys_fmin_2d() {
     verify(
         "fmin.2d v2, v3, v4",
@@ -2090,6 +2101,17 @@ fn sys_fminnm_4s() {
             rd: FpReg::new(3),
             rn: FpReg::new(4),
             rm: FpReg::new(5),
+        },
+    );
+}
+#[test]
+fn sys_fminnm_2d() {
+    verify(
+        "fminnm.2d v2, v3, v4",
+        Inst::FminnmV2D {
+            rd: FpReg::new(2),
+            rn: FpReg::new(3),
+            rm: FpReg::new(4),
         },
     );
 }

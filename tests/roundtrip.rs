@@ -870,6 +870,10 @@ fn rt_fmaxnm_4s() {
     roundtrip(".text\nfmaxnm.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_fmaxnm_2d() {
+    roundtrip(".text\nfmaxnm.2d v0, v0, v1\n");
+}
+#[test]
 fn rt_fmin_2d() {
     roundtrip(".text\nfmin.2d v2, v3, v4\n");
 }
@@ -880,6 +884,10 @@ fn rt_fmin_4s() {
 #[test]
 fn rt_fminnm_4s() {
     roundtrip(".text\nfminnm.4s v3, v4, v5\n");
+}
+#[test]
+fn rt_fminnm_2d() {
+    roundtrip(".text\nfminnm.2d v2, v3, v4\n");
 }
 #[test]
 fn rt_smax_4s() {

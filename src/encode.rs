@@ -1185,10 +1185,14 @@ pub enum Inst {
     FminV2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMIN.4S Vd, Vn, Vm
     FminV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FMAXNM.2D Vd, Vn, Vm
+    FmaxnmV2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMAXNM.4S Vd, Vn, Vm
     FmaxnmV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMAXNMP.2D Vd, Vn, Vm
     FmaxnmpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FMINNM.2D Vd, Vn, Vm
+    FminnmV2D { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMINNM.4S Vd, Vn, Vm
     FminnmV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMINNMP.2D Vd, Vn, Vm
@@ -2566,7 +2570,9 @@ impl Inst {
             Inst::FmaxV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20F400, *rm, *rn, *rd),
             Inst::FminV2D { rd, rn, rm } => simd_fp_arith_2d(0x4EE0F400, *rm, *rn, *rd),
             Inst::FminV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0F400, *rm, *rn, *rd),
+            Inst::FmaxnmV2D { rd, rn, rm } => simd_fp_arith_2d(0x4E60C400, *rm, *rn, *rd),
             Inst::FmaxnmV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20C400, *rm, *rn, *rd),
+            Inst::FminnmV2D { rd, rn, rm } => simd_fp_arith_2d(0x4EE0C400, *rm, *rn, *rd),
             Inst::FminnmV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0C400, *rm, *rn, *rd),
             Inst::SmaxV4S { rd, rn, rm } => simd_binary(0x4EA06400, *rm, *rn, *rd),
             Inst::SminV4S { rd, rn, rm } => simd_binary(0x4EA06C00, *rm, *rn, *rd),
@@ -5771,6 +5777,18 @@ mod tests {
         );
     }
     #[test]
+    fn fmaxnm_2d_v0_v0_v1() {
+        assert_eq!(
+            Inst::FmaxnmV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0),
+                rm: FpReg::new(1)
+            }
+            .encode(),
+            0x4E61C400
+        );
+    }
+    #[test]
     fn fminnm_4s_v3_v4_v5() {
         assert_eq!(
             Inst::FminnmV4S {
@@ -5780,6 +5798,18 @@ mod tests {
             }
             .encode(),
             0x4EA5C483
+        );
+    }
+    #[test]
+    fn fminnm_2d_v2_v3_v4() {
+        assert_eq!(
+            Inst::FminnmV2D {
+                rd: FpReg::new(2),
+                rn: FpReg::new(3),
+                rm: FpReg::new(4)
+            }
+            .encode(),
+            0x4EE4C462
         );
     }
     #[test]
