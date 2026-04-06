@@ -12,10 +12,46 @@ Part of [ARMFORTAS](https://github.com/FortranGoingOnForty/armfortas), a bespoke
 # Assemble
 afs-as hello.s -o hello.o
 
+# Or let afs-as derive hello.o automatically
+afs-as hello.s
+
+# Assemble from stdin to stdout
+cat hello.s | afs-as - -o - > hello.o
+
+# Inspect CLI help
+afs-as --help
+
 # Link and run
 ld hello.o -o hello -lSystem -syslibroot $(xcrun --show-sdk-path) -e _main
 ./hello
 ```
+
+CLI behavior is intentionally small and explicit:
+
+- `--help` and `--version` print to stdout and exit `0`
+- usage errors exit `2`
+- parse / assembly failures exit `1` with file, line, column, source line, and caret diagnostics
+- `--` stops option parsing
+- `-` can be used for stdin input or stdout output
+- stdin input requires explicit `-o <output.o>` or `-o -`
+
+## Standalone Support Matrix
+
+The tracked support matrix lives in [docs/standalone.md](docs/standalone.md).
+The standalone release checklist lives in [docs/release-readiness.md](docs/release-readiness.md).
+
+That document covers:
+
+- supported labels, expressions, relocations, directives, and instruction families
+- known unsupported features that currently fail explicitly
+- library API vs CLI usage
+- testing strategy for expanding the standalone surface safely
+
+The release-readiness checklist covers:
+
+- the required CI and local gates for a standalone claim
+- the hard failure conditions that block that claim
+- testing opportunities when the release bar changes
 
 ## Library API
 
@@ -34,30 +70,15 @@ let obj = assemble::assemble_instructions(
 );
 ```
 
-## Instruction Coverage
-
-- **Data processing**: ADD, SUB, MUL, SDIV, UDIV (register + immediate, 32/64-bit)
-- **Logic**: AND, ORR, EOR, ANDS
-- **Shifts**: LSL, LSR, ASR (immediate)
-- **Moves**: MOV, MOVZ, MOVK, MOVN
-- **Compare**: CMP, CMN, TST (aliases)
-- **Branches**: B, BL, B.cond (all 16 codes), CBZ, CBNZ, RET, BR, BLR
-- **Address**: ADRP (with PAGE/PAGEOFF relocations)
-- **Load/Store**: LDR, STR (64/32-bit, unsigned/pre/post-index), LDRB, LDRH, LDRSW, LDP, STP (all addressing modes)
-- **FP**: FADD, FSUB, FMUL, FDIV, FNEG, FABS, FSQRT, FCMP, FMADD (single + double)
-- **FP conversion**: FCVTZS, SCVTF, FMOV
-- **System**: SVC, NOP, BRK
-
 ## Tests
 
-365 tests across four levels:
+`afs-as` is validated through layered coverage rather than a single golden path:
 
-| Suite | Count | What it validates |
-|-------|-------|-------------------|
-| Unit (encoding) | 217 | Each instruction encodes to the correct 4-byte value (hardcoded ground truth) |
-| Round-trip | 88 | Parse text, encode, compare byte-for-byte against Apple `as` |
-| System validation | 55 | Shell out to Apple `as`, compare our encoding against theirs |
-| End-to-end | 5 | Assemble, link with `ld`, run binary, verify output |
+- unit tests for parsing, encoding, expression classification, Mach-O writing, and diagnostics
+- differential tests against Apple `as`
+- raw-object parity corpus tests
+- linker / runtime end-to-end tests
+- CLI smoke tests for user-facing behavior
 
 ```bash
 cargo test -p afs-as

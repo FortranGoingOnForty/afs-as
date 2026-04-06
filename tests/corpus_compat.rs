@@ -20,6 +20,11 @@ fn corpus_hello_world_matches_text_bytes_and_runs() {
         common::object_text_bytes(&paths.obj),
         common::object_text_bytes(&paths.ref_obj)
     );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
 
     common::link_with_system(&paths.obj, &paths.bin, "_main");
     let (code, stdout, stderr) = common::run_binary(&paths.bin);
@@ -91,6 +96,170 @@ fn corpus_branch_address_surface_matches_text_bytes() {
 }
 
 #[test]
+fn corpus_numeric_local_labels_match_raw_object() {
+    let paths = assemble_fixture("numeric_local_labels.s");
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_branch_address_surface_matches_raw_object() {
+    let paths = assemble_fixture("branch_address_surface.s");
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_fp_load_store_surface_matches_raw_object() {
+    let paths = assemble_fixture("fp_load_store_surface.s");
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_clang_literal_addr_matches_raw_object() {
+    let paths = assemble_fixture("clang_literal_addr.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_load_commands(&paths.obj)),
+        normalize_tool_output(&common::object_load_commands(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_clang_fp_spill_matches_raw_object() {
+    let paths = assemble_fixture("clang_fp_spill.s");
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_clang_extern_call_matches_raw_object() {
+    let paths = assemble_fixture("clang_extern_call.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_load_commands(&paths.obj)),
+        normalize_tool_output(&common::object_load_commands(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_clang_local_branch_matches_raw_object() {
+    let paths = assemble_fixture("clang_local_branch.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_load_commands(&paths.obj)),
+        normalize_tool_output(&common::object_load_commands(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_clang_got_load_matches_raw_object() {
+    let paths = assemble_fixture("clang_got_load.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_load_commands(&paths.obj)),
+        normalize_tool_output(&common::object_load_commands(&paths.ref_obj))
+    );
+    assert_eq!(
+        normalize_tool_output(&common::object_relocations(&paths.obj)),
+        normalize_tool_output(&common::object_relocations(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_clang_tlvp_load_matches_raw_object() {
+    let paths = assemble_fixture("clang_tlvp_load.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_load_commands(&paths.obj)),
+        normalize_tool_output(&common::object_load_commands(&paths.ref_obj))
+    );
+    assert_eq!(
+        normalize_tool_output(&common::object_relocations(&paths.obj)),
+        normalize_tool_output(&common::object_relocations(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_got_pointer_data_matches_raw_object() {
+    let paths = assemble_fixture("got_pointer_data.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_relocations(&paths.obj)),
+        normalize_tool_output(&common::object_relocations(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_got_pointer_data_links_relocatable_with_support() {
+    let paths = assemble_fixture("got_pointer_data.s");
+    let root = paths.asm.parent().expect("temp root");
+    let support = root.join("link-support.o");
+    let ours_linked = root.join("ours-linked.o");
+    let ref_linked = root.join("ref-linked.o");
+
+    common::assemble_link_support(&support);
+    common::link_relocatable_with_system(&[&paths.obj, &support], &ours_linked);
+    common::link_relocatable_with_system(&[&paths.ref_obj, &support], &ref_linked);
+
+    assert_eq!(
+        normalize_tool_output(&common::object_undefined_symbols(&ours_linked)),
+        normalize_tool_output(&common::object_undefined_symbols(&ref_linked))
+    );
+}
+
+#[test]
+fn corpus_addend_relocs_matches_raw_object() {
+    let paths = assemble_fixture("addend_relocs.s");
+    assert_eq!(
+        normalize_tool_output(&common::object_relocations(&paths.obj)),
+        normalize_tool_output(&common::object_relocations(&paths.ref_obj))
+    );
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
 fn corpus_shifted_addsub_matches_text_bytes() {
     let paths = assemble_fixture("shifted_addsub.s");
     assert_eq!(
@@ -106,6 +275,16 @@ fn corpus_extended_addsub_matches_text_bytes() {
         common::object_text_bytes(&paths.obj),
         common::object_text_bytes(&paths.ref_obj)
     );
+}
+
+#[test]
+fn corpus_conditional_select_surface_matches_raw_object() {
+    let paths = assemble_fixture("conditional_select_surface.s");
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
 }
 
 #[test]
@@ -140,6 +319,24 @@ fn corpus_external_branches_match_relocations_and_symbols() {
 
     assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
     assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+}
+
+#[test]
+fn corpus_external_branches_link_relocatable_with_support() {
+    let paths = assemble_fixture("external_branches.s");
+    let root = paths.asm.parent().expect("temp root");
+    let support = root.join("link-support.o");
+    let ours_linked = root.join("ours-linked.o");
+    let ref_linked = root.join("ref-linked.o");
+
+    common::assemble_link_support(&support);
+    common::link_relocatable_with_system(&[&paths.obj, &support], &ours_linked);
+    common::link_relocatable_with_system(&[&paths.ref_obj, &support], &ref_linked);
+
+    assert_eq!(
+        normalize_tool_output(&common::object_undefined_symbols(&ours_linked)),
+        normalize_tool_output(&common::object_undefined_symbols(&ref_linked))
+    );
 }
 
 #[test]
@@ -198,6 +395,89 @@ fn corpus_symbol_attributes_match_nm_output() {
 }
 
 #[test]
+fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
+    let paths = assemble_fixture("macho_writer_mix.s");
+
+    let ours_load = common::object_load_commands(&paths.obj);
+    let ref_load = common::object_load_commands(&paths.ref_obj);
+    let ours_relocs = common::object_relocations(&paths.obj);
+    let ref_relocs = common::object_relocations(&paths.ref_obj);
+    let ours_symbols = common::object_symbols(&paths.obj);
+    let ref_symbols = common::object_symbols(&paths.ref_obj);
+    let ours_symbols_raw = common::object_symbols_preserve_order(&paths.obj);
+    let ref_symbols_raw = common::object_symbols_preserve_order(&paths.ref_obj);
+    let ours_symbols_verbose = common::object_symbols_verbose(&paths.obj);
+    let ref_symbols_verbose = common::object_symbols_verbose(&paths.ref_obj);
+    let ours_string_table = common::object_string_table(&paths.obj);
+    let ref_string_table = common::object_string_table(&paths.ref_obj);
+    let ours_string_offsets = common::object_symbol_string_offsets(&paths.obj);
+    let ref_string_offsets = common::object_symbol_string_offsets(&paths.ref_obj);
+
+    assert!(ours_load.contains("sectname __const"), "missing __const section:\n{}", ours_load);
+    assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
+    assert!(ours_load.contains("sectname __bss"), "missing __bss section:\n{}", ours_load);
+    assert!(ours_relocs.contains("SUB"), "missing subtractor relocation:\n{}", ours_relocs);
+    assert!(ours_relocs.contains("BR26"), "missing branch relocation:\n{}", ours_relocs);
+    assert!(ours_symbols.contains(" C _common"), "missing common symbol:\n{}", ours_symbols);
+    assert!(ours_symbols.contains(" U _puts"), "missing undefined _puts:\n{}", ours_symbols);
+    assert!(ours_symbols_verbose.contains("ABS1"), "missing absolute symbol:\n{}", ours_symbols_verbose);
+    assert!(ours_symbols_verbose.contains("_helper"), "missing private extern helper:\n{}", ours_symbols_verbose);
+    assert!(ours_symbols_verbose.contains("zlocal"), "missing local weak definition:\n{}", ours_symbols_verbose);
+
+    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_symbols_raw),
+        normalize_tool_output(&ref_symbols_raw)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_symbols_verbose),
+        normalize_tool_output(&ref_symbols_verbose)
+    );
+    assert_eq!(ours_string_table, ref_string_table);
+    assert_eq!(ours_string_offsets, ref_string_offsets);
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
+fn corpus_macho_writer_mix_links_relocatable_with_support() {
+    let paths = assemble_fixture("macho_writer_mix.s");
+    let root = paths.asm.parent().expect("temp root");
+    let support = root.join("link-support.o");
+    let ours_linked = root.join("ours-linked.o");
+    let ref_linked = root.join("ref-linked.o");
+
+    common::assemble_link_support(&support);
+    common::link_relocatable_with_system(&[&paths.obj, &support], &ours_linked);
+    common::link_relocatable_with_system(&[&paths.ref_obj, &support], &ref_linked);
+
+    assert_eq!(
+        normalize_tool_output(&common::object_undefined_symbols(&ours_linked)),
+        normalize_tool_output(&common::object_undefined_symbols(&ref_linked))
+    );
+}
+
+#[test]
+fn corpus_string_suffixes_matches_string_table_layout() {
+    let paths = assemble_fixture("string_suffixes.s");
+
+    assert_eq!(
+        common::object_symbols_preserve_order(&paths.obj),
+        common::object_symbols_preserve_order(&paths.ref_obj)
+    );
+    assert_eq!(
+        common::object_string_table(&paths.obj),
+        common::object_string_table(&paths.ref_obj)
+    );
+    assert_eq!(
+        common::object_symbol_string_offsets(&paths.obj),
+        common::object_symbol_string_offsets(&paths.ref_obj)
+    );
+    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+}
+
+#[test]
 fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
     let paths = assemble_fixture("expression_symbols.s");
 
@@ -214,6 +494,24 @@ fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
     assert_eq!(ours_data, ref_data);
     assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
     assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+}
+
+#[test]
+fn corpus_expression_symbols_link_relocatable_with_support() {
+    let paths = assemble_fixture("expression_symbols.s");
+    let root = paths.asm.parent().expect("temp root");
+    let support = root.join("link-support.o");
+    let ours_linked = root.join("ours-linked.o");
+    let ref_linked = root.join("ref-linked.o");
+
+    common::assemble_link_support(&support);
+    common::link_relocatable_with_system(&[&paths.obj, &support], &ours_linked);
+    common::link_relocatable_with_system(&[&paths.ref_obj, &support], &ref_linked);
+
+    assert_eq!(
+        normalize_tool_output(&common::object_undefined_symbols(&ours_linked)),
+        normalize_tool_output(&common::object_undefined_symbols(&ref_linked))
+    );
 }
 
 #[test]

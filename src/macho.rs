@@ -4,6 +4,7 @@
 //! Implements the minimum viable subset: header, segment with supported Mach-O
 //! sections, symbol table, dynamic symbol table, build version, and relocations.
 
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 
 // ---- Mach-O Constants ----
@@ -18,11 +19,16 @@ const LC_SEGMENT_64: u32 = 0x19;
 const LC_SYMTAB: u32 = 0x02;
 const LC_DYSYMTAB: u32 = 0x0B;
 const LC_BUILD_VERSION: u32 = 0x32;
+const LC_LINKER_OPTIMIZATION_HINT: u32 = 0x2E;
 
 const S_REGULAR: u32 = 0x0;
 const S_ZEROFILL: u32 = 0x1;
 const S_CSTRING_LITERALS: u32 = 0x2;
+const S_16BYTE_LITERALS: u32 = 0xE;
 const S_COALESCED: u32 = 0x0B;
+const S_THREAD_LOCAL_REGULAR: u32 = 0x11;
+const S_THREAD_LOCAL_ZEROFILL: u32 = 0x12;
+const S_THREAD_LOCAL_VARIABLES: u32 = 0x13;
 const S_ATTR_DEBUG: u32 = 0x02000000;
 const S_ATTR_LIVE_SUPPORT: u32 = 0x08000000;
 const S_ATTR_STRIP_STATIC_SYMS: u32 = 0x20000000;
@@ -48,6 +54,12 @@ pub const ARM64_RELOC_SUBTRACTOR: u32 = 1;
 pub const ARM64_RELOC_BRANCH26: u32 = 2;
 pub const ARM64_RELOC_PAGE21: u32 = 3;
 pub const ARM64_RELOC_PAGEOFF12: u32 = 4;
+pub const ARM64_RELOC_GOT_LOAD_PAGE21: u32 = 5;
+pub const ARM64_RELOC_GOT_LOAD_PAGEOFF12: u32 = 6;
+pub const ARM64_RELOC_POINTER_TO_GOT: u32 = 7;
+pub const ARM64_RELOC_TLVP_LOAD_PAGE21: u32 = 8;
+pub const ARM64_RELOC_TLVP_LOAD_PAGEOFF12: u32 = 9;
+pub const ARM64_RELOC_ADDEND: u32 = 10;
 
 // Struct sizes
 const HEADER_SIZE: u32 = 32;
@@ -56,6 +68,7 @@ const SECTION_SIZE: u32 = 80;
 const SYMTAB_CMD_SIZE: u32 = 24;
 const DYSYMTAB_CMD_SIZE: u32 = 80;
 const BUILD_VERSION_CMD_SIZE: u32 = 24;
+const LINKEDIT_DATA_CMD_SIZE: u32 = 16;
 const NLIST_SIZE: u32 = 16;
 const RELOC_SIZE: u32 = 8;
 
@@ -80,9 +93,9 @@ impl Default for BuildVersion {
 #[derive(Debug, Clone)]
 pub struct Symbol {
     pub name: String,
-    pub section: u8,    // 1-based section index, or 0 for N_UNDF
-    pub value: u64,     // offset within section
-    pub global: bool,   // N_EXT flag
+    pub section: u8,     // 1-based section index, or 0 for N_UNDF
+    pub value: u64,      // offset within section
+    pub global: bool,    // N_EXT flag
     pub undefined: bool, // true for external references
     pub absolute: bool,
     pub common: bool,
@@ -95,12 +108,12 @@ pub struct Symbol {
 /// A relocation entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relocation {
-    pub offset: u32,       // byte offset in section
-    pub symbol_idx: u32,   // index into symbol table
-    pub pcrel: bool,       // PC-relative?
-    pub length: u8,        // 2 = 4 bytes (32-bit)
-    pub extern_: bool,     // true = symbol index, false = section number
-    pub reloc_type: u32,   // ARM64_RELOC_*
+    pub offset: u32,     // byte offset in section
+    pub symbol_idx: u32, // index into symbol table
+    pub pcrel: bool,     // PC-relative?
+    pub length: u8,      // 2 = 4 bytes (32-bit)
+    pub extern_: bool,   // true = symbol index, false = section number
+    pub reloc_type: u32, // ARM64_RELOC_*
 }
 
 /// Supported Mach-O section kinds.
@@ -109,7 +122,11 @@ pub enum SectionKind {
     Text,
     Data,
     CStringLiterals,
+    Literal16,
     ConstData,
+    ThreadLocalData,
+    ThreadLocalZeroFill,
+    ThreadLocalVariables,
     CompactUnwind,
     EhFrame,
     ZeroFill,
@@ -118,19 +135,27 @@ pub enum SectionKind {
 impl SectionKind {
     fn flags(&self, size: u64, has_instructions: bool) -> u32 {
         match self {
-            Self::Text if has_instructions => S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS,
+            Self::Text if has_instructions => {
+                S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+            }
             Self::Text if size == 0 => S_ATTR_PURE_INSTRUCTIONS,
             Self::Text => S_ATTR_PURE_INSTRUCTIONS,
             Self::CStringLiterals => S_CSTRING_LITERALS,
+            Self::Literal16 => S_16BYTE_LITERALS,
             Self::CompactUnwind => S_REGULAR | S_ATTR_DEBUG,
-            Self::EhFrame => S_COALESCED | S_ATTR_NO_TOC | S_ATTR_STRIP_STATIC_SYMS | S_ATTR_LIVE_SUPPORT,
+            Self::EhFrame => {
+                S_COALESCED | S_ATTR_NO_TOC | S_ATTR_STRIP_STATIC_SYMS | S_ATTR_LIVE_SUPPORT
+            }
             Self::ZeroFill => S_ZEROFILL,
+            Self::ThreadLocalData => S_THREAD_LOCAL_REGULAR,
+            Self::ThreadLocalZeroFill => S_THREAD_LOCAL_ZEROFILL,
+            Self::ThreadLocalVariables => S_THREAD_LOCAL_VARIABLES,
             Self::Data | Self::ConstData => S_REGULAR,
         }
     }
 
-    fn is_zerofill(&self) -> bool {
-        matches!(self, Self::ZeroFill)
+    pub(crate) fn is_zerofill(&self) -> bool {
+        matches!(self, Self::ZeroFill | Self::ThreadLocalZeroFill)
     }
 }
 
@@ -166,7 +191,11 @@ impl Section {
     }
 
     pub fn file_size(&self) -> u64 {
-        if self.kind.is_zerofill() { 0 } else { self.size }
+        if self.kind.is_zerofill() {
+            0
+        } else {
+            self.size
+        }
     }
 }
 
@@ -177,6 +206,7 @@ pub struct ObjectFile {
     pub symbols: Vec<Symbol>,
     pub flags: u32,
     pub build_version: BuildVersion,
+    pub linker_optimization_hints: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -194,23 +224,30 @@ impl ObjectFile {
             symbols: Vec::new(),
             flags: 0,
             build_version: BuildVersion::default(),
+            linker_optimization_hints: Vec::new(),
         }
     }
 
     pub fn section(&self, segment: &str, name: &str) -> Option<&Section> {
-        self.sections.iter().find(|section| section.segment == segment && section.name == name)
+        self.sections
+            .iter()
+            .find(|section| section.segment == segment && section.name == name)
     }
 
     pub fn section_mut(&mut self, segment: &str, name: &str) -> Option<&mut Section> {
-        self.sections.iter_mut().find(|section| section.segment == segment && section.name == name)
+        self.sections
+            .iter_mut()
+            .find(|section| section.segment == segment && section.name == name)
     }
 
     pub fn text_section(&self) -> &Section {
-        self.section("__TEXT", "__text").expect("missing __TEXT,__text section")
+        self.section("__TEXT", "__text")
+            .expect("missing __TEXT,__text section")
     }
 
     pub fn text_section_mut(&mut self) -> &mut Section {
-        self.section_mut("__TEXT", "__text").expect("missing __TEXT,__text section")
+        self.section_mut("__TEXT", "__text")
+            .expect("missing __TEXT,__text section")
     }
 }
 
@@ -226,14 +263,18 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
 
     // Compute layout.
     let segment_cmdsize = SEGMENT_CMD_SIZE + nsects * SECTION_SIZE;
-    let ncmds: u32 = 4; // LC_SEGMENT_64, LC_BUILD_VERSION, LC_SYMTAB, LC_DYSYMTAB
-    let sizeofcmds = segment_cmdsize + BUILD_VERSION_CMD_SIZE + SYMTAB_CMD_SIZE + DYSYMTAB_CMD_SIZE;
+    let has_loh = !obj.linker_optimization_hints.is_empty();
+    let ncmds: u32 = 4 + has_loh as u32; // LC_SEGMENT_64, LC_BUILD_VERSION, optional LOH, LC_SYMTAB, LC_DYSYMTAB
+    let sizeofcmds = segment_cmdsize
+        + BUILD_VERSION_CMD_SIZE
+        + if has_loh { LINKEDIT_DATA_CMD_SIZE } else { 0 }
+        + SYMTAB_CMD_SIZE
+        + DYSYMTAB_CMD_SIZE;
 
     let content_offset = HEADER_SIZE + sizeofcmds;
     let mut layouts = vec![SectionLayout::default(); obj.sections.len()];
     let mut file_cursor = content_offset;
     let mut vm_cursor = 0u64;
-    let mut saw_file_backed_section = false;
 
     let mut allocation_order: Vec<_> = (0..obj.sections.len()).collect();
     allocation_order.sort_by_key(|&index| obj.sections[index].kind.is_zerofill());
@@ -260,12 +301,8 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         let offset = if section.kind.is_zerofill() {
             0
         } else {
-            if saw_file_backed_section {
-                file_cursor = align_to(file_cursor, 1 << section.align_pow2);
-            }
-            let offset = file_cursor;
-            file_cursor = file_cursor.saturating_add(section.file_size() as u32);
-            saw_file_backed_section = true;
+            let offset = content_offset.saturating_add(addr as u32);
+            file_cursor = file_cursor.max(offset.saturating_add(section.file_size() as u32));
             offset
         };
 
@@ -288,19 +325,31 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         }
     }
 
-    // Symbol table follows relocations.
-    let symoff = reloc_cursor;
+    // Linker optimization hints, when present, follow relocations.
+    let lohoff = reloc_cursor;
+    let lohsize = obj.linker_optimization_hints.len() as u32;
+
+    // Symbol table follows linker optimization hints.
+    let symoff = lohoff + lohsize;
     let nsyms = obj.symbols.len() as u32;
     let sym_size = nsyms * NLIST_SIZE;
 
     // String table follows symbol table.
     let stroff = symoff + sym_size;
     let strtab = build_string_table(&obj.symbols);
-    let strsize = strtab.len() as u32;
+    let strsize = strtab.bytes.len() as u32;
 
     // Classify symbols for LC_DYSYMTAB.
-    let nlocalsym = obj.symbols.iter().filter(|s| !s.global && !s.undefined).count() as u32;
-    let nextdefsym = obj.symbols.iter().filter(|s| s.global && !s.undefined).count() as u32;
+    let nlocalsym = obj
+        .symbols
+        .iter()
+        .filter(|s| !s.global && !s.undefined)
+        .count() as u32;
+    let nextdefsym = obj
+        .symbols
+        .iter()
+        .filter(|s| s.global && !s.undefined)
+        .count() as u32;
     let nundefsym = obj.symbols.iter().filter(|s| s.undefined).count() as u32;
 
     let segment_fileoff = layouts
@@ -337,15 +386,15 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- LC_SEGMENT_64 ----
     write_u32(w, LC_SEGMENT_64)?;
     write_u32(w, segment_cmdsize)?;
-    write_pad16(w, b"")?;           // segname (empty for object files)
-    write_u64(w, 0)?;               // vmaddr
-    write_u64(w, vmsize)?;          // vmsize
+    write_pad16(w, b"")?; // segname (empty for object files)
+    write_u64(w, 0)?; // vmaddr
+    write_u64(w, vmsize)?; // vmsize
     write_u64(w, segment_fileoff as u64)?; // fileoff
     write_u64(w, filesize as u64)?; // filesize
-    write_u32(w, 7)?;               // maxprot (rwx)
-    write_u32(w, 7)?;               // initprot (rwx)
+    write_u32(w, 7)?; // maxprot (rwx)
+    write_u32(w, 7)?; // initprot (rwx)
     write_u32(w, nsects)?;
-    write_u32(w, 0)?;               // flags
+    write_u32(w, 0)?; // flags
 
     for (section, layout) in obj.sections.iter().zip(&layouts) {
         write_pad16(w, section.name.as_bytes())?;
@@ -356,7 +405,10 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         write_u32(w, section.align_pow2)?;
         write_u32(w, layout.reloff)?;
         write_u32(w, layout.nreloc)?;
-        write_u32(w, section.kind.flags(section.size, section.has_instructions))?;
+        write_u32(
+            w,
+            section.kind.flags(section.size, section.has_instructions),
+        )?;
         write_u32(w, 0)?;
         write_u32(w, 0)?;
         write_u32(w, 0)?;
@@ -368,7 +420,14 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     write_u32(w, obj.build_version.platform)?;
     write_u32(w, obj.build_version.minos)?;
     write_u32(w, obj.build_version.sdk)?;
-    write_u32(w, 0)?;               // ntools
+    write_u32(w, 0)?; // ntools
+
+    if has_loh {
+        write_u32(w, LC_LINKER_OPTIMIZATION_HINT)?;
+        write_u32(w, LINKEDIT_DATA_CMD_SIZE)?;
+        write_u32(w, lohoff)?;
+        write_u32(w, lohsize)?;
+    }
 
     // ---- LC_SYMTAB ----
     write_u32(w, LC_SYMTAB)?;
@@ -381,9 +440,9 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- LC_DYSYMTAB ----
     write_u32(w, LC_DYSYMTAB)?;
     write_u32(w, DYSYMTAB_CMD_SIZE)?;
-    write_u32(w, 0)?;               // ilocalsym
+    write_u32(w, 0)?; // ilocalsym
     write_u32(w, nlocalsym)?;
-    write_u32(w, nlocalsym)?;       // iextdefsym
+    write_u32(w, nlocalsym)?; // iextdefsym
     write_u32(w, nextdefsym)?;
     write_u32(w, nlocalsym + nextdefsym)?; // iundefsym
     write_u32(w, nundefsym)?;
@@ -417,9 +476,16 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         }
     }
 
+    if has_loh {
+        w.write_all(&obj.linker_optimization_hints)?;
+    }
+
     // ---- Symbol table ----
     for (i, sym) in obj.symbols.iter().enumerate() {
-        let str_offset = string_offset(&strtab, &sym.name);
+        let str_offset = *strtab
+            .offsets
+            .get(&sym.name)
+            .expect("string table offset for symbol");
         let mut n_type = if sym.undefined || sym.common {
             N_UNDF
         } else if sym.absolute {
@@ -446,47 +512,70 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         if sym.weak_def {
             n_desc |= N_WEAK_DEF;
         }
-        write_u32(w, str_offset as u32)?;  // n_strx
-        w.write_all(&[n_type])?;           // n_type
-        w.write_all(&[sym.section])?;      // n_sect
-        write_u16(w, n_desc)?;             // n_desc
-        write_u64(w, sym.value)?;          // n_value
+        write_u32(w, str_offset as u32)?; // n_strx
+        w.write_all(&[n_type])?; // n_type
+        w.write_all(&[sym.section])?; // n_sect
+        write_u16(w, n_desc)?; // n_desc
+        write_u64(w, sym.value)?; // n_value
         let _ = i;
     }
 
     // ---- String table ----
-    w.write_all(&strtab)?;
+    w.write_all(&strtab.bytes)?;
 
     Ok(())
 }
 
 // ---- Helpers ----
 
-fn build_string_table(symbols: &[Symbol]) -> Vec<u8> {
-    let mut tab = vec![0u8]; // string table starts with a null byte
-    for sym in symbols {
-        tab.extend_from_slice(sym.name.as_bytes());
-        tab.push(0);
-    }
-    // Apple pads the object string table to 8-byte alignment.
-    while !tab.len().is_multiple_of(8) {
-        tab.push(0);
-    }
-    tab
+struct StringTable {
+    bytes: Vec<u8>,
+    offsets: BTreeMap<String, u32>,
 }
 
-fn string_offset(strtab: &[u8], name: &str) -> usize {
-    let name_bytes = name.as_bytes();
-    // Search for the null-terminated name in the string table.
-    let mut pos = 1; // skip initial null
-    while pos < strtab.len() {
-        let end = strtab[pos..].iter().position(|&b| b == 0).unwrap() + pos;
-        if &strtab[pos..end] == name_bytes {
-            return pos;
-        }
-        pos = end + 1;
+fn build_string_table(symbols: &[Symbol]) -> StringTable {
+    let mut names: Vec<&str> = symbols.iter().map(|sym| sym.name.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+
+    // Match clang's integrated assembler: names are finalized in descending
+    // reverse-lexicographic order so suffix-related symbols can share bytes.
+    names.sort_by(|left, right| right.bytes().rev().cmp(left.bytes().rev()));
+
+    let mut bytes = vec![0u8];
+    let mut offsets = BTreeMap::new();
+    for name in names {
+        let offset = suffix_string_offset(&bytes, name).unwrap_or_else(|| {
+            let offset = bytes.len() as u32;
+            bytes.extend_from_slice(name.as_bytes());
+            bytes.push(0);
+            offset
+        });
+        offsets.insert(name.to_string(), offset);
     }
-    0 // fallback to empty string
+
+    // Apple pads the object string table to 8-byte alignment.
+    while !bytes.len().is_multiple_of(8) {
+        bytes.push(0);
+    }
+
+    StringTable { bytes, offsets }
+}
+
+fn suffix_string_offset(strtab: &[u8], name: &str) -> Option<u32> {
+    let name_bytes = name.as_bytes();
+    if strtab.len() < name_bytes.len() + 1 {
+        return None;
+    }
+
+    for pos in 1..=strtab.len() - name_bytes.len() - 1 {
+        if &strtab[pos..pos + name_bytes.len()] == name_bytes && strtab[pos + name_bytes.len()] == 0
+        {
+            return Some(pos as u32);
+        }
+    }
+
+    None
 }
 
 fn write_reloc<W: Write>(w: &mut W, rel: &Relocation) -> io::Result<()> {
@@ -504,7 +593,9 @@ fn write_reloc<W: Write>(w: &mut W, rel: &Relocation) -> io::Result<()> {
 }
 
 fn align_to(value: u32, align: u32) -> u32 {
-    if align <= 1 { return value; }
+    if align <= 1 {
+        return value;
+    }
     (value + align - 1) & !(align - 1)
 }
 
@@ -627,9 +718,142 @@ mod tests {
         ];
         let strtab = build_string_table(&syms);
 
-        assert_eq!(strtab[0], 0); // initial null
-        assert_eq!(string_offset(&strtab, "_main"), 1);
-        assert_eq!(string_offset(&strtab, "msg"), 7);
+        assert_eq!(strtab.bytes[0], 0); // initial null
+        assert_eq!(strtab.offsets["_main"], 1);
+        assert_eq!(strtab.offsets["msg"], 7);
+    }
+
+    #[test]
+    fn string_table_orders_names_by_reverse_lexicographic_suffix_order() {
+        let syms = vec![
+            Symbol {
+                name: "_ext".into(),
+                section: 0,
+                value: 0,
+                global: true,
+                undefined: true,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "ccc".into(),
+                section: 1,
+                value: 4,
+                global: false,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "_bbb".into(),
+                section: 1,
+                value: 0,
+                global: true,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "_aaa".into(),
+                section: 1,
+                value: 8,
+                global: true,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "ltmp0".into(),
+                section: 1,
+                value: 0,
+                global: false,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+        ];
+        let strtab = build_string_table(&syms);
+
+        assert_eq!(
+            strtab.bytes,
+            b"\0_ext\0ccc\0_bbb\0_aaa\0ltmp0\0\0\0\0\0\0\0"
+        );
+        assert_eq!(strtab.offsets["_ext"], 1);
+        assert_eq!(strtab.offsets["ccc"], 6);
+        assert_eq!(strtab.offsets["_bbb"], 10);
+        assert_eq!(strtab.offsets["_aaa"], 15);
+        assert_eq!(strtab.offsets["ltmp0"], 20);
+    }
+
+    #[test]
+    fn string_table_reuses_suffix_bytes() {
+        let syms = vec![
+            Symbol {
+                name: "_aaa".into(),
+                section: 1,
+                value: 0,
+                global: true,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "aaa".into(),
+                section: 1,
+                value: 4,
+                global: false,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+            Symbol {
+                name: "ltmp0".into(),
+                section: 1,
+                value: 0,
+                global: false,
+                undefined: false,
+                absolute: false,
+                common: false,
+                common_align_pow2: 0,
+                private_extern: false,
+                weak_ref: false,
+                weak_def: false,
+            },
+        ];
+        let strtab = build_string_table(&syms);
+
+        assert_eq!(strtab.bytes, b"\0_aaa\0ltmp0\0\0\0\0\0");
+        assert_eq!(strtab.offsets["_aaa"], 1);
+        assert_eq!(strtab.offsets["aaa"], 2);
+        assert_eq!(strtab.offsets["ltmp0"], 6);
     }
 
     #[test]
@@ -649,11 +873,11 @@ mod tests {
         assert_eq!(&buf[0..4], &4u32.to_le_bytes());
         // info: sym=1, pcrel=1, length=2, extern=1, type=3
         let info = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
-        assert_eq!(info & 0x00FFFFFF, 1);        // symbolnum
-        assert_eq!((info >> 24) & 1, 1);         // pcrel
-        assert_eq!((info >> 25) & 3, 2);         // length
-        assert_eq!((info >> 27) & 1, 1);         // extern
-        assert_eq!((info >> 28) & 0xF, 3);       // type = PAGE21
+        assert_eq!(info & 0x00FFFFFF, 1); // symbolnum
+        assert_eq!((info >> 24) & 1, 1); // pcrel
+        assert_eq!((info >> 25) & 3, 2); // length
+        assert_eq!((info >> 27) & 1, 1); // extern
+        assert_eq!((info >> 28) & 0xF, 3); // type = PAGE21
     }
 
     #[test]
@@ -689,8 +913,9 @@ mod tests {
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
 
-        let symtab_cmd_offset =
-            HEADER_SIZE as usize + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize + BUILD_VERSION_CMD_SIZE as usize;
+        let symtab_cmd_offset = HEADER_SIZE as usize
+            + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize
+            + BUILD_VERSION_CMD_SIZE as usize;
         let symoff = u32::from_le_bytes([
             buf[symtab_cmd_offset + 8],
             buf[symtab_cmd_offset + 9],
@@ -728,8 +953,9 @@ mod tests {
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
 
-        let symtab_cmd_offset =
-            HEADER_SIZE as usize + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize + BUILD_VERSION_CMD_SIZE as usize;
+        let symtab_cmd_offset = HEADER_SIZE as usize
+            + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize
+            + BUILD_VERSION_CMD_SIZE as usize;
         let symoff = u32::from_le_bytes([
             buf[symtab_cmd_offset + 8],
             buf[symtab_cmd_offset + 9],
@@ -775,8 +1001,9 @@ mod tests {
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
 
-        let symtab_cmd_offset =
-            HEADER_SIZE as usize + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize + BUILD_VERSION_CMD_SIZE as usize;
+        let symtab_cmd_offset = HEADER_SIZE as usize
+            + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize
+            + BUILD_VERSION_CMD_SIZE as usize;
         let symoff = u32::from_le_bytes([
             buf[symtab_cmd_offset + 8],
             buf[symtab_cmd_offset + 9],
@@ -800,6 +1027,127 @@ mod tests {
         assert_eq!(common_type, N_UNDF | N_EXT);
         assert_eq!(common_desc, 3u16 << 8);
         assert_eq!(common_value, 24);
+    }
+
+    #[test]
+    fn dysymtab_command_counts_symbol_classes() {
+        let mut obj = ObjectFile::new();
+        obj.symbols.push(Symbol {
+            name: "local_abs".into(),
+            section: 0,
+            value: 7,
+            global: false,
+            undefined: false,
+            absolute: true,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
+        obj.symbols.push(Symbol {
+            name: "local_text".into(),
+            section: 1,
+            value: 0,
+            global: false,
+            undefined: false,
+            absolute: false,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
+        obj.symbols.push(Symbol {
+            name: "_main".into(),
+            section: 1,
+            value: 0,
+            global: true,
+            undefined: false,
+            absolute: false,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
+        obj.symbols.push(Symbol {
+            name: "_common".into(),
+            section: 0,
+            value: 24,
+            global: true,
+            undefined: true,
+            absolute: false,
+            common: true,
+            common_align_pow2: 3,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
+        obj.symbols.push(Symbol {
+            name: "_puts".into(),
+            section: 0,
+            value: 0,
+            global: true,
+            undefined: true,
+            absolute: false,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: true,
+            weak_def: false,
+        });
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let dysymtab_cmd_offset = HEADER_SIZE as usize
+            + (SEGMENT_CMD_SIZE + SECTION_SIZE) as usize
+            + BUILD_VERSION_CMD_SIZE as usize
+            + SYMTAB_CMD_SIZE as usize;
+        let ilocalsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 8],
+            buf[dysymtab_cmd_offset + 9],
+            buf[dysymtab_cmd_offset + 10],
+            buf[dysymtab_cmd_offset + 11],
+        ]);
+        let nlocalsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 12],
+            buf[dysymtab_cmd_offset + 13],
+            buf[dysymtab_cmd_offset + 14],
+            buf[dysymtab_cmd_offset + 15],
+        ]);
+        let iextdefsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 16],
+            buf[dysymtab_cmd_offset + 17],
+            buf[dysymtab_cmd_offset + 18],
+            buf[dysymtab_cmd_offset + 19],
+        ]);
+        let nextdefsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 20],
+            buf[dysymtab_cmd_offset + 21],
+            buf[dysymtab_cmd_offset + 22],
+            buf[dysymtab_cmd_offset + 23],
+        ]);
+        let iundefsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 24],
+            buf[dysymtab_cmd_offset + 25],
+            buf[dysymtab_cmd_offset + 26],
+            buf[dysymtab_cmd_offset + 27],
+        ]);
+        let nundefsym = u32::from_le_bytes([
+            buf[dysymtab_cmd_offset + 28],
+            buf[dysymtab_cmd_offset + 29],
+            buf[dysymtab_cmd_offset + 30],
+            buf[dysymtab_cmd_offset + 31],
+        ]);
+
+        assert_eq!(ilocalsym, 0);
+        assert_eq!(nlocalsym, 2);
+        assert_eq!(iextdefsym, 2);
+        assert_eq!(nextdefsym, 1);
+        assert_eq!(iundefsym, 3);
+        assert_eq!(nundefsym, 2);
     }
 
     #[test]
@@ -867,6 +1215,54 @@ mod tests {
     }
 
     #[test]
+    fn linker_optimization_hint_command_uses_object_metadata() {
+        let mut obj = ObjectFile::new();
+        obj.linker_optimization_hints = vec![7, 2, 0, 4, 0, 0, 0, 0];
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let ncmds = u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]) as usize;
+        let mut offset = HEADER_SIZE as usize;
+        let mut found = None;
+        for _ in 0..ncmds {
+            let cmd = u32::from_le_bytes([
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ]);
+            let cmdsize = u32::from_le_bytes([
+                buf[offset + 4],
+                buf[offset + 5],
+                buf[offset + 6],
+                buf[offset + 7],
+            ]) as usize;
+            if cmd == LC_LINKER_OPTIMIZATION_HINT {
+                let dataoff = u32::from_le_bytes([
+                    buf[offset + 8],
+                    buf[offset + 9],
+                    buf[offset + 10],
+                    buf[offset + 11],
+                ]) as usize;
+                let datasize = u32::from_le_bytes([
+                    buf[offset + 12],
+                    buf[offset + 13],
+                    buf[offset + 14],
+                    buf[offset + 15],
+                ]) as usize;
+                found = Some((dataoff, datasize));
+                break;
+            }
+            offset += cmdsize;
+        }
+
+        let (dataoff, datasize) = found.expect("missing LC_LINKER_OPTIMIZATION_HINT");
+        assert_eq!(datasize, 8);
+        assert_eq!(&buf[dataoff..dataoff + datasize], &[7, 2, 0, 4, 0, 0, 0, 0]);
+    }
+
+    #[test]
     fn zerofill_section_does_not_contribute_file_bytes() {
         let mut obj = ObjectFile::new();
         obj.sections.push(Section {
@@ -882,5 +1278,49 @@ mod tests {
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
         assert_eq!(&buf[0..4], &MH_MAGIC_64.to_le_bytes());
+    }
+
+    #[test]
+    fn thread_local_sections_use_thread_local_flags() {
+        assert_eq!(SectionKind::ThreadLocalData.flags(4, false), S_THREAD_LOCAL_REGULAR);
+        assert_eq!(
+            SectionKind::ThreadLocalZeroFill.flags(4, false),
+            S_THREAD_LOCAL_ZEROFILL
+        );
+        assert_eq!(
+            SectionKind::ThreadLocalVariables.flags(24, false),
+            S_THREAD_LOCAL_VARIABLES
+        );
+    }
+
+    #[test]
+    fn literal16_section_uses_literal_flags() {
+        assert_eq!(SectionKind::Literal16.flags(16, false), S_16BYTE_LITERALS);
+    }
+
+    #[test]
+    fn file_backed_section_offsets_preserve_vm_gaps() {
+        let mut obj = ObjectFile::new();
+        {
+            let text = obj.text_section_mut();
+            text.data = vec![0; 0x24];
+            text.size = 0x24;
+            text.has_instructions = true;
+        }
+        let mut literal = Section::new("__TEXT", "__literal16", SectionKind::Literal16);
+        literal.align_pow2 = 4;
+        literal.data = vec![0; 0x20];
+        literal.size = 0x20;
+        obj.sections.push(literal);
+
+        let mut buf = Vec::new();
+        write_macho(&obj, &mut buf).unwrap();
+
+        let first_section = HEADER_SIZE as usize + SEGMENT_CMD_SIZE as usize;
+        let second_section = first_section + SECTION_SIZE as usize;
+        let text_offset = u32::from_le_bytes(buf[first_section + 48..first_section + 52].try_into().unwrap());
+        let literal_offset =
+            u32::from_le_bytes(buf[second_section + 48..second_section + 52].try_into().unwrap());
+        assert_eq!(literal_offset - text_offset, 0x30);
     }
 }

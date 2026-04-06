@@ -75,3 +75,59 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --test hello_world
+
+  test-cli:
+    name: "Tests: cli smoke"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test cli_smoke
+
+  test-diagnostics:
+    name: "Tests: diagnostic snapshots"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test diagnostic_snapshots
+
+  test-clang-dashboard:
+    name: "Tests: clang probe dashboard"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test clang_probe_dashboard
+
+  test-generated-stress:
+    name: "Tests: generated stress"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test generated_stress
+
+  test-differential-fuzz:
+    name: "Tests: differential fuzz"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test differential_fuzz
+
+  test-malformed-mutation:
+    name: "Tests: malformed mutation"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test malformed_mutation
+
+  test-perf:
+    name: "Tests: performance sanity"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --test perf_sanity
