@@ -1318,6 +1318,22 @@ fn rt_fcmgt_2d() {
     roundtrip(".text\nfcmgt.2d v6, v7, v8\n");
 }
 #[test]
+fn rt_fcmge_2d_zero() {
+    roundtrip(".text\nfcmge.2d v0, v0, #0.0\n");
+}
+#[test]
+fn rt_fcmgt_2d_zero() {
+    roundtrip(".text\nfcmgt.2d v1, v1, #0.0\n");
+}
+#[test]
+fn rt_fcmle_2d_zero() {
+    roundtrip(".text\nfcmle.2d v2, v2, #0.0\n");
+}
+#[test]
+fn rt_fcmlt_2d_zero() {
+    roundtrip(".text\nfcmlt.2d v3, v3, #0.0\n");
+}
+#[test]
 fn rt_orr_16b() {
     roundtrip(".text\norr.16b v9, v10, v11\n");
 }

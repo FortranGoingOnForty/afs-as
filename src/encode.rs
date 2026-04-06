@@ -1399,12 +1399,20 @@ pub enum Inst {
     FcmgeV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FCMGE.2D Vd, Vn, Vm
     FcmgeV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FCMGE.2D Vd, Vn, #0.0
+    FcmgeZeroV2D { rd: FpReg, rn: FpReg },
     /// CMGT.4S Vd, Vn, Vm
     CmgtV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FCMGT.4S Vd, Vn, Vm
     FcmgtV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FCMGT.2D Vd, Vn, Vm
     FcmgtV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// FCMGT.2D Vd, Vn, #0.0
+    FcmgtZeroV2D { rd: FpReg, rn: FpReg },
+    /// FCMLE.2D Vd, Vn, #0.0
+    FcmleZeroV2D { rd: FpReg, rn: FpReg },
+    /// FCMLT.2D Vd, Vn, #0.0
+    FcmltZeroV2D { rd: FpReg, rn: FpReg },
     /// EXT.16B Vd, Vn, Vm, #index
     ExtV16B {
         rd: FpReg,
@@ -2687,9 +2695,13 @@ impl Inst {
             Inst::CmgeV4S { rd, rn, rm } => simd_binary(0x4EA03C00, *rm, *rn, *rd),
             Inst::FcmgeV4S { rd, rn, rm } => simd_binary(0x6E20E400, *rm, *rn, *rd),
             Inst::FcmgeV2D { rd, rn, rm } => simd_binary(0x6E60E400, *rm, *rn, *rd),
+            Inst::FcmgeZeroV2D { rd, rn } => simd_unary(0x6EE0C800, *rn, *rd),
             Inst::CmgtV4S { rd, rn, rm } => simd_binary(0x4EA03400, *rm, *rn, *rd),
             Inst::FcmgtV4S { rd, rn, rm } => simd_binary(0x6EA0E400, *rm, *rn, *rd),
             Inst::FcmgtV2D { rd, rn, rm } => simd_binary(0x6EE0E400, *rm, *rn, *rd),
+            Inst::FcmgtZeroV2D { rd, rn } => simd_unary(0x4EE0C800, *rn, *rd),
+            Inst::FcmleZeroV2D { rd, rn } => simd_unary(0x6EE0D800, *rn, *rd),
+            Inst::FcmltZeroV2D { rd, rn } => simd_unary(0x4EE0E800, *rn, *rd),
             Inst::ExtV16B { rd, rn, rm, index } => simd_ext_16b(*rm, *rn, *rd, *index),
             Inst::Rev64V4S { rd, rn } => simd_unary(0x4EA00800, *rn, *rd),
             Inst::Zip1V4S { rd, rn, rm } => simd_binary(0x4E803800, *rm, *rn, *rd),
@@ -7140,6 +7152,17 @@ mod tests {
         );
     }
     #[test]
+    fn fcmge_2d_zero_v0_v0() {
+        assert_eq!(
+            Inst::FcmgeZeroV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x6EE0C800
+        );
+    }
+    #[test]
     fn cmgt_4s_v2_v3_v4() {
         assert_eq!(
             Inst::CmgtV4S {
@@ -7173,6 +7196,39 @@ mod tests {
             }
             .encode(),
             0x6EE8E4E6
+        );
+    }
+    #[test]
+    fn fcmgt_2d_zero_v1_v1() {
+        assert_eq!(
+            Inst::FcmgtZeroV2D {
+                rd: FpReg::new(1),
+                rn: FpReg::new(1)
+            }
+            .encode(),
+            0x4EE0C821
+        );
+    }
+    #[test]
+    fn fcmle_2d_zero_v2_v2() {
+        assert_eq!(
+            Inst::FcmleZeroV2D {
+                rd: FpReg::new(2),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x6EE0D842
+        );
+    }
+    #[test]
+    fn fcmlt_2d_zero_v3_v3() {
+        assert_eq!(
+            Inst::FcmltZeroV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(3)
+            }
+            .encode(),
+            0x4EE0E863
         );
     }
     #[test]

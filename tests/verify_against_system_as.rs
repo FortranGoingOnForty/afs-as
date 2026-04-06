@@ -3304,6 +3304,46 @@ fn sys_fcmgt_2d() {
     );
 }
 #[test]
+fn sys_fcmge_2d_zero() {
+    verify(
+        "fcmge.2d v0, v0, #0.0",
+        Inst::FcmgeZeroV2D {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_fcmgt_2d_zero() {
+    verify(
+        "fcmgt.2d v1, v1, #0.0",
+        Inst::FcmgtZeroV2D {
+            rd: FpReg::new(1),
+            rn: FpReg::new(1),
+        },
+    );
+}
+#[test]
+fn sys_fcmle_2d_zero() {
+    verify(
+        "fcmle.2d v2, v2, #0.0",
+        Inst::FcmleZeroV2D {
+            rd: FpReg::new(2),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
+fn sys_fcmlt_2d_zero() {
+    verify(
+        "fcmlt.2d v3, v3, #0.0",
+        Inst::FcmltZeroV2D {
+            rd: FpReg::new(3),
+            rn: FpReg::new(3),
+        },
+    );
+}
+#[test]
 fn sys_orr_16b() {
     verify(
         "orr.16b v9, v10, v11",

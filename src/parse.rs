@@ -1290,7 +1290,9 @@ impl<'a> Parser<'a> {
             | "fcmge.4s" | "fcmgt.4s" => {
                 self.parse_simd_compare_4s(mnemonic)
             }
-            "fcmeq.2d" | "fcmge.2d" | "fcmgt.2d" => self.parse_simd_compare_2d(mnemonic),
+            "fcmeq.2d" | "fcmge.2d" | "fcmgt.2d" | "fcmle.2d" | "fcmlt.2d" => {
+                self.parse_simd_compare_2d(mnemonic)
+            }
             "fadd.4s" | "faddp.4s" | "fmaxp.4s" | "fminp.4s" | "fmaxnmp.4s" | "fminnmp.4s"
             | "fmla.4s" | "fmls.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" | "fmax.4s"
             | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
@@ -4244,6 +4246,24 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let rn = self.parse_simd_reg()?;
         self.expect(&Tok::Comma)?;
+        if matches!(self.peek(), Tok::Hash | Tok::Integer(_) | Tok::Float(_)) {
+            self.parse_fp_zero_immediate("vector FP compare immediate")?;
+            return Ok(match mnemonic {
+                "fcmge.2d" => Inst::FcmgeZeroV2D { rd, rn },
+                "fcmgt.2d" => Inst::FcmgtZeroV2D { rd, rn },
+                "fcmle.2d" => Inst::FcmleZeroV2D { rd, rn },
+                "fcmlt.2d" => Inst::FcmltZeroV2D { rd, rn },
+                _ => {
+                    return Err(self.err(format!(
+                        "{} does not support a zero immediate compare form",
+                        mnemonic
+                    )))
+                }
+            });
+        }
+        if matches!(mnemonic, "fcmle.2d" | "fcmlt.2d") {
+            return Err(self.err(format!("{} requires a #0.0 immediate", mnemonic)));
+        }
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
             "fcmeq.2d" => Inst::FcmeqV2D { rd, rn, rm },
@@ -4613,6 +4633,24 @@ impl<'a> Parser<'a> {
                     literal
                 ))
             })
+        }
+    }
+
+    fn parse_fp_zero_immediate(&mut self, context: &str) -> Result<(), ParseError> {
+        self.eat(&Tok::Hash);
+        match self.peek().clone() {
+            Tok::Integer(0) => {
+                self.advance();
+                Ok(())
+            }
+            Tok::Float(value) => match value.parse::<f64>() {
+                Ok(0.0) => {
+                    self.advance();
+                    Ok(())
+                }
+                _ => Err(self.err(format!("{} must be #0.0", context))),
+            },
+            other => Err(self.err(format!("{} must be #0.0, got {}", context, other))),
         }
     }
 
@@ -8638,6 +8676,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_fcmge_2d_zero() {
+        assert_eq!(
+            parse_inst("fcmge.2d v0, v0, #0.0"),
+            Inst::FcmgeZeroV2D {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
     fn parse_cmgt_4s() {
         assert_eq!(
             parse_inst("cmgt.4s v2, v3, v4"),
@@ -8669,6 +8718,39 @@ mod tests {
                 rd: FpReg::new(6),
                 rn: FpReg::new(7),
                 rm: FpReg::new(8)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fcmgt_2d_zero() {
+        assert_eq!(
+            parse_inst("fcmgt.2d v1, v1, #0.0"),
+            Inst::FcmgtZeroV2D {
+                rd: FpReg::new(1),
+                rn: FpReg::new(1)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fcmle_2d_zero() {
+        assert_eq!(
+            parse_inst("fcmle.2d v2, v2, #0.0"),
+            Inst::FcmleZeroV2D {
+                rd: FpReg::new(2),
+                rn: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fcmlt_2d_zero() {
+        assert_eq!(
+            parse_inst("fcmlt.2d v3, v3, #0.0"),
+            Inst::FcmltZeroV2D {
+                rd: FpReg::new(3),
+                rn: FpReg::new(3)
             }
         );
     }
