@@ -1,0 +1,11 @@
+/* Workbench note: this probe exposed the halfword integer vector pairwise
+ * extrema family from Apple clang, which led to adding `umaxp.8h`,
+ * `uminp.8h`, `smaxp.8h`, and `sminp.8h` and promoting the case into
+ * `tests/clang_probe/vector_pairwise_extrema_h.c`.
+ */
+#include <arm_neon.h>
+
+uint16x8_t pairwise_max_u16(uint16x8_t a, uint16x8_t b) { return vpmaxq_u16(a, b); }
+uint16x8_t pairwise_min_u16(uint16x8_t a, uint16x8_t b) { return vpminq_u16(a, b); }
+int16x8_t pairwise_max_s16(int16x8_t a, int16x8_t b) { return vpmaxq_s16(a, b); }
+int16x8_t pairwise_min_s16(int16x8_t a, int16x8_t b) { return vpminq_s16(a, b); }

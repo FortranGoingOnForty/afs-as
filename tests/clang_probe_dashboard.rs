@@ -276,6 +276,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_pairwise_extrema_h",
+        source: "vector_pairwise_extrema_h.c",
+        driver: "#include <arm_neon.h>\nextern uint16x8_t pairwise_max_u16(uint16x8_t, uint16x8_t);\nextern uint16x8_t pairwise_min_u16(uint16x8_t, uint16x8_t);\nextern int16x8_t pairwise_max_s16(int16x8_t, int16x8_t);\nextern int16x8_t pairwise_min_s16(int16x8_t, int16x8_t);\nint main(void) {\n    uint16x8_t au = {1u, 9u, 3u, 4u, 10u, 0u, 6u, 2u};\n    uint16x8_t bu = {2u, 7u, 5u, 8u, 12u, 11u, 1u, 13u};\n    int16x8_t as = {1, 9, -3, 4, 10, -1, 6, -2};\n    int16x8_t bs = {2, 7, -5, 8, 12, 11, 1, -13};\n    uint16x8_t xu = pairwise_max_u16(au, bu);\n    uint16x8_t nu = pairwise_min_u16(au, bu);\n    int16x8_t xs = pairwise_max_s16(as, bs);\n    int16x8_t ns = pairwise_min_s16(as, bs);\n    return (xu[0] != 9u) || (xu[1] != 4u) || (xu[2] != 10u) || (xu[3] != 6u)\n        || (xu[4] != 7u) || (xu[5] != 8u) || (xu[6] != 12u) || (xu[7] != 13u)\n        || (nu[0] != 1u) || (nu[1] != 3u) || (nu[2] != 0u) || (nu[3] != 2u)\n        || (nu[4] != 2u) || (nu[5] != 5u) || (nu[6] != 11u) || (nu[7] != 1u)\n        || (xs[0] != 9) || (xs[1] != 4) || (xs[2] != 10) || (xs[3] != 6)\n        || (xs[4] != 7) || (xs[5] != 8) || (xs[6] != 12) || (xs[7] != 1)\n        || (ns[0] != 1) || (ns[1] != -3) || (ns[2] != -1) || (ns[3] != -2)\n        || (ns[4] != 2) || (ns[5] != -5) || (ns[6] != 11) || (ns[7] != -13);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_reduce_nm",
         source: "vector_reduce_nm.c",
         driver: "#include <arm_neon.h>\nextern float maxnm4f_reduce(float32x4_t);\nextern float minnm4f_reduce(float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    return (maxnm4f_reduce(a) != 9.0f) || (minnm4f_reduce(a) != -3.0f);\n}\n",
