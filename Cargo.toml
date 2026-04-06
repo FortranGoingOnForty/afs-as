@@ -3,6 +3,11 @@ name = "afs-as"
 version = "0.1.0"
 edition = "2021"
 description = "Standalone ARM64 assembler for macOS"
+license = "GPL-3.0-only"
+repository = "https://github.com/FortranGoingOnForty/afs-as"
+readme = "README.md"
+keywords = ["arm64", "aarch64", "assembler", "macho", "macos"]
+categories = ["development-tools"]
 
 [[bin]]
 name = "afs-as"
