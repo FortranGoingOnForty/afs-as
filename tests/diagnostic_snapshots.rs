@@ -101,6 +101,24 @@ fn snapshot_unsupported_loh_kind() {
 }
 
 #[test]
+fn snapshot_conflicting_build_version() {
+    run_failure_snapshot(
+        "conflicting-build-version.s",
+        ".build_version macos, 11, 0\n.build_version macos, 14, 1\n",
+        "<input>:2:1: error: conflicting .build_version directives: already saw BuildVersionDirective { platform: \"macos\", minos: VersionTriple { major: 11, minor: 0, patch: 0 }, sdk: None }, then BuildVersionDirective { platform: \"macos\", minos: VersionTriple { major: 14, minor: 1, patch: 0 }, sdk: None }\n.build_version macos, 14, 1\n^\n",
+    );
+}
+
+#[test]
+fn snapshot_zerofill_requires_zero_fill_section() {
+    run_failure_snapshot(
+        "bad-zerofill-section.s",
+        ".zerofill __DATA,__data,_bad,8,2\n",
+        "<input>:1:1: error: .zerofill requires a zero-fill section, got __DATA,__data\n.zerofill __DATA,__data,_bad,8,2\n^\n",
+    );
+}
+
+#[test]
 fn snapshot_attr_on_section_without_attr_surface() {
     run_failure_snapshot(
         "unsupported-section-attr-none.s",
