@@ -191,7 +191,7 @@ Major covered families include:
   - `fcvtzs`, `scvtf`, `fmov`
 - SIMD / vector:
   - `add.4s`, `sub.4s`, `smax.4s`, `smin.4s`, `umax.4s`, `umin.4s`
-  - `addp.4s`
+  - `addp.4s`, `smaxp.4s`, `sminp.4s`, `umaxp.4s`, `uminp.4s`
   - `addv.4s`, `smaxv.4s`, `umaxv.4s`
   - `sminv.4s`, `uminv.4s`
   - `faddp.4s`, `faddp.2s`, `fmaxv.4s`, `fminv.4s`
