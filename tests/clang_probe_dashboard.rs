@@ -348,6 +348,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fp_unary_2d",
+        source: "vector_fp_unary_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t abs2f(float64x2_t);\nextern float64x2_t neg2f(float64x2_t);\nextern float64x2_t sqrt2f(float64x2_t);\nint main(void) {\n    float64x2_t a = {-1.5, -4.0};\n    float64x2_t x = abs2f(a);\n    float64x2_t y = neg2f(a);\n    float64x2_t z = sqrt2f((float64x2_t){4.0, 9.0});\n    return (x[0] != 1.5) || (x[1] != 4.0)\n        || (y[0] != 1.5) || (y[1] != 4.0)\n        || (z[0] != 2.0) || (z[1] != 3.0);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fp_convert",
         source: "vector_fp_convert.c",
         driver: "#include <arm_neon.h>\nextern float32x4_t to_float_s32(int32x4_t);\nextern float32x4_t to_float_u32(uint32x4_t);\nextern int32x4_t to_int_s32(float32x4_t);\nextern uint32x4_t to_uint_u32(float32x4_t);\nint main(void) {\n    int32x4_t si = {-1, 2, -3, 4};\n    uint32x4_t ui = {1u, 2u, 3u, 4u};\n    float32x4_t sf = {-1.0f, 2.0f, -3.0f, 4.0f};\n    float32x4_t uf = {1.0f, 2.0f, 3.0f, 4.0f};\n    float32x4_t xs = to_float_s32(si);\n    float32x4_t xu = to_float_u32(ui);\n    int32x4_t ys = to_int_s32(sf);\n    uint32x4_t yu = to_uint_u32(uf);\n    return (xs[0] != -1.0f) || (xs[1] != 2.0f) || (xs[2] != -3.0f) || (xs[3] != 4.0f)\n        || (xu[0] != 1.0f) || (xu[1] != 2.0f) || (xu[2] != 3.0f) || (xu[3] != 4.0f)\n        || (ys[0] != -1) || (ys[1] != 2) || (ys[2] != -3) || (ys[3] != 4)\n        || (yu[0] != 1u) || (yu[1] != 2u) || (yu[2] != 3u) || (yu[3] != 4u);\n}\n",
