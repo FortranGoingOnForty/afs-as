@@ -1220,6 +1220,7 @@ impl<'a> Parser<'a> {
             "mov" => self.parse_mov(),
             "mov.s" | "mov.d" | "mov.h" | "mov.b" => self.parse_simd_lane_insert(mnemonic),
             "umov.h" | "umov.b" => self.parse_simd_lane_extract_gp(mnemonic),
+            "smov.h" | "smov.b" => self.parse_simd_lane_extract_gp_signed(mnemonic),
             "mov.8b" | "mov.16b" | "mov.4s" | "mov.2d" => self.parse_simd_mov(mnemonic),
             "dup.16b" | "dup.8h" | "dup.4s" | "dup.2d" => self.parse_simd_dup(mnemonic),
             "tbl.16b" => self.parse_simd_table_lookup("tbl.16b"),
@@ -1274,6 +1275,12 @@ impl<'a> Parser<'a> {
             "add.4s" | "addp.4s" | "sub.4s" | "smax.4s" | "smaxp.4s" | "smin.4s"
             | "sminp.4s" | "umax.4s" | "umaxp.4s" | "umin.4s" | "uminp.4s" => {
                 self.parse_simd_int_arith_4s(mnemonic)
+            }
+            "addv.16b" | "umaxv.16b" | "smaxv.16b" | "uminv.16b" | "sminv.16b" => {
+                self.parse_simd_reduce_16b(mnemonic)
+            }
+            "addv.8h" | "umaxv.8h" | "smaxv.8h" | "uminv.8h" | "sminv.8h" => {
+                self.parse_simd_reduce_8h(mnemonic)
             }
             "addv.4s" | "faddp.2s" | "fmaxv.4s" | "fminv.4s" | "fmaxnmv.4s"
             | "fminnmv.4s" | "smaxv.4s" | "umaxv.4s" | "sminv.4s" | "uminv.4s" => {
@@ -2398,6 +2405,22 @@ impl<'a> Parser<'a> {
         Ok(match width {
             SimdLaneWidth::H16 => Inst::UmovFromLaneH { rd, rn, index },
             SimdLaneWidth::B8 => Inst::UmovFromLaneB { rd, rn, index },
+            SimdLaneWidth::S32 | SimdLaneWidth::D64 => unreachable!(),
+        })
+    }
+
+    fn parse_simd_lane_extract_gp_signed(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let width = match mnemonic {
+            "smov.h" => SimdLaneWidth::H16,
+            "smov.b" => SimdLaneWidth::B8,
+            _ => unreachable!(),
+        };
+        let rd = self.parse_lane_gp_reg(width, mnemonic)?;
+        self.expect(&Tok::Comma)?;
+        let (rn, index) = self.parse_simd_lane_ref(width)?;
+        Ok(match width {
+            SimdLaneWidth::H16 => Inst::SmovFromLaneH { rd, rn, index },
+            SimdLaneWidth::B8 => Inst::SmovFromLaneB { rd, rn, index },
             SimdLaneWidth::S32 | SimdLaneWidth::D64 => unreachable!(),
         })
     }
@@ -4071,6 +4094,40 @@ impl<'a> Parser<'a> {
             "smaxv.4s" => Inst::SmaxvV4S { rd, rn },
             "uminv.4s" => Inst::UminvV4S { rd, rn },
             "sminv.4s" => Inst::SminvV4S { rd, rn },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_reduce_16b(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, width) = self.parse_fp_mem_reg_with_width()?;
+        if width != FpMemWidth::B8 {
+            return Err(self.err(format!("{} requires a b-register destination", mnemonic)));
+        }
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "addv.16b" => Inst::AddvV16B { rd, rn },
+            "umaxv.16b" => Inst::UmaxvV16B { rd, rn },
+            "smaxv.16b" => Inst::SmaxvV16B { rd, rn },
+            "uminv.16b" => Inst::UminvV16B { rd, rn },
+            "sminv.16b" => Inst::SminvV16B { rd, rn },
+            _ => unreachable!(),
+        })
+    }
+
+    fn parse_simd_reduce_8h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, width) = self.parse_fp_mem_reg_with_width()?;
+        if width != FpMemWidth::H16 {
+            return Err(self.err(format!("{} requires an h-register destination", mnemonic)));
+        }
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_simd_reg()?;
+        Ok(match mnemonic {
+            "addv.8h" => Inst::AddvV8H { rd, rn },
+            "umaxv.8h" => Inst::UmaxvV8H { rd, rn },
+            "smaxv.8h" => Inst::SmaxvV8H { rd, rn },
+            "uminv.8h" => Inst::UminvV8H { rd, rn },
+            "sminv.8h" => Inst::SminvV8H { rd, rn },
             _ => unreachable!(),
         })
     }
@@ -7720,6 +7777,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_addv_16b() {
+        assert_eq!(
+            parse_inst("addv.16b b0, v0"),
+            Inst::AddvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_addv_8h() {
+        assert_eq!(
+            parse_inst("addv.8h h0, v0"),
+            Inst::AddvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
     fn parse_faddp_2s() {
         assert_eq!(
             parse_inst("faddp.2s s3, v4"),
@@ -7786,12 +7865,56 @@ mod tests {
     }
 
     #[test]
+    fn parse_umaxv_16b() {
+        assert_eq!(
+            parse_inst("umaxv.16b b0, v0"),
+            Inst::UmaxvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_umaxv_8h() {
+        assert_eq!(
+            parse_inst("umaxv.8h h0, v0"),
+            Inst::UmaxvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
     fn parse_smaxv_4s() {
         assert_eq!(
             parse_inst("smaxv.4s s3, v4"),
             Inst::SmaxvV4S {
                 rd: FpReg::new(3),
                 rn: FpReg::new(4)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_smaxv_16b() {
+        assert_eq!(
+            parse_inst("smaxv.16b b0, v0"),
+            Inst::SmaxvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_smaxv_8h() {
+        assert_eq!(
+            parse_inst("smaxv.8h h0, v0"),
+            Inst::SmaxvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
             }
         );
     }
@@ -7808,12 +7931,56 @@ mod tests {
     }
 
     #[test]
+    fn parse_uminv_16b() {
+        assert_eq!(
+            parse_inst("uminv.16b b0, v0"),
+            Inst::UminvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_uminv_8h() {
+        assert_eq!(
+            parse_inst("uminv.8h h0, v0"),
+            Inst::UminvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
     fn parse_sminv_4s() {
         assert_eq!(
             parse_inst("sminv.4s s3, v4"),
             Inst::SminvV4S {
                 rd: FpReg::new(3),
                 rn: FpReg::new(4)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sminv_16b() {
+        assert_eq!(
+            parse_inst("sminv.16b b0, v0"),
+            Inst::SminvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_sminv_8h() {
+        assert_eq!(
+            parse_inst("sminv.8h h0, v0"),
+            Inst::SminvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
             }
         );
     }
@@ -8374,6 +8541,30 @@ mod tests {
                 rd: W3,
                 rn: FpReg::new(4),
                 index: 7
+            }
+        );
+    }
+
+    #[test]
+    fn parse_smov_h() {
+        assert_eq!(
+            parse_inst("smov.h w1, v2[3]"),
+            Inst::SmovFromLaneH {
+                rd: W1,
+                rn: FpReg::new(2),
+                index: 3
+            }
+        );
+    }
+
+    #[test]
+    fn parse_smov_b() {
+        assert_eq!(
+            parse_inst("smov.b w0, v0[0]"),
+            Inst::SmovFromLaneB {
+                rd: W0,
+                rn: FpReg::new(0),
+                index: 0
             }
         );
     }

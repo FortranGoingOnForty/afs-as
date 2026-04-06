@@ -1199,14 +1199,34 @@ pub enum Inst {
     UmaxpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// UMINP.4S Vd, Vn, Vm
     UminpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    /// ADDV.16B Bd, Vn
+    AddvV16B { rd: FpReg, rn: FpReg },
+    /// ADDV.8H Hd, Vn
+    AddvV8H { rd: FpReg, rn: FpReg },
     /// ADDV.4S Sd, Vn
     AddvV4S { rd: FpReg, rn: FpReg },
+    /// UMAXV.16B Bd, Vn
+    UmaxvV16B { rd: FpReg, rn: FpReg },
+    /// UMAXV.8H Hd, Vn
+    UmaxvV8H { rd: FpReg, rn: FpReg },
     /// UMAXV.4S Sd, Vn
     UmaxvV4S { rd: FpReg, rn: FpReg },
+    /// SMAXV.16B Bd, Vn
+    SmaxvV16B { rd: FpReg, rn: FpReg },
+    /// SMAXV.8H Hd, Vn
+    SmaxvV8H { rd: FpReg, rn: FpReg },
     /// SMAXV.4S Sd, Vn
     SmaxvV4S { rd: FpReg, rn: FpReg },
+    /// UMINV.16B Bd, Vn
+    UminvV16B { rd: FpReg, rn: FpReg },
+    /// UMINV.8H Hd, Vn
+    UminvV8H { rd: FpReg, rn: FpReg },
     /// UMINV.4S Sd, Vn
     UminvV4S { rd: FpReg, rn: FpReg },
+    /// SMINV.16B Bd, Vn
+    SminvV16B { rd: FpReg, rn: FpReg },
+    /// SMINV.8H Hd, Vn
+    SminvV8H { rd: FpReg, rn: FpReg },
     /// SMINV.4S Sd, Vn
     SminvV4S { rd: FpReg, rn: FpReg },
     /// FMAXV.4S Sd, Vn
@@ -1362,6 +1382,10 @@ pub enum Inst {
     UmovFromLaneH { rd: GpReg, rn: FpReg, index: u8 },
     /// UMOV.B Wd, Vn[index]
     UmovFromLaneB { rd: GpReg, rn: FpReg, index: u8 },
+    /// SMOV.H Wd, Vn[index]
+    SmovFromLaneH { rd: GpReg, rn: FpReg, index: u8 },
+    /// SMOV.B Wd, Vn[index]
+    SmovFromLaneB { rd: GpReg, rn: FpReg, index: u8 },
     /// MOV.S Vd[index], Vn[index]
     MovLaneS {
         rd: FpReg,
@@ -2493,10 +2517,20 @@ impl Inst {
             Inst::UminpV8H { rd, rn, rm } => simd_binary(0x6E60AC00, *rm, *rn, *rd),
             Inst::UmaxpV4S { rd, rn, rm } => simd_binary(0x6EA0A400, *rm, *rn, *rd),
             Inst::UminpV4S { rd, rn, rm } => simd_binary(0x6EA0AC00, *rm, *rn, *rd),
+            Inst::AddvV16B { rd, rn } => simd_reduce(0x4E31B800, *rn, *rd),
+            Inst::AddvV8H { rd, rn } => simd_reduce(0x4E71B800, *rn, *rd),
             Inst::AddvV4S { rd, rn } => simd_reduce_4s(0x4EB1B800, *rn, *rd),
+            Inst::UmaxvV16B { rd, rn } => simd_reduce(0x6E30A800, *rn, *rd),
+            Inst::UmaxvV8H { rd, rn } => simd_reduce(0x6E70A800, *rn, *rd),
             Inst::UmaxvV4S { rd, rn } => simd_reduce_4s(0x6EB0A800, *rn, *rd),
+            Inst::SmaxvV16B { rd, rn } => simd_reduce(0x4E30A800, *rn, *rd),
+            Inst::SmaxvV8H { rd, rn } => simd_reduce(0x4E70A800, *rn, *rd),
             Inst::SmaxvV4S { rd, rn } => simd_reduce_4s(0x4EB0A800, *rn, *rd),
+            Inst::UminvV16B { rd, rn } => simd_reduce(0x6E31A800, *rn, *rd),
+            Inst::UminvV8H { rd, rn } => simd_reduce(0x6E71A800, *rn, *rd),
             Inst::UminvV4S { rd, rn } => simd_reduce_4s(0x6EB1A800, *rn, *rd),
+            Inst::SminvV16B { rd, rn } => simd_reduce(0x4E31A800, *rn, *rd),
+            Inst::SminvV8H { rd, rn } => simd_reduce(0x4E71A800, *rn, *rd),
             Inst::SminvV4S { rd, rn } => simd_reduce_4s(0x4EB1A800, *rn, *rd),
             Inst::FmaxvV4S { rd, rn } => simd_reduce_4s(0x6E30F800, *rn, *rd),
             Inst::FminvV4S { rd, rn } => simd_reduce_4s(0x6EB0F800, *rn, *rd),
@@ -2577,6 +2611,8 @@ impl Inst {
             Inst::MovFromLaneGpD { rd, rn, index } => simd_extract_lane_gp(3, *rn, *index, *rd),
             Inst::UmovFromLaneH { rd, rn, index } => simd_extract_lane_gp(1, *rn, *index, *rd),
             Inst::UmovFromLaneB { rd, rn, index } => simd_extract_lane_gp(0, *rn, *index, *rd),
+            Inst::SmovFromLaneH { rd, rn, index } => simd_extract_lane_gp_signed(1, *rn, *index, *rd),
+            Inst::SmovFromLaneB { rd, rn, index } => simd_extract_lane_gp_signed(0, *rn, *index, *rd),
             Inst::MovLaneS {
                 rd,
                 rd_index,
@@ -3036,8 +3072,12 @@ fn simd_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
     base | (rn.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
-fn simd_reduce_4s(base: u32, rn: FpReg, rd: FpReg) -> u32 {
+fn simd_reduce(base: u32, rn: FpReg, rd: FpReg) -> u32 {
     base | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_reduce_4s(base: u32, rn: FpReg, rd: FpReg) -> u32 {
+    simd_reduce(base, rn, rd)
 }
 
 fn simd_lane_imm5(size_log2: u8, index: u8) -> u32 {
@@ -3076,6 +3116,10 @@ fn simd_extract_lane_gp(size_log2: u8, rn: FpReg, index: u8, rd: GpReg) -> u32 {
         0x0E003C00
     };
     base | (simd_lane_imm5(size_log2, index) << 16) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_extract_lane_gp_signed(size_log2: u8, rn: FpReg, index: u8, rd: GpReg) -> u32 {
+    0x0E002C00 | (simd_lane_imm5(size_log2, index) << 16) | (rn.enc() << 5) | rd.enc()
 }
 
 fn simd_insert_lane_s(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
@@ -5837,6 +5881,28 @@ mod tests {
         );
     }
     #[test]
+    fn addv_16b_b0_v0() {
+        assert_eq!(
+            Inst::AddvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4E31B800
+        );
+    }
+    #[test]
+    fn addv_8h_h0_v0() {
+        assert_eq!(
+            Inst::AddvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4E71B800
+        );
+    }
+    #[test]
     fn faddp_4s_v0_v1_v2() {
         assert_eq!(
             Inst::FaddpV4S {
@@ -6003,6 +6069,28 @@ mod tests {
         );
     }
     #[test]
+    fn umaxv_16b_b0_v0() {
+        assert_eq!(
+            Inst::UmaxvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x6E30A800
+        );
+    }
+    #[test]
+    fn umaxv_8h_h0_v0() {
+        assert_eq!(
+            Inst::UmaxvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x6E70A800
+        );
+    }
+    #[test]
     fn smaxv_4s_s3_v4() {
         assert_eq!(
             Inst::SmaxvV4S {
@@ -6011,6 +6099,28 @@ mod tests {
             }
             .encode(),
             0x4EB0A883
+        );
+    }
+    #[test]
+    fn smaxv_16b_b0_v0() {
+        assert_eq!(
+            Inst::SmaxvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4E30A800
+        );
+    }
+    #[test]
+    fn smaxv_8h_h0_v0() {
+        assert_eq!(
+            Inst::SmaxvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4E70A800
         );
     }
     #[test]
@@ -6025,6 +6135,28 @@ mod tests {
         );
     }
     #[test]
+    fn uminv_16b_b0_v0() {
+        assert_eq!(
+            Inst::UminvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x6E31A800
+        );
+    }
+    #[test]
+    fn uminv_8h_h0_v0() {
+        assert_eq!(
+            Inst::UminvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x6E71A800
+        );
+    }
+    #[test]
     fn sminv_4s_s3_v4() {
         assert_eq!(
             Inst::SminvV4S {
@@ -6033,6 +6165,28 @@ mod tests {
             }
             .encode(),
             0x4EB1A883
+        );
+    }
+    #[test]
+    fn sminv_16b_b0_v0() {
+        assert_eq!(
+            Inst::SminvV16B {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4E31A800
+        );
+    }
+    #[test]
+    fn sminv_8h_h0_v0() {
+        assert_eq!(
+            Inst::SminvV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x4E71A800
         );
     }
     #[test]
@@ -6844,6 +6998,30 @@ mod tests {
             }
             .encode(),
             0x0E0F3C83
+        );
+    }
+    #[test]
+    fn smov_h_w1_v2_lane3() {
+        assert_eq!(
+            Inst::SmovFromLaneH {
+                rd: W1,
+                rn: FpReg::new(2),
+                index: 3
+            }
+            .encode(),
+            0x0E0E2C41
+        );
+    }
+    #[test]
+    fn smov_b_w0_v0_lane0() {
+        assert_eq!(
+            Inst::SmovFromLaneB {
+                rd: W0,
+                rn: FpReg::new(0),
+                index: 0
+            }
+            .encode(),
+            0x0E012C00
         );
     }
     #[test]

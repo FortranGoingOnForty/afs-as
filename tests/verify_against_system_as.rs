@@ -2258,6 +2258,26 @@ fn sys_addv_4s() {
     );
 }
 #[test]
+fn sys_addv_16b() {
+    verify(
+        "addv.16b b0, v0",
+        Inst::AddvV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_addv_8h() {
+    verify(
+        "addv.8h h0, v0",
+        Inst::AddvV8H {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
 fn sys_faddp_2d() {
     verify(
         "faddp.2d v0, v1, v2",
@@ -2450,12 +2470,52 @@ fn sys_umaxv_4s() {
     );
 }
 #[test]
+fn sys_umaxv_16b() {
+    verify(
+        "umaxv.16b b0, v0",
+        Inst::UmaxvV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_umaxv_8h() {
+    verify(
+        "umaxv.8h h0, v0",
+        Inst::UmaxvV8H {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
 fn sys_smaxv_4s() {
     verify(
         "smaxv.4s s3, v4",
         Inst::SmaxvV4S {
             rd: FpReg::new(3),
             rn: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_smaxv_16b() {
+    verify(
+        "smaxv.16b b0, v0",
+        Inst::SmaxvV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_smaxv_8h() {
+    verify(
+        "smaxv.8h h0, v0",
+        Inst::SmaxvV8H {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
         },
     );
 }
@@ -2470,12 +2530,52 @@ fn sys_uminv_4s() {
     );
 }
 #[test]
+fn sys_uminv_16b() {
+    verify(
+        "uminv.16b b0, v0",
+        Inst::UminvV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_uminv_8h() {
+    verify(
+        "uminv.8h h0, v0",
+        Inst::UminvV8H {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
 fn sys_sminv_4s() {
     verify(
         "sminv.4s s3, v4",
         Inst::SminvV4S {
             rd: FpReg::new(3),
             rn: FpReg::new(4),
+        },
+    );
+}
+#[test]
+fn sys_sminv_16b() {
+    verify(
+        "sminv.16b b0, v0",
+        Inst::SminvV16B {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_sminv_8h() {
+    verify(
+        "sminv.8h h0, v0",
+        Inst::SminvV8H {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
         },
     );
 }
@@ -3187,6 +3287,28 @@ fn sys_umov_b() {
             rd: W3,
             rn: FpReg::new(4),
             index: 7,
+        },
+    );
+}
+#[test]
+fn sys_smov_h() {
+    verify(
+        "smov.h w1, v2[3]",
+        Inst::SmovFromLaneH {
+            rd: W1,
+            rn: FpReg::new(2),
+            index: 3,
+        },
+    );
+}
+#[test]
+fn sys_smov_b() {
+    verify(
+        "smov.b w0, v0[0]",
+        Inst::SmovFromLaneB {
+            rd: W0,
+            rn: FpReg::new(0),
+            index: 0,
         },
     );
 }

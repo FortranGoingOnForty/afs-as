@@ -918,6 +918,14 @@ fn rt_addv_4s() {
     roundtrip(".text\naddv.4s s0, v0\n");
 }
 #[test]
+fn rt_addv_16b() {
+    roundtrip(".text\naddv.16b b0, v0\n");
+}
+#[test]
+fn rt_addv_8h() {
+    roundtrip(".text\naddv.8h h0, v0\n");
+}
+#[test]
 fn rt_faddp_2d() {
     roundtrip(".text\nfaddp.2d v0, v1, v2\n");
 }
@@ -990,16 +998,48 @@ fn rt_umaxv_4s() {
     roundtrip(".text\numaxv.4s s1, v2\n");
 }
 #[test]
+fn rt_umaxv_16b() {
+    roundtrip(".text\numaxv.16b b0, v0\n");
+}
+#[test]
+fn rt_umaxv_8h() {
+    roundtrip(".text\numaxv.8h h0, v0\n");
+}
+#[test]
 fn rt_smaxv_4s() {
     roundtrip(".text\nsmaxv.4s s3, v4\n");
+}
+#[test]
+fn rt_smaxv_16b() {
+    roundtrip(".text\nsmaxv.16b b0, v0\n");
+}
+#[test]
+fn rt_smaxv_8h() {
+    roundtrip(".text\nsmaxv.8h h0, v0\n");
 }
 #[test]
 fn rt_uminv_4s() {
     roundtrip(".text\numinv.4s s1, v2\n");
 }
 #[test]
+fn rt_uminv_16b() {
+    roundtrip(".text\numinv.16b b0, v0\n");
+}
+#[test]
+fn rt_uminv_8h() {
+    roundtrip(".text\numinv.8h h0, v0\n");
+}
+#[test]
 fn rt_sminv_4s() {
     roundtrip(".text\nsminv.4s s3, v4\n");
+}
+#[test]
+fn rt_sminv_16b() {
+    roundtrip(".text\nsminv.16b b0, v0\n");
+}
+#[test]
+fn rt_sminv_8h() {
+    roundtrip(".text\nsminv.8h h0, v0\n");
 }
 #[test]
 fn rt_fsub_4s() {
@@ -1272,6 +1312,14 @@ fn rt_umov_h() {
 #[test]
 fn rt_umov_b() {
     roundtrip(".text\numov.b w3, v4[7]\n");
+}
+#[test]
+fn rt_smov_h() {
+    roundtrip(".text\nsmov.h w1, v2[3]\n");
+}
+#[test]
+fn rt_smov_b() {
+    roundtrip(".text\nsmov.b w0, v0[0]\n");
 }
 #[test]
 fn rt_mov_lane_from_gp_s() {
