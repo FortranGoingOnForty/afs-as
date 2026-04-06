@@ -396,6 +396,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_fcmp_2d",
+        source: "vector_fcmp_2d.c",
+        driver: "#include <arm_neon.h>\nextern uint64x2_t eq_mask_f64(float64x2_t, float64x2_t);\nextern uint64x2_t ge_mask_f64(float64x2_t, float64x2_t);\nextern uint64x2_t gt_mask_f64(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {1.0, 9.0};\n    float64x2_t b = {1.0, 7.0};\n    uint64x2_t eq = eq_mask_f64(a, b);\n    uint64x2_t ge = ge_mask_f64(a, b);\n    uint64x2_t gt = gt_mask_f64(a, b);\n    return (eq[0] != 0xFFFFFFFFFFFFFFFFull) || (eq[1] != 0ull)\n        || (ge[0] != 0xFFFFFFFFFFFFFFFFull) || (ge[1] != 0xFFFFFFFFFFFFFFFFull)\n        || (gt[0] != 0ull) || (gt[1] != 0xFFFFFFFFFFFFFFFFull);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp",
         source: "vector_fcmp.c",
         driver: "#include <arm_neon.h>\nextern uint32x4_t eq_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t ge_mask_f32(float32x4_t, float32x4_t);\nextern uint32x4_t gt_mask_f32(float32x4_t, float32x4_t);\nint main(void) {\n    float32x4_t a = {1.0f, 9.0f, -3.0f, 4.0f};\n    float32x4_t b = {1.0f, 7.0f, -5.0f, 8.0f};\n    uint32x4_t eq = eq_mask_f32(a, b);\n    uint32x4_t ge = ge_mask_f32(a, b);\n    uint32x4_t gt = gt_mask_f32(a, b);\n    return (eq[0] != 0xFFFFFFFFu) || (eq[1] != 0u) || (eq[2] != 0u) || (eq[3] != 0u)\n        || (ge[0] != 0xFFFFFFFFu) || (ge[1] != 0xFFFFFFFFu) || (ge[2] != 0xFFFFFFFFu) || (ge[3] != 0u)\n        || (gt[0] != 0u) || (gt[1] != 0xFFFFFFFFu) || (gt[2] != 0xFFFFFFFFu) || (gt[3] != 0u);\n}\n",
