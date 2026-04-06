@@ -858,12 +858,20 @@ fn rt_sminp_4s() {
     roundtrip(".text\nsminp.4s v9, v10, v11\n");
 }
 #[test]
+fn rt_fmax_2d() {
+    roundtrip(".text\nfmax.2d v0, v0, v1\n");
+}
+#[test]
 fn rt_fmax_4s() {
     roundtrip(".text\nfmax.4s v0, v0, v1\n");
 }
 #[test]
 fn rt_fmaxnm_4s() {
     roundtrip(".text\nfmaxnm.4s v0, v1, v2\n");
+}
+#[test]
+fn rt_fmin_2d() {
+    roundtrip(".text\nfmin.2d v2, v3, v4\n");
 }
 #[test]
 fn rt_fmin_4s() {
