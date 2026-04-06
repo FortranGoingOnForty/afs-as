@@ -83,6 +83,69 @@ fn snapshot_unsupported_section() {
 }
 
 #[test]
+fn snapshot_unsupported_section_attr() {
+    run_failure_snapshot(
+        "unsupported-section-attr.s",
+        ".section __TEXT,__text,regular,garbage\nret\n",
+        "<input>:1:39: error: unsupported section attributes for __TEXT,__text: garbage (supported attrs: regular, pure_instructions)\n.section __TEXT,__text,regular,garbage\n                                      ^\n",
+    );
+}
+
+#[test]
+fn snapshot_unsupported_loh_kind() {
+    run_failure_snapshot(
+        "unsupported-loh-kind.s",
+        ".loh UnknownKind Lloh0\n",
+        "<input>:1:18: error: unsupported .loh kind 'UnknownKind' (supported: AdrpAdd, AdrpLdr, AdrpLdrGot, AdrpLdrGotLdr)\n.loh UnknownKind Lloh0\n                 ^\n",
+    );
+}
+
+#[test]
+fn snapshot_unsupported_build_version_platform() {
+    run_failure_snapshot(
+        "unsupported-build-version-platform.s",
+        ".build_version ios, 11, 0\n",
+        "<input>:1:1: error: unsupported .build_version platform 'ios' (supported: macos)\n.build_version ios, 11, 0\n^\n",
+    );
+}
+
+#[test]
+fn snapshot_zerofill_requires_zero_fill_section() {
+    run_failure_snapshot(
+        "bad-zerofill-section.s",
+        ".zerofill __DATA,__data,_bad,8,2\n",
+        "<input>:1:1: error: .zerofill requires a zero-fill section, got __DATA,__data\n.zerofill __DATA,__data,_bad,8,2\n^\n",
+    );
+}
+
+#[test]
+fn snapshot_zerofill_alignment_too_large() {
+    run_failure_snapshot(
+        "zerofill-alignment-too-large.s",
+        ".zerofill __DATA,__bss,_bad,8,31\n",
+        "<input>:1:1: error: zerofill alignment power 31 too large (max 30)\n.zerofill __DATA,__bss,_bad,8,31\n^\n",
+    );
+}
+
+#[test]
+fn snapshot_tbss_alignment_too_large() {
+    run_failure_snapshot(
+        "tbss-alignment-too-large.s",
+        ".tbss _tls_counter$tlv$init, 8, 31\n",
+        "<input>:1:1: error: zerofill alignment power 31 too large (max 30)\n.tbss _tls_counter$tlv$init, 8, 31\n^\n",
+    );
+}
+
+#[test]
+fn snapshot_text_section_requires_regular_with_pure_instructions() {
+    run_failure_snapshot(
+        "text-section-missing-regular.s",
+        ".section __TEXT,__text,pure_instructions\nret\n",
+        "<input>:1:41: error: section __TEXT,__text requires 'regular' when using 'pure_instructions'\n.section __TEXT,__text,pure_instructions\n                                        ^\n",
+    );
+}
+
+#[test]
 fn snapshot_external_literal_target_requires_local_label() {
     run_failure_snapshot(
         "literal-local-label.s",

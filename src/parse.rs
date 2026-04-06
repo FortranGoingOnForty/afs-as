@@ -158,6 +158,70 @@ pub struct ParseError {
     pub msg: String,
 }
 
+fn allowed_section_attrs(seg: &str, sect: &str) -> Option<&'static [&'static str]> {
+    let seg = seg.to_ascii_lowercase();
+    let sect = sect.to_ascii_lowercase();
+    match (seg.as_str(), sect.as_str()) {
+        ("__text", "__text") => Some(&["regular", "pure_instructions"]),
+        ("__text", "__cstring") => Some(&["regular", "cstring_literals"]),
+        ("__text", "__literal16") => Some(&["regular", "16byte_literals"]),
+        ("__text", "__const") => Some(&["regular"]),
+        ("__data", "__data") => Some(&["regular"]),
+        // Apple `as` accepts either thread-local attr spelling here and
+        // canonicalizes based on the section name.
+        ("__data", "__thread_data") => {
+            Some(&["regular", "thread_local_regular", "thread_local_variables"])
+        }
+        ("__data", "__thread_vars") => {
+            Some(&["regular", "thread_local_regular", "thread_local_variables"])
+        }
+        _ => None,
+    }
+}
+
+fn validate_section_attrs(seg: &str, sect: &str, attrs: &[String]) -> Result<(), String> {
+    if attrs.is_empty() {
+        return Ok(());
+    }
+    let Some(allowed) = allowed_section_attrs(seg, sect) else {
+        return Err(format!(
+            "section {},{} does not support explicit attributes",
+            seg, sect
+        ));
+    };
+    let unsupported: Vec<_> = attrs
+        .iter()
+        .filter(|attr| {
+            !allowed
+                .iter()
+                .any(|allowed_attr| attr.eq_ignore_ascii_case(allowed_attr))
+        })
+        .cloned()
+        .collect();
+    if unsupported.is_empty() {
+        if seg.eq_ignore_ascii_case("__TEXT")
+            && sect.eq_ignore_ascii_case("__text")
+            && attrs.iter().any(|attr| attr.eq_ignore_ascii_case("pure_instructions"))
+            && !attrs.iter().any(|attr| attr.eq_ignore_ascii_case("regular"))
+        {
+            return Err(format!(
+                "section {},{} requires 'regular' when using 'pure_instructions'",
+                seg, sect
+            ));
+        }
+
+        return Ok(());
+    }
+
+    Err(format!(
+        "unsupported section attributes for {},{}: {} (supported attrs: {})",
+        seg,
+        sect,
+        unsupported.join(", "),
+        allowed.join(", ")
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocatedStmt {
     pub stmt: Stmt,
@@ -305,6 +369,34 @@ impl<'a> Parser<'a> {
                 Ok(s)
             }
             other => Err(self.err(format!("expected identifier, got {}", other))),
+        }
+    }
+
+    fn parse_section_attr(&mut self) -> Result<String, ParseError> {
+        let mut attr = String::new();
+        let mut consumed = false;
+        loop {
+            match self.peek().clone() {
+                Tok::Ident(s) => {
+                    self.advance();
+                    attr.push_str(&s);
+                    consumed = true;
+                }
+                Tok::Integer(n) => {
+                    self.advance();
+                    attr.push_str(&n.to_string());
+                    consumed = true;
+                }
+                _ => break,
+            }
+        }
+        if consumed {
+            Ok(attr)
+        } else {
+            Err(self.err(format!(
+                "expected section attribute, got {}",
+                self.peek()
+            )))
         }
     }
 
@@ -629,11 +721,12 @@ impl<'a> Parser<'a> {
                 let seg = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
                 let sect = self.expect_ident()?;
-                // Skip any additional section attributes (e.g., regular,pure_instructions)
+                let mut attrs = Vec::new();
                 while self.eat(&Tok::Comma) {
-                    while !self.at_end_of_stmt() && self.peek() != &Tok::Comma {
-                        self.advance();
-                    }
+                    attrs.push(self.parse_section_attr()?);
+                }
+                if let Err(msg) = validate_section_attrs(&seg, &sect, &attrs) {
+                    return Err(self.err(msg));
                 }
                 Directive::Section(seg, sect)
             }
@@ -665,6 +758,12 @@ impl<'a> Parser<'a> {
             }
             ".loh" => {
                 let kind = self.expect_ident()?;
+                let Some(expected) = linker_optimization_hint_label_count(&kind) else {
+                    return Err(self.err(format!(
+                        "unsupported .loh kind '{}' (supported: AdrpAdd, AdrpLdr, AdrpLdrGot, AdrpLdrGotLdr)",
+                        kind
+                    )));
+                };
                 let mut labels = Vec::new();
                 if !self.at_end_of_stmt() {
                     labels.push(self.expect_ident()?);
@@ -673,16 +772,14 @@ impl<'a> Parser<'a> {
                         labels.push(self.expect_ident()?);
                     }
                 }
-                if let Some(expected) = linker_optimization_hint_label_count(&kind) {
-                    if labels.len() != expected {
-                        return Err(self.err(format!(
-                            ".loh {} expects {} label{}, got {}",
-                            kind,
-                            expected,
-                            if expected == 1 { "" } else { "s" },
-                            labels.len()
-                        )));
-                    }
+                if labels.len() != expected {
+                    return Err(self.err(format!(
+                        ".loh {} expects {} label{}, got {}",
+                        kind,
+                        expected,
+                        if expected == 1 { "" } else { "s" },
+                        labels.len()
+                    )));
                 }
                 Directive::LinkerOptimizationHint(LinkerOptimizationHintDirective { kind, labels })
             }
@@ -9829,6 +9926,100 @@ mod tests {
     }
 
     #[test]
+    fn parse_text_section_with_attrs() {
+        let stmts = parse_stmts(".section __TEXT,__text,regular,pure_instructions");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__TEXT".into(),
+                "__text".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_cstring_section_with_attrs() {
+        let stmts = parse_stmts(".section __TEXT,__cstring,cstring_literals");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__TEXT".into(),
+                "__cstring".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_thread_data_section_with_attrs() {
+        let stmts = parse_stmts(".section __DATA,__thread_data,thread_local_regular");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__DATA".into(),
+                "__thread_data".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_literal16_section_with_attrs() {
+        let stmts = parse_stmts(".section __TEXT,__literal16,16byte_literals");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__TEXT".into(),
+                "__literal16".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_thread_vars_section_with_attrs() {
+        let stmts = parse_stmts(".section __DATA,__thread_vars,thread_local_variables");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__DATA".into(),
+                "__thread_vars".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_section_with_unsupported_attrs_errors() {
+        let err = parse_err(".section __TEXT,__text,regular,garbage");
+        assert!(
+            err.contains(
+                "unsupported section attributes for __TEXT,__text: garbage (supported attrs: regular, pure_instructions)"
+            ),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn parse_const_section_with_regular_attr() {
+        let stmts = parse_stmts(".section __TEXT,__const,regular");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__TEXT".into(),
+                "__const".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_text_section_pure_without_regular_errors() {
+        let err = parse_err(".section __TEXT,__text,pure_instructions");
+        assert!(
+            err.contains("section __TEXT,__text requires 'regular' when using 'pure_instructions'"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
     fn parse_unknown_directive_errors() {
         let err = parse_err(".unknown_directive");
         assert!(
@@ -9948,6 +10139,17 @@ mod tests {
         assert_eq!(err.line, 1);
         assert_eq!(err.col, 20);
         assert_eq!(err.msg, "expected ,, got Lloh1");
+    }
+
+    #[test]
+    fn parse_linker_optimization_hint_unknown_kind_errors() {
+        let err = parse(".loh UnknownKind Lloh0").unwrap_err();
+        assert_eq!(err.line, 1);
+        assert_eq!(err.col, 18);
+        assert_eq!(
+            err.msg,
+            "unsupported .loh kind 'UnknownKind' (supported: AdrpAdd, AdrpLdr, AdrpLdrGot, AdrpLdrGotLdr)"
+        );
     }
 
     // ---- Multi-line programs ----
