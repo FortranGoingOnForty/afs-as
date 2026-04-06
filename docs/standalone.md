@@ -69,13 +69,20 @@ Supported section directives:
 - `.data`
 - `.cstring`
 - `.section __TEXT,__text`
+- `.section __TEXT,__text,regular,pure_instructions`
 - `.section __TEXT,__cstring`
+- `.section __TEXT,__cstring,cstring_literals`
+- `.section __TEXT,__literal16,16byte_literals`
 - `.section __TEXT,__const`
 - `.section __DATA,__data`
 - `.section __DATA,__thread_data`
+- `.section __DATA,__thread_data,thread_local_regular`
 - `.section __DATA,__thread_vars`
+- `.section __DATA,__thread_vars,thread_local_variables`
 - `.section __DATA,__thread_bss`
 - `.section __DATA,__bss`
+
+Other trailing `.section` attributes are currently rejected explicitly rather than ignored.
 
 Supported data / layout directives:
 
