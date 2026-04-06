@@ -426,6 +426,12 @@ const CASES: &[ProbeCase] = &[
         support: None,
     },
     ProbeCase {
+        name: "vector_shuffle_2d",
+        source: "vector_shuffle_2d.c",
+        driver: "#include <arm_neon.h>\nextern float64x2_t zip1_2d(float64x2_t, float64x2_t);\nextern float64x2_t zip2_2d(float64x2_t, float64x2_t);\nextern float64x2_t uzp1_2d(float64x2_t, float64x2_t);\nextern float64x2_t uzp2_2d(float64x2_t, float64x2_t);\nextern float64x2_t trn1_2d(float64x2_t, float64x2_t);\nextern float64x2_t trn2_2d(float64x2_t, float64x2_t);\nint main(void) {\n    float64x2_t a = {1.0, 2.0};\n    float64x2_t b = {10.0, 20.0};\n    float64x2_t z1 = zip1_2d(a, b);\n    float64x2_t z2 = zip2_2d(a, b);\n    float64x2_t u1 = uzp1_2d(a, b);\n    float64x2_t u2 = uzp2_2d(a, b);\n    float64x2_t t1 = trn1_2d(a, b);\n    float64x2_t t2 = trn2_2d(a, b);\n    return (z1[0] != 1.0) || (z1[1] != 10.0)\n        || (z2[0] != 2.0) || (z2[1] != 20.0)\n        || (u1[0] != 1.0) || (u1[1] != 10.0)\n        || (u2[0] != 2.0) || (u2[1] != 20.0)\n        || (t1[0] != 1.0) || (t1[1] != 10.0)\n        || (t2[0] != 2.0) || (t2[1] != 20.0);\n}\n",
+        support: None,
+    },
+    ProbeCase {
         name: "vector_fcmp_zero_2d",
         source: "vector_fcmp_zero_2d.c",
         driver: "#include <arm_neon.h>\nextern uint64x2_t ge_zero_f64(float64x2_t);\nextern uint64x2_t gt_zero_f64(float64x2_t);\nextern uint64x2_t le_zero_f64(float64x2_t);\nextern uint64x2_t lt_zero_f64(float64x2_t);\nint main(void) {\n    float64x2_t a = {-1.0, 0.0};\n    uint64x2_t ge = ge_zero_f64(a);\n    uint64x2_t gt = gt_zero_f64(a);\n    uint64x2_t le = le_zero_f64(a);\n    uint64x2_t lt = lt_zero_f64(a);\n    return (ge[0] != 0ull) || (ge[1] != 0xFFFFFFFFFFFFFFFFull)\n        || (gt[0] != 0ull) || (gt[1] != 0ull)\n        || (le[0] != 0xFFFFFFFFFFFFFFFFull) || (le[1] != 0xFFFFFFFFFFFFFFFFull)\n        || (lt[0] != 0xFFFFFFFFFFFFFFFFull) || (lt[1] != 0ull);\n}\n",

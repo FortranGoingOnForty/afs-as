@@ -212,7 +212,7 @@ Major covered families include:
   - `cmeq.4s`, `cmhs.4s`, `cmhi.4s`, `cmge.4s`, `cmgt.4s`
   - `fcmeq.4s`, `fcmeq.2d`, `fcmge.4s`, `fcmge.2d`, `fcmgt.4s`, `fcmgt.2d`
   - `fcmge.2d #0.0`, `fcmgt.2d #0.0`, `fcmle.2d #0.0`, `fcmlt.2d #0.0`
-  - `ext.16b`, `rev64.4s`, `zip1.4s`, `zip2.4s`, `uzp1.4s`, `uzp2.4s`, `trn1.4s`, `trn2.4s`
+  - `ext.16b`, `rev64.4s`, `zip1.4s`, `zip2.4s`, `uzp1.4s`, `uzp2.4s`, `trn1.4s`, `trn2.4s`, `zip1.2d`, `zip2.2d`, `uzp1.2d`, `uzp2.2d`, `trn1.2d`, `trn2.2d`
   - `tbl.16b`, `tbx.16b`
   - `fadd.4s`, `fsub.4s`, `fmul.4s`, `fdiv.4s`, `fadd.2d`, `fsub.2d`, `fmul.2d`, `fdiv.2d`, `fabd.2d`, `fmax.4s`, `fmin.4s`, `fmax.2d`, `fmin.2d`
   - `fmaxnm.4s`, `fminnm.4s`, `fmaxnm.2d`, `fminnm.2d`
