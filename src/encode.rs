@@ -1147,6 +1147,10 @@ pub enum Inst {
     FmaxpV2DScalar { rd: FpReg, rn: FpReg },
     /// FMINP.2D Dd, Vn
     FminpV2DScalar { rd: FpReg, rn: FpReg },
+    /// FMAXNMP.2D Dd, Vn
+    FmaxnmpV2DScalar { rd: FpReg, rn: FpReg },
+    /// FMINNMP.2D Dd, Vn
+    FminnmpV2DScalar { rd: FpReg, rn: FpReg },
     /// FMLA.4S Vd, Vn, Vm
     FmlaV4S { rd: FpReg, rn: FpReg, rm: FpReg },
     /// FMLS.4S Vd, Vn, Vm
@@ -2499,6 +2503,8 @@ impl Inst {
             Inst::FaddpV2DScalar { rd, rn } => simd_reduce(0x7E70D800, *rn, *rd),
             Inst::FmaxpV2DScalar { rd, rn } => simd_reduce(0x7E70F800, *rn, *rd),
             Inst::FminpV2DScalar { rd, rn } => simd_reduce(0x7EF0F800, *rn, *rd),
+            Inst::FmaxnmpV2DScalar { rd, rn } => simd_reduce(0x7E70C800, *rn, *rd),
+            Inst::FminnmpV2DScalar { rd, rn } => simd_reduce(0x7EF0C800, *rn, *rd),
             Inst::FmlaV4S { rd, rn, rm } => simd_fp_arith_4s(0x4E20CC00, *rm, *rn, *rd),
             Inst::FmlsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0CC00, *rm, *rn, *rd),
             Inst::AddV4S { rd, rn, rm } => simd_binary(0x4EA08400, *rm, *rn, *rd),
@@ -6097,6 +6103,28 @@ mod tests {
             }
             .encode(),
             0x7EF0F883
+        );
+    }
+    #[test]
+    fn fmaxnmp_2d_d0_v0() {
+        assert_eq!(
+            Inst::FmaxnmpV2DScalar {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+            .encode(),
+            0x7E70C800
+        );
+    }
+    #[test]
+    fn fminnmp_2d_d1_v2() {
+        assert_eq!(
+            Inst::FminnmpV2DScalar {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
+            }
+            .encode(),
+            0x7EF0C841
         );
     }
     #[test]

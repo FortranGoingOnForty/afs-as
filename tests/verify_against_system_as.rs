@@ -2450,6 +2450,26 @@ fn sys_fminp_2d_scalar() {
     );
 }
 #[test]
+fn sys_fmaxnmp_2d_scalar() {
+    verify(
+        "fmaxnmp.2d d0, v0",
+        Inst::FmaxnmpV2DScalar {
+            rd: FpReg::new(0),
+            rn: FpReg::new(0),
+        },
+    );
+}
+#[test]
+fn sys_fminnmp_2d_scalar() {
+    verify(
+        "fminnmp.2d d1, v2",
+        Inst::FminnmpV2DScalar {
+            rd: FpReg::new(1),
+            rn: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_fmaxv_4s() {
     verify(
         "fmaxv.4s s1, v2",

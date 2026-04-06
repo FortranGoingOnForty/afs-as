@@ -990,6 +990,14 @@ fn rt_fminp_2d_scalar() {
     roundtrip(".text\nfminp.2d d3, v4\n");
 }
 #[test]
+fn rt_fmaxnmp_2d_scalar() {
+    roundtrip(".text\nfmaxnmp.2d d0, v0\n");
+}
+#[test]
+fn rt_fminnmp_2d_scalar() {
+    roundtrip(".text\nfminnmp.2d d1, v2\n");
+}
+#[test]
 fn rt_fmaxv_4s() {
     roundtrip(".text\nfmaxv.4s s1, v2\n");
 }

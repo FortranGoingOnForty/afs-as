@@ -1295,8 +1295,9 @@ impl<'a> Parser<'a> {
             | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
-            "faddp.2d" | "fmaxp.2d" | "fminp.2d" => self.parse_fpairwise_or_reduce_2d(mnemonic),
-            "fmaxnmp.2d" | "fminnmp.2d" => self.parse_simd_fp_arith_2d(mnemonic),
+            "faddp.2d" | "fmaxp.2d" | "fminp.2d" | "fmaxnmp.2d" | "fminnmp.2d" => {
+                self.parse_fpairwise_or_reduce_2d(mnemonic)
+            }
             "fabs.4s" | "fneg.4s" | "fsqrt.4s" | "scvtf.4s" | "ucvtf.4s" | "fcvtzs.4s"
             | "fcvtzu.4s" | "frecpe.4s" | "frsqrte.4s" | "frintn.4s" | "frintm.4s"
             | "frintp.4s" | "frintz.4s" | "frinta.4s" | "frinti.4s" => {
@@ -4116,6 +4117,8 @@ impl<'a> Parser<'a> {
             "faddp.2d" => Inst::FaddpV2DScalar { rd, rn },
             "fmaxp.2d" => Inst::FmaxpV2DScalar { rd, rn },
             "fminp.2d" => Inst::FminpV2DScalar { rd, rn },
+            "fmaxnmp.2d" => Inst::FmaxnmpV2DScalar { rd, rn },
+            "fminnmp.2d" => Inst::FminnmpV2DScalar { rd, rn },
             _ => unreachable!(),
         })
     }
@@ -7463,6 +7466,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_fmaxnmp_2d_scalar() {
+        assert_eq!(
+            parse_inst("fmaxnmp.2d d0, v0"),
+            Inst::FmaxnmpV2DScalar {
+                rd: FpReg::new(0),
+                rn: FpReg::new(0)
+            }
+        );
+    }
+
+    #[test]
     fn parse_fminnmp_4s() {
         assert_eq!(
             parse_inst("fminnmp.4s v3, v4, v5"),
@@ -7482,6 +7496,17 @@ mod tests {
                 rd: FpReg::new(3),
                 rn: FpReg::new(4),
                 rm: FpReg::new(5)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fminnmp_2d_scalar() {
+        assert_eq!(
+            parse_inst("fminnmp.2d d1, v2"),
+            Inst::FminnmpV2DScalar {
+                rd: FpReg::new(1),
+                rn: FpReg::new(2)
             }
         );
     }
