@@ -83,6 +83,15 @@ fn snapshot_unsupported_section() {
 }
 
 #[test]
+fn snapshot_unsupported_section_attr() {
+    run_failure_snapshot(
+        "unsupported-section-attr.s",
+        ".section __TEXT,__text,regular,garbage\nret\n",
+        "<input>:1:39: error: unsupported section attributes for __TEXT,__text: garbage (supported attrs: regular, pure_instructions)\n.section __TEXT,__text,regular,garbage\n                                      ^\n",
+    );
+}
+
+#[test]
 fn snapshot_external_literal_target_requires_local_label() {
     run_failure_snapshot(
         "literal-local-label.s",

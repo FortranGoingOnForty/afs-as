@@ -158,6 +158,45 @@ pub struct ParseError {
     pub msg: String,
 }
 
+fn allowed_section_attrs(seg: &str, sect: &str) -> Option<&'static [&'static str]> {
+    let seg = seg.to_ascii_lowercase();
+    let sect = sect.to_ascii_lowercase();
+    match (seg.as_str(), sect.as_str()) {
+        ("__text", "__text") => Some(&["regular", "pure_instructions"]),
+        ("__text", "__cstring") => Some(&["cstring_literals"]),
+        ("__text", "__literal16") => Some(&["16byte_literals"]),
+        ("__data", "__thread_data") => Some(&["thread_local_regular"]),
+        ("__data", "__thread_vars") => Some(&["thread_local_variables"]),
+        _ => None,
+    }
+}
+
+fn validate_section_attrs(seg: &str, sect: &str, attrs: &[String]) -> Result<(), String> {
+    let Some(allowed) = allowed_section_attrs(seg, sect) else {
+        return Ok(());
+    };
+    let unsupported: Vec<_> = attrs
+        .iter()
+        .filter(|attr| {
+            !allowed
+                .iter()
+                .any(|allowed_attr| attr.eq_ignore_ascii_case(allowed_attr))
+        })
+        .cloned()
+        .collect();
+    if unsupported.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "unsupported section attributes for {},{}: {} (supported attrs: {})",
+        seg,
+        sect,
+        unsupported.join(", "),
+        allowed.join(", ")
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocatedStmt {
     pub stmt: Stmt,
@@ -305,6 +344,34 @@ impl<'a> Parser<'a> {
                 Ok(s)
             }
             other => Err(self.err(format!("expected identifier, got {}", other))),
+        }
+    }
+
+    fn parse_section_attr(&mut self) -> Result<String, ParseError> {
+        let mut attr = String::new();
+        let mut consumed = false;
+        loop {
+            match self.peek().clone() {
+                Tok::Ident(s) => {
+                    self.advance();
+                    attr.push_str(&s);
+                    consumed = true;
+                }
+                Tok::Integer(n) => {
+                    self.advance();
+                    attr.push_str(&n.to_string());
+                    consumed = true;
+                }
+                _ => break,
+            }
+        }
+        if consumed {
+            Ok(attr)
+        } else {
+            Err(self.err(format!(
+                "expected section attribute, got {}",
+                self.peek()
+            )))
         }
     }
 
@@ -629,11 +696,12 @@ impl<'a> Parser<'a> {
                 let seg = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
                 let sect = self.expect_ident()?;
-                // Skip any additional section attributes (e.g., regular,pure_instructions)
+                let mut attrs = Vec::new();
                 while self.eat(&Tok::Comma) {
-                    while !self.at_end_of_stmt() && self.peek() != &Tok::Comma {
-                        self.advance();
-                    }
+                    attrs.push(self.parse_section_attr()?);
+                }
+                if let Err(msg) = validate_section_attrs(&seg, &sect, &attrs) {
+                    return Err(self.err(msg));
                 }
                 Directive::Section(seg, sect)
             }
@@ -9825,6 +9893,78 @@ mod tests {
                 size: 4,
                 align_pow2: 2,
             })]
+        );
+    }
+
+    #[test]
+    fn parse_text_section_with_attrs() {
+        let stmts = parse_stmts(".section __TEXT,__text,regular,pure_instructions");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__TEXT".into(),
+                "__text".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_cstring_section_with_attrs() {
+        let stmts = parse_stmts(".section __TEXT,__cstring,cstring_literals");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__TEXT".into(),
+                "__cstring".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_thread_data_section_with_attrs() {
+        let stmts = parse_stmts(".section __DATA,__thread_data,thread_local_regular");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__DATA".into(),
+                "__thread_data".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_literal16_section_with_attrs() {
+        let stmts = parse_stmts(".section __TEXT,__literal16,16byte_literals");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__TEXT".into(),
+                "__literal16".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_thread_vars_section_with_attrs() {
+        let stmts = parse_stmts(".section __DATA,__thread_vars,thread_local_variables");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__DATA".into(),
+                "__thread_vars".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_section_with_unsupported_attrs_errors() {
+        let err = parse_err(".section __TEXT,__text,regular,garbage");
+        assert!(
+            err.contains(
+                "unsupported section attributes for __TEXT,__text: garbage (supported attrs: regular, pure_instructions)"
+            ),
+            "got: {}",
+            err
         );
     }
 
