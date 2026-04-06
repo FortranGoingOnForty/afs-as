@@ -1984,6 +1984,28 @@ fn sys_add_4s() {
     );
 }
 #[test]
+fn sys_addp_16b() {
+    verify(
+        "addp.16b v6, v7, v8",
+        Inst::AddpV16B {
+            rd: FpReg::new(6),
+            rn: FpReg::new(7),
+            rm: FpReg::new(8),
+        },
+    );
+}
+#[test]
+fn sys_addp_8h() {
+    verify(
+        "addp.8h v0, v1, v2",
+        Inst::AddpV8H {
+            rd: FpReg::new(0),
+            rn: FpReg::new(1),
+            rm: FpReg::new(2),
+        },
+    );
+}
+#[test]
 fn sys_addp_4s() {
     verify(
         "addp.4s v0, v1, v2",

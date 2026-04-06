@@ -1264,10 +1264,10 @@ impl<'a> Parser<'a> {
 
             // FP arithmetic (double)
             "fadd" => self.parse_fp_arith("fadd"),
-            "smaxp.16b" | "sminp.16b" | "umaxp.16b" | "uminp.16b" => {
+            "addp.16b" | "smaxp.16b" | "sminp.16b" | "umaxp.16b" | "uminp.16b" => {
                 self.parse_simd_int_arith_16b(mnemonic)
             }
-            "smaxp.8h" | "sminp.8h" | "umaxp.8h" | "uminp.8h" => {
+            "addp.8h" | "smaxp.8h" | "sminp.8h" | "umaxp.8h" | "uminp.8h" => {
                 self.parse_simd_int_arith_8h(mnemonic)
             }
             "add.4s" | "addp.4s" | "sub.4s" | "smax.4s" | "smaxp.4s" | "smin.4s"
@@ -3996,6 +3996,7 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
+            "addp.8h" => Inst::AddpV8H { rd, rn, rm },
             "smaxp.8h" => Inst::SmaxpV8H { rd, rn, rm },
             "sminp.8h" => Inst::SminpV8H { rd, rn, rm },
             "umaxp.8h" => Inst::UmaxpV8H { rd, rn, rm },
@@ -4011,6 +4012,7 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
+            "addp.16b" => Inst::AddpV16B { rd, rn, rm },
             "smaxp.16b" => Inst::SmaxpV16B { rd, rn, rm },
             "sminp.16b" => Inst::SminpV16B { rd, rn, rm },
             "umaxp.16b" => Inst::UmaxpV16B { rd, rn, rm },
@@ -7334,6 +7336,30 @@ mod tests {
                 rd: FpReg::new(0),
                 rn: FpReg::new(1),
                 rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_addp_8h() {
+        assert_eq!(
+            parse_inst("addp.8h v0, v1, v2"),
+            Inst::AddpV8H {
+                rd: FpReg::new(0),
+                rn: FpReg::new(1),
+                rm: FpReg::new(2)
+            }
+        );
+    }
+
+    #[test]
+    fn parse_addp_16b() {
+        assert_eq!(
+            parse_inst("addp.16b v6, v7, v8"),
+            Inst::AddpV16B {
+                rd: FpReg::new(6),
+                rn: FpReg::new(7),
+                rm: FpReg::new(8)
             }
         );
     }

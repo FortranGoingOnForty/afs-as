@@ -818,6 +818,14 @@ fn rt_add_4s() {
     roundtrip(".text\nadd.4s v0, v1, v2\n");
 }
 #[test]
+fn rt_addp_16b() {
+    roundtrip(".text\naddp.16b v6, v7, v8\n");
+}
+#[test]
+fn rt_addp_8h() {
+    roundtrip(".text\naddp.8h v0, v1, v2\n");
+}
+#[test]
 fn rt_addp_4s() {
     roundtrip(".text\naddp.4s v0, v1, v2\n");
 }
