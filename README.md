@@ -37,21 +37,44 @@ CLI behavior is intentionally small and explicit:
 
 ## Standalone Support Matrix
 
-The tracked support matrix lives in [docs/standalone.md](docs/standalone.md).
-The standalone release checklist lives in [docs/release-readiness.md](docs/release-readiness.md).
+The public standalone surface is intentionally small and explicit.
 
-That document covers:
+CLI:
 
-- supported labels, expressions, relocations, directives, and instruction families
-- known unsupported features that currently fail explicitly
-- library API vs CLI usage
-- testing strategy for expanding the standalone surface safely
+- one input file
+- default `.o` derivation from the input path
+- `--` stops option parsing
+- `-` may be used for stdin input or stdout output
+- stdin requires explicit `-o <path>` or `-o -`
+- usage errors exit `2`; parse or assembly failures exit `1`
 
-The release-readiness checklist covers:
+Supported section surface:
 
-- the required CI and local gates for a standalone claim
-- the hard failure conditions that block that claim
-- testing opportunities when the release bar changes
+- `__TEXT,__text`
+- `__TEXT,__cstring`
+- `__TEXT,__literal16`
+- `__TEXT,__const`
+- `__DATA,__data`
+- `__DATA,__thread_data`
+- `__DATA,__thread_vars`
+- `__DATA,__thread_bss`
+- `__DATA,__bss`
+
+Supported directive families include:
+
+- symbol directives: `.global` / `.globl`, `.extern`, `.private_extern`, `.weak_reference`, `.weak_definition`, `.set`, `.equ`
+- data/layout directives: `.byte`, `.short`, `.word`, `.long`, `.quad`, `.ascii`, `.asciz`, `.string`, `.space`, `.skip`, `.zero`, `.fill`, `.align`, `.p2align`, `.comm`, `.zerofill`, `.tbss`
+- metadata directives: `.section` for the supported section set, `.subsections_via_symbols`, `.build_version` for `macos`
+- linker-optimization hints: `.loh AdrpAdd`, `.loh AdrpLdr`, `.loh AdrpLdrGot`, `.loh AdrpLdrGotLdr`
+- CFI subset: `.cfi_startproc`, `.cfi_endproc`, `.cfi_def_cfa`, `.cfi_def_cfa_offset`, `.cfi_def_cfa_register`, `.cfi_offset`, `.cfi_restore`, `.cfi_adjust_cfa_offset`
+
+Unsupported forms are expected to fail explicitly rather than assemble silently.
+
+Release gates for a standalone claim:
+
+- `cargo test -p afs-as`
+- `cargo clippy -p afs-as --all-targets -- -D warnings`
+- green differential, corpus, CLI, diagnostic, dashboard, stress, fuzz, malformed-input, and perf suites in CI
 
 ## Library API
 
