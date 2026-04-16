@@ -470,7 +470,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     // ---- Relocation entries (descending address order within each section) ----
     for section in &obj.sections {
         let mut sorted_relocs: Vec<_> = section.relocations.iter().collect();
-        sorted_relocs.sort_by(|a, b| b.offset.cmp(&a.offset));
+        sorted_relocs.sort_by_key(|rel| std::cmp::Reverse(rel.offset));
         for rel in &sorted_relocs {
             write_reloc(w, rel)?;
         }
@@ -512,7 +512,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         if sym.weak_def {
             n_desc |= N_WEAK_DEF;
         }
-        write_u32(w, str_offset as u32)?; // n_strx
+        write_u32(w, str_offset)?; // n_strx
         w.write_all(&[n_type])?; // n_type
         w.write_all(&[sym.section])?; // n_sect
         write_u16(w, n_desc)?; // n_desc
