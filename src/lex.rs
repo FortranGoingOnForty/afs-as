@@ -73,7 +73,9 @@ impl fmt::Display for Tok {
             Tok::Ident(s) => write!(f, "{}", s),
             Tok::Integer(n) => write!(f, "{}", n),
             Tok::Float(s) => write!(f, "{}", s),
-            Tok::StringLit(bytes) => write!(f, "\"{}\"", String::from_utf8_lossy(bytes).escape_default()),
+            Tok::StringLit(bytes) => {
+                write!(f, "\"{}\"", String::from_utf8_lossy(bytes).escape_default())
+            }
             Tok::Hash => write!(f, "#"),
             Tok::Comma => write!(f, ","),
             Tok::Plus => write!(f, "+"),
@@ -379,10 +381,7 @@ impl<'a> Lexer<'a> {
             while self.pos < self.src.len() && self.peek().is_ascii_digit() {
                 self.advance();
             }
-            if self.pos < self.src.len()
-                && self.peek() == b'.'
-                && self.peek2().is_ascii_digit()
-            {
+            if self.pos < self.src.len() && self.peek() == b'.' && self.peek2().is_ascii_digit() {
                 self.advance();
                 while self.pos < self.src.len() && self.peek().is_ascii_digit() {
                     self.advance();
@@ -621,7 +620,10 @@ mod tests {
 
     #[test]
     fn immediate_float() {
-        assert_eq!(tok_kinds("#3.50000000"), vec![Tok::Float("3.50000000".into())]);
+        assert_eq!(
+            tok_kinds("#3.50000000"),
+            vec![Tok::Float("3.50000000".into())]
+        );
     }
 
     // ---- Punctuation ----

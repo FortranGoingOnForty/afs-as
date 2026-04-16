@@ -120,7 +120,10 @@ fn mixed_link_runtime_inputs_match_system_as() {
 fn mixed_link_runtime_relocatable_matches_system_as() {
     let paths = assemble_fixtures();
 
-    common::link_relocatable_with_system(&[&paths.ours_main, &paths.ours_support], &paths.ours_linked);
+    common::link_relocatable_with_system(
+        &[&paths.ours_main, &paths.ours_support],
+        &paths.ours_linked,
+    );
     common::link_relocatable_with_system(&[&paths.ref_main, &paths.ref_support], &paths.ref_linked);
 
     let ours_undef = common::object_undefined_symbols(&paths.ours_linked);
@@ -173,8 +176,16 @@ fn mixed_link_runtime_relocatable_matches_system_as() {
 fn mixed_link_runtime_binary_matches_reference() {
     let paths = assemble_fixtures();
 
-    link_objects_with_system(&[&paths.ours_main, &paths.ours_support], &paths.ours_bin, "_main");
-    link_objects_with_system(&[&paths.ref_main, &paths.ref_support], &paths.ref_bin, "_main");
+    link_objects_with_system(
+        &[&paths.ours_main, &paths.ours_support],
+        &paths.ours_bin,
+        "_main",
+    );
+    link_objects_with_system(
+        &[&paths.ref_main, &paths.ref_support],
+        &paths.ref_bin,
+        "_main",
+    );
 
     let ours = common::run_binary(&paths.ours_bin);
     let reference = common::run_binary(&paths.ref_bin);

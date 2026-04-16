@@ -258,9 +258,7 @@ fn generated_stress_objects_have_valid_internal_semantics() {
         let src = generate_case(seed);
         let obj = panic::catch_unwind(AssertUnwindSafe(|| assemble::assemble_source(&src)))
             .unwrap_or_else(|_| panic!("assemble stress seed {} panicked\n{}", seed, src))
-            .unwrap_or_else(|err| {
-                panic!("assemble stress seed {} failed: {}\n{}", seed, err, src)
-            });
+            .unwrap_or_else(|err| panic!("assemble stress seed {} failed: {}\n{}", seed, err, src));
         assert_object_semantics(&obj, &src);
         let mut bytes = Vec::new();
         macho::write_macho(&obj, &mut bytes)
@@ -280,8 +278,10 @@ fn generated_stress_objects_match_system_as() {
         let src = generate_case(seed);
         let paths = common::TempPaths::new(&format!("afs_stress_{}", seed));
         fs::write(&paths.asm, &src).expect("write generated stress assembly");
-        panic::catch_unwind(AssertUnwindSafe(|| common::assemble_with_ours(&src, &paths.obj)))
-            .unwrap_or_else(|_| panic!("assemble_with_ours stress seed {} panicked\n{}", seed, src));
+        panic::catch_unwind(AssertUnwindSafe(|| {
+            common::assemble_with_ours(&src, &paths.obj)
+        }))
+        .unwrap_or_else(|_| panic!("assemble_with_ours stress seed {} panicked\n{}", seed, src));
         common::assemble_with_system(&paths.asm, &paths.ref_obj);
         let ours = fs::read(&paths.obj).expect("read afs-as object");
         let reference = fs::read(&paths.ref_obj).expect("read system object");

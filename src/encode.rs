@@ -2749,8 +2749,12 @@ impl Inst {
             Inst::MovFromLaneGpD { rd, rn, index } => simd_extract_lane_gp(3, *rn, *index, *rd),
             Inst::UmovFromLaneH { rd, rn, index } => simd_extract_lane_gp(1, *rn, *index, *rd),
             Inst::UmovFromLaneB { rd, rn, index } => simd_extract_lane_gp(0, *rn, *index, *rd),
-            Inst::SmovFromLaneH { rd, rn, index } => simd_extract_lane_gp_signed(1, *rn, *index, *rd),
-            Inst::SmovFromLaneB { rd, rn, index } => simd_extract_lane_gp_signed(0, *rn, *index, *rd),
+            Inst::SmovFromLaneH { rd, rn, index } => {
+                simd_extract_lane_gp_signed(1, *rn, *index, *rd)
+            }
+            Inst::SmovFromLaneB { rd, rn, index } => {
+                simd_extract_lane_gp_signed(0, *rn, *index, *rd)
+            }
             Inst::MovLaneS {
                 rd,
                 rd_index,

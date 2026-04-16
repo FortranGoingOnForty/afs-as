@@ -24,7 +24,10 @@ fn corpus_hello_world_matches_text_bytes_and_runs() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 
     common::link_with_system(&paths.obj, &paths.bin, "_main");
     let (code, stdout, stderr) = common::run_binary(&paths.bin);
@@ -102,7 +105,10 @@ fn corpus_numeric_local_labels_match_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -112,7 +118,10 @@ fn corpus_branch_address_surface_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -122,7 +131,10 @@ fn corpus_fp_load_store_surface_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -136,7 +148,10 @@ fn corpus_clang_literal_addr_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -146,7 +161,10 @@ fn corpus_clang_fp_spill_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -160,7 +178,10 @@ fn corpus_clang_extern_call_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -174,7 +195,10 @@ fn corpus_clang_local_branch_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -192,7 +216,10 @@ fn corpus_clang_got_load_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -210,7 +237,10 @@ fn corpus_clang_tlvp_load_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -224,7 +254,10 @@ fn corpus_got_pointer_data_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -256,7 +289,10 @@ fn corpus_addend_relocs_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -284,7 +320,10 @@ fn corpus_conditional_select_surface_matches_raw_object() {
         common::object_symbols_preserve_order(&paths.obj),
         common::object_symbols_preserve_order(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -296,12 +335,30 @@ fn corpus_external_call_matches_relocations_and_symbols() {
     let ours_symbols = common::object_symbols(&paths.obj);
     let ref_symbols = common::object_symbols(&paths.ref_obj);
 
-    assert!(ours_relocs.contains("BR26"), "missing BR26 relocation:\n{}", ours_relocs);
-    assert!(ours_relocs.contains("_puts"), "missing _puts relocation:\n{}", ours_relocs);
-    assert!(ours_symbols.contains(" U _puts"), "missing undefined _puts:\n{}", ours_symbols);
+    assert!(
+        ours_relocs.contains("BR26"),
+        "missing BR26 relocation:\n{}",
+        ours_relocs
+    );
+    assert!(
+        ours_relocs.contains("_puts"),
+        "missing _puts relocation:\n{}",
+        ours_relocs
+    );
+    assert!(
+        ours_symbols.contains(" U _puts"),
+        "missing undefined _puts:\n{}",
+        ours_symbols
+    );
 
-    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
-    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_relocs),
+        normalize_tool_output(&ref_relocs)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_symbols),
+        normalize_tool_output(&ref_symbols)
+    );
 }
 
 #[test]
@@ -313,12 +370,30 @@ fn corpus_external_branches_match_relocations_and_symbols() {
     let ours_symbols = common::object_symbols(&paths.obj);
     let ref_symbols = common::object_symbols(&paths.ref_obj);
 
-    assert!(ours_relocs.matches("BR26").count() >= 2, "missing BR26 relocations:\n{}", ours_relocs);
-    assert!(ours_symbols.contains(" U _exit"), "missing undefined _exit:\n{}", ours_symbols);
-    assert!(ours_symbols.contains(" U _puts"), "missing undefined _puts:\n{}", ours_symbols);
+    assert!(
+        ours_relocs.matches("BR26").count() >= 2,
+        "missing BR26 relocations:\n{}",
+        ours_relocs
+    );
+    assert!(
+        ours_symbols.contains(" U _exit"),
+        "missing undefined _exit:\n{}",
+        ours_symbols
+    );
+    assert!(
+        ours_symbols.contains(" U _puts"),
+        "missing undefined _puts:\n{}",
+        ours_symbols
+    );
 
-    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
-    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_relocs),
+        normalize_tool_output(&ref_relocs)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_symbols),
+        normalize_tool_output(&ref_symbols)
+    );
 }
 
 #[test]
@@ -354,11 +429,25 @@ fn corpus_cstring_section_matches_load_commands_and_symbols() {
     let ours_symbols = common::object_symbols(&paths.obj);
     let ref_symbols = common::object_symbols(&paths.ref_obj);
 
-    assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
-    assert!(ours_symbols.contains(" s greeting"), "missing cstring symbol:\n{}", ours_symbols);
+    assert!(
+        ours_load.contains("sectname __cstring"),
+        "missing __cstring section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_symbols.contains(" s greeting"),
+        "missing cstring symbol:\n{}",
+        ours_symbols
+    );
 
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
-    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_symbols),
+        normalize_tool_output(&ref_symbols)
+    );
 }
 
 #[test]
@@ -370,14 +459,40 @@ fn corpus_section_inventory_matches_load_commands_and_symbols() {
     let ours_symbols = common::object_symbols(&paths.obj);
     let ref_symbols = common::object_symbols(&paths.ref_obj);
 
-    assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
-    assert!(ours_load.contains("sectname __const"), "missing __const section:\n{}", ours_load);
-    assert!(ours_load.contains("sectname __bss"), "missing __bss section:\n{}", ours_load);
-    assert!(ours_load.contains("flags 0x00000001"), "missing zerofill flag:\n{}", ours_load);
-    assert!(ours_symbols.contains(" b scratch"), "missing bss symbol:\n{}", ours_symbols);
+    assert!(
+        ours_load.contains("sectname __cstring"),
+        "missing __cstring section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_load.contains("sectname __const"),
+        "missing __const section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_load.contains("sectname __bss"),
+        "missing __bss section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_load.contains("flags 0x00000001"),
+        "missing zerofill flag:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_symbols.contains(" b scratch"),
+        "missing bss symbol:\n{}",
+        ours_symbols
+    );
 
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
-    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_symbols),
+        normalize_tool_output(&ref_symbols)
+    );
 }
 
 #[test]
@@ -387,11 +502,26 @@ fn corpus_symbol_attributes_match_nm_output() {
     let ours_symbols = common::object_symbols_verbose(&paths.obj);
     let ref_symbols = common::object_symbols_verbose(&paths.ref_obj);
 
-    assert!(ours_symbols.contains("_helper"), "missing private extern helper:\n{}", ours_symbols);
-    assert!(ours_symbols.contains("_entry"), "missing weak definition entry:\n{}", ours_symbols);
-    assert!(ours_symbols.contains("_puts"), "missing weak reference puts:\n{}", ours_symbols);
+    assert!(
+        ours_symbols.contains("_helper"),
+        "missing private extern helper:\n{}",
+        ours_symbols
+    );
+    assert!(
+        ours_symbols.contains("_entry"),
+        "missing weak definition entry:\n{}",
+        ours_symbols
+    );
+    assert!(
+        ours_symbols.contains("_puts"),
+        "missing weak reference puts:\n{}",
+        ours_symbols
+    );
 
-    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_symbols),
+        normalize_tool_output(&ref_symbols)
+    );
 }
 
 #[test]
@@ -413,20 +543,69 @@ fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
     let ours_string_offsets = common::object_symbol_string_offsets(&paths.obj);
     let ref_string_offsets = common::object_symbol_string_offsets(&paths.ref_obj);
 
-    assert!(ours_load.contains("sectname __const"), "missing __const section:\n{}", ours_load);
-    assert!(ours_load.contains("sectname __cstring"), "missing __cstring section:\n{}", ours_load);
-    assert!(ours_load.contains("sectname __bss"), "missing __bss section:\n{}", ours_load);
-    assert!(ours_relocs.contains("SUB"), "missing subtractor relocation:\n{}", ours_relocs);
-    assert!(ours_relocs.contains("BR26"), "missing branch relocation:\n{}", ours_relocs);
-    assert!(ours_symbols.contains(" C _common"), "missing common symbol:\n{}", ours_symbols);
-    assert!(ours_symbols.contains(" U _puts"), "missing undefined _puts:\n{}", ours_symbols);
-    assert!(ours_symbols_verbose.contains("ABS1"), "missing absolute symbol:\n{}", ours_symbols_verbose);
-    assert!(ours_symbols_verbose.contains("_helper"), "missing private extern helper:\n{}", ours_symbols_verbose);
-    assert!(ours_symbols_verbose.contains("zlocal"), "missing local weak definition:\n{}", ours_symbols_verbose);
+    assert!(
+        ours_load.contains("sectname __const"),
+        "missing __const section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_load.contains("sectname __cstring"),
+        "missing __cstring section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_load.contains("sectname __bss"),
+        "missing __bss section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_relocs.contains("SUB"),
+        "missing subtractor relocation:\n{}",
+        ours_relocs
+    );
+    assert!(
+        ours_relocs.contains("BR26"),
+        "missing branch relocation:\n{}",
+        ours_relocs
+    );
+    assert!(
+        ours_symbols.contains(" C _common"),
+        "missing common symbol:\n{}",
+        ours_symbols
+    );
+    assert!(
+        ours_symbols.contains(" U _puts"),
+        "missing undefined _puts:\n{}",
+        ours_symbols
+    );
+    assert!(
+        ours_symbols_verbose.contains("ABS1"),
+        "missing absolute symbol:\n{}",
+        ours_symbols_verbose
+    );
+    assert!(
+        ours_symbols_verbose.contains("_helper"),
+        "missing private extern helper:\n{}",
+        ours_symbols_verbose
+    );
+    assert!(
+        ours_symbols_verbose.contains("zlocal"),
+        "missing local weak definition:\n{}",
+        ours_symbols_verbose
+    );
 
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
-    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
-    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_relocs),
+        normalize_tool_output(&ref_relocs)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_symbols),
+        normalize_tool_output(&ref_symbols)
+    );
     assert_eq!(
         normalize_tool_output(&ours_symbols_raw),
         normalize_tool_output(&ref_symbols_raw)
@@ -437,7 +616,10 @@ fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
     );
     assert_eq!(ours_string_table, ref_string_table);
     assert_eq!(ours_string_offsets, ref_string_offsets);
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -474,7 +656,10 @@ fn corpus_string_suffixes_matches_string_table_layout() {
         common::object_symbol_string_offsets(&paths.obj),
         common::object_symbol_string_offsets(&paths.ref_obj)
     );
-    assert_eq!(fs::read(&paths.obj).expect("read ours"), fs::read(&paths.ref_obj).expect("read ref"));
+    assert_eq!(
+        fs::read(&paths.obj).expect("read ours"),
+        fs::read(&paths.ref_obj).expect("read ref")
+    );
 }
 
 #[test]
@@ -492,8 +677,14 @@ fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
 
     assert_eq!(ours_text, ref_text);
     assert_eq!(ours_data, ref_data);
-    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
-    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_relocs),
+        normalize_tool_output(&ref_relocs)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_symbols),
+        normalize_tool_output(&ref_symbols)
+    );
 }
 
 #[test]
@@ -527,14 +718,32 @@ fn corpus_storage_directives_match_bytes_sections_and_symbols() {
     let ours_symbols = common::object_symbols_verbose(&paths.obj);
     let ref_symbols = common::object_symbols_verbose(&paths.ref_obj);
 
-    assert!(ours_load.contains("sectname __bss"), "missing __bss section:\n{}", ours_load);
-    assert!(ours_symbols.contains("(common)"), "missing common symbol:\n{}", ours_symbols);
-    assert!(ours_symbols.contains("_scratch"), "missing zerofill symbol:\n{}", ours_symbols);
+    assert!(
+        ours_load.contains("sectname __bss"),
+        "missing __bss section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_symbols.contains("(common)"),
+        "missing common symbol:\n{}",
+        ours_symbols
+    );
+    assert!(
+        ours_symbols.contains("_scratch"),
+        "missing zerofill symbol:\n{}",
+        ours_symbols
+    );
 
     assert_eq!(ours_text, ref_text);
     assert_eq!(ours_data, ref_data);
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
-    assert_eq!(normalize_tool_output(&ours_symbols), normalize_tool_output(&ref_symbols));
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_symbols),
+        normalize_tool_output(&ref_symbols)
+    );
 }
 
 #[test]
@@ -548,12 +757,23 @@ fn corpus_alignment_directives_match_text_data_and_section_alignment() {
     let ours_load = common::object_load_commands(&paths.obj);
     let ref_load = common::object_load_commands(&paths.ref_obj);
 
-    assert!(ours_load.contains("align 2^5 (32)"), "missing text alignment:\n{}", ours_load);
-    assert!(ours_load.contains("align 2^3 (8)"), "missing data alignment:\n{}", ours_load);
+    assert!(
+        ours_load.contains("align 2^5 (32)"),
+        "missing text alignment:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_load.contains("align 2^3 (8)"),
+        "missing data alignment:\n{}",
+        ours_load
+    );
 
     assert_eq!(ours_text, ref_text);
     assert_eq!(ours_data, ref_data);
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
 }
 
 #[test]
@@ -570,11 +790,25 @@ fn corpus_metadata_directives_match_header_and_load_commands() {
         "missing subsections flag:\n{}",
         ours_header
     );
-    assert!(ours_load.contains("minos 11.0"), "missing minos:\n{}", ours_load);
-    assert!(ours_load.contains("sdk 15.5"), "missing sdk:\n{}", ours_load);
+    assert!(
+        ours_load.contains("minos 11.0"),
+        "missing minos:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_load.contains("sdk 15.5"),
+        "missing sdk:\n{}",
+        ours_load
+    );
 
-    assert_eq!(normalize_tool_output(&ours_header), normalize_tool_output(&ref_header));
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
+    assert_eq!(
+        normalize_tool_output(&ours_header),
+        normalize_tool_output(&ref_header)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
 }
 
 #[test]
@@ -588,12 +822,26 @@ fn corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations() {
     let ours_relocs = common::object_relocations(&paths.obj);
     let ref_relocs = common::object_relocations(&paths.ref_obj);
 
-    assert!(ours_load.contains("sectname __compact_unwind"), "missing compact unwind section:\n{}", ours_load);
-    assert!(ours_relocs.contains("__compact_unwind"), "missing compact unwind relocations:\n{}", ours_relocs);
+    assert!(
+        ours_load.contains("sectname __compact_unwind"),
+        "missing compact unwind section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_relocs.contains("__compact_unwind"),
+        "missing compact unwind relocations:\n{}",
+        ours_relocs
+    );
 
     assert_eq!(ours_text, ref_text);
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
-    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_relocs),
+        normalize_tool_output(&ref_relocs)
+    );
 }
 
 #[test]
@@ -608,8 +856,14 @@ fn corpus_cfi_nostack_matches_load_commands_and_relocations() {
     let ref_relocs = common::object_relocations(&paths.ref_obj);
 
     assert_eq!(ours_text, ref_text);
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
-    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_relocs),
+        normalize_tool_output(&ref_relocs)
+    );
 }
 
 #[test]
@@ -624,8 +878,14 @@ fn corpus_cfi_saved_pairs_matches_load_commands_and_relocations() {
     let ref_relocs = common::object_relocations(&paths.ref_obj);
 
     assert_eq!(ours_text, ref_text);
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
-    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_relocs),
+        normalize_tool_output(&ref_relocs)
+    );
 }
 
 #[test]
@@ -641,13 +901,27 @@ fn corpus_cfi_dwarf_fallback_matches_load_commands_relocations_and_eh_frame() {
     let ours_eh_frame = common::object_section_bytes(&paths.obj, "__TEXT", "__eh_frame");
     let ref_eh_frame = common::object_section_bytes(&paths.ref_obj, "__TEXT", "__eh_frame");
 
-    assert!(ours_load.contains("sectname __eh_frame"), "missing __eh_frame section:\n{}", ours_load);
-    assert!(ours_relocs.contains("__TEXT,__eh_frame"), "missing eh_frame relocations:\n{}", ours_relocs);
+    assert!(
+        ours_load.contains("sectname __eh_frame"),
+        "missing __eh_frame section:\n{}",
+        ours_load
+    );
+    assert!(
+        ours_relocs.contains("__TEXT,__eh_frame"),
+        "missing eh_frame relocations:\n{}",
+        ours_relocs
+    );
 
     assert_eq!(ours_text, ref_text);
     assert_eq!(ours_eh_frame, ref_eh_frame);
-    assert_eq!(normalize_tool_output(&ours_load), normalize_tool_output(&ref_load));
-    assert_eq!(normalize_tool_output(&ours_relocs), normalize_tool_output(&ref_relocs));
+    assert_eq!(
+        normalize_tool_output(&ours_load),
+        normalize_tool_output(&ref_load)
+    );
+    assert_eq!(
+        normalize_tool_output(&ours_relocs),
+        normalize_tool_output(&ref_relocs)
+    );
 }
 
 fn normalize_tool_output(text: &str) -> String {

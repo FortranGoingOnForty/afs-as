@@ -201,8 +201,12 @@ fn validate_section_attrs(seg: &str, sect: &str, attrs: &[String]) -> Result<(),
     if unsupported.is_empty() {
         if seg.eq_ignore_ascii_case("__TEXT")
             && sect.eq_ignore_ascii_case("__text")
-            && attrs.iter().any(|attr| attr.eq_ignore_ascii_case("pure_instructions"))
-            && !attrs.iter().any(|attr| attr.eq_ignore_ascii_case("regular"))
+            && attrs
+                .iter()
+                .any(|attr| attr.eq_ignore_ascii_case("pure_instructions"))
+            && !attrs
+                .iter()
+                .any(|attr| attr.eq_ignore_ascii_case("regular"))
         {
             return Err(format!(
                 "section {},{} requires 'regular' when using 'pure_instructions'",
@@ -393,10 +397,7 @@ impl<'a> Parser<'a> {
         if consumed {
             Ok(attr)
         } else {
-            Err(self.err(format!(
-                "expected section attribute, got {}",
-                self.peek()
-            )))
+            Err(self.err(format!("expected section attribute, got {}", self.peek())))
         }
     }
 
@@ -1372,8 +1373,8 @@ impl<'a> Parser<'a> {
             "addp.8h" | "smaxp.8h" | "sminp.8h" | "umaxp.8h" | "uminp.8h" => {
                 self.parse_simd_int_arith_8h(mnemonic)
             }
-            "add.4s" | "addp.4s" | "sub.4s" | "smax.4s" | "smaxp.4s" | "smin.4s"
-            | "sminp.4s" | "umax.4s" | "umaxp.4s" | "umin.4s" | "uminp.4s" => {
+            "add.4s" | "addp.4s" | "sub.4s" | "smax.4s" | "smaxp.4s" | "smin.4s" | "sminp.4s"
+            | "umax.4s" | "umaxp.4s" | "umin.4s" | "uminp.4s" => {
                 self.parse_simd_int_arith_4s(mnemonic)
             }
             "addv.16b" | "umaxv.16b" | "smaxv.16b" | "uminv.16b" | "sminv.16b" => {
@@ -1382,26 +1383,22 @@ impl<'a> Parser<'a> {
             "addv.8h" | "umaxv.8h" | "smaxv.8h" | "uminv.8h" | "sminv.8h" => {
                 self.parse_simd_reduce_8h(mnemonic)
             }
-            "addv.4s" | "faddp.2s" | "fmaxv.4s" | "fminv.4s" | "fmaxnmv.4s"
-            | "fminnmv.4s" | "smaxv.4s" | "umaxv.4s" | "sminv.4s" | "uminv.4s" => {
+            "addv.4s" | "faddp.2s" | "fmaxv.4s" | "fminv.4s" | "fmaxnmv.4s" | "fminnmv.4s"
+            | "smaxv.4s" | "umaxv.4s" | "sminv.4s" | "uminv.4s" => {
                 self.parse_simd_reduce_4s(mnemonic)
             }
-            "cmeq.4s" | "cmhs.4s" | "cmhi.4s" | "cmge.4s" | "cmgt.4s" | "fcmeq.4s"
-            | "fcmge.4s" | "fcmgt.4s" => {
-                self.parse_simd_compare_4s(mnemonic)
-            }
+            "cmeq.4s" | "cmhs.4s" | "cmhi.4s" | "cmge.4s" | "cmgt.4s" | "fcmeq.4s" | "fcmge.4s"
+            | "fcmgt.4s" => self.parse_simd_compare_4s(mnemonic),
             "fcmeq.2d" | "fcmge.2d" | "fcmgt.2d" | "fcmle.2d" | "fcmlt.2d" => {
                 self.parse_simd_compare_2d(mnemonic)
             }
             "fadd.4s" | "faddp.4s" | "fmaxp.4s" | "fminp.4s" | "fmaxnmp.4s" | "fminnmp.4s"
-            | "fmla.4s" | "fmls.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" | "fmax.4s"
-            | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
+            | "fmla.4s" | "fmls.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" | "fmax.4s" | "fmin.4s"
+            | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
-            "fadd.2d" | "fsub.2d" | "fmul.2d" | "fdiv.2d" | "fabd.2d" | "fmla.2d"
-            | "fmls.2d"
-            | "fmax.2d" | "fmin.2d" | "fmaxnm.2d" | "fminnm.2d" | "frecps.2d"
-            | "frsqrts.2d" => {
+            "fadd.2d" | "fsub.2d" | "fmul.2d" | "fdiv.2d" | "fabd.2d" | "fmla.2d" | "fmls.2d"
+            | "fmax.2d" | "fmin.2d" | "fmaxnm.2d" | "fminnm.2d" | "frecps.2d" | "frsqrts.2d" => {
                 self.parse_simd_fp_arith_2d(mnemonic)
             }
             "faddp.2d" | "fmaxp.2d" | "fminp.2d" | "fmaxnmp.2d" | "fminnmp.2d" => {
@@ -1413,8 +1410,10 @@ impl<'a> Parser<'a> {
                 self.parse_simd_fp_unary_4s(mnemonic)
             }
             "fabs.2d" | "fneg.2d" | "fsqrt.2d" | "scvtf.2d" | "ucvtf.2d" | "fcvtzs.2d"
-            | "fcvtzu.2d" | "frecpe.2d" | "frsqrte.2d" | "frintn.2d" | "frintm.2d" | "frintp.2d" | "frintz.2d"
-            | "frinta.2d" | "frinti.2d" => self.parse_simd_fp_unary_2d(mnemonic),
+            | "fcvtzu.2d" | "frecpe.2d" | "frsqrte.2d" | "frintn.2d" | "frintm.2d"
+            | "frintp.2d" | "frintz.2d" | "frinta.2d" | "frinti.2d" => {
+                self.parse_simd_fp_unary_2d(mnemonic)
+            }
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
