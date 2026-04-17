@@ -39,6 +39,7 @@ fn section_inventory_extended_matches_load_commands_and_symbols() {
         "__thread_vars",
         "__thread_bss",
         "__bss",
+        "__const",
     ] {
         assert!(
             ours_load.contains(&format!("sectname {}", sect)),

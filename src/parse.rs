@@ -167,6 +167,7 @@ fn allowed_section_attrs(seg: &str, sect: &str) -> Option<&'static [&'static str
         ("__text", "__literal16") => Some(&["regular", "16byte_literals"]),
         ("__text", "__const") => Some(&["regular"]),
         ("__data", "__data") => Some(&["regular"]),
+        ("__data", "__const") => Some(&["regular"]),
         // Apple `as` accepts either thread-local attr spelling here and
         // canonicalizes based on the section name.
         ("__data", "__thread_data") => {
@@ -10003,6 +10004,18 @@ mod tests {
             stmts,
             vec![Stmt::Directive(Directive::Section(
                 "__TEXT".into(),
+                "__const".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_data_const_section_with_regular_attr() {
+        let stmts = parse_stmts(".section __DATA,__const,regular");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__DATA".into(),
                 "__const".into()
             ))]
         );

@@ -23,6 +23,11 @@ lit16:
 value:
     .byte 7
 
+.section __DATA,__const
+.p2align 3
+const_data_word:
+    .quad 99
+
 .section __DATA,__thread_data,thread_local_regular
 .p2align 2
 _tls_value$tlv$init:

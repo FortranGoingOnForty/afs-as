@@ -1801,6 +1801,8 @@ impl Assembler {
             Ok(("__TEXT", "__const", SectionKind::ConstData))
         } else if seg_lower == "__data" && sect_lower == "__data" {
             Ok(("__DATA", "__data", SectionKind::Data))
+        } else if seg_lower == "__data" && sect_lower == "__const" {
+            Ok(("__DATA", "__const", SectionKind::ConstData))
         } else if seg_lower == "__data" && sect_lower == "__thread_data" {
             Ok(("__DATA", "__thread_data", SectionKind::ThreadLocalData))
         } else if seg_lower == "__data" && sect_lower == "__thread_vars" {
@@ -1811,7 +1813,7 @@ impl Assembler {
             Ok(("__DATA", "__bss", SectionKind::ZeroFill))
         } else {
             Err(AsmError(format!(
-                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__literal16, __TEXT,__const, __DATA,__data, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__thread_bss, __DATA,__bss)",
+                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__literal16, __TEXT,__const, __DATA,__data, __DATA,__const, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__thread_bss, __DATA,__bss)",
                 seg, sect
             )))
         }
@@ -3622,6 +3624,29 @@ mod tests {
                 .unwrap()
                 .value,
             32
+        );
+    }
+
+    #[test]
+    fn assemble_supported_data_const_section() {
+        let obj = assemble_source(
+            ".section __DATA,__const\n\
+             .p2align 3\n\
+             value: .quad 42\n",
+        )
+        .unwrap();
+
+        let const_data = obj.section("__DATA", "__const").unwrap();
+        assert_eq!(const_data.kind, SectionKind::ConstData);
+        assert_eq!(const_data.align_pow2, 3);
+        assert_eq!(const_data.data, 42u64.to_le_bytes());
+        assert_eq!(
+            obj.symbols
+                .iter()
+                .find(|sym| sym.name == "value")
+                .unwrap()
+                .value,
+            0
         );
     }
 
