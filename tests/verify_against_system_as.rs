@@ -431,6 +431,19 @@ fn sys_movn_hi() {
     );
 }
 
+#[test]
+fn sys_mov_wzr() {
+    verify(
+        "mov w26, wzr",
+        Inst::OrrReg {
+            rd: W26,
+            rn: WZR,
+            rm: WZR,
+            sf: false,
+        },
+    );
+}
+
 // ---- Shifts ----
 
 #[test]
@@ -1679,6 +1692,30 @@ fn sys_str_s_pre() {
             rt: S3,
             rn: SP,
             offset: -8,
+        },
+    );
+}
+
+#[test]
+fn sys_str_s_neg_offset() {
+    verify(
+        "str s8, [x29, #-4]",
+        Inst::SturFp32 {
+            rt: S8,
+            rn: X29,
+            offset: -4,
+        },
+    );
+}
+
+#[test]
+fn sys_ldr_s_neg_offset() {
+    verify(
+        "ldr s9, [x29, #-4]",
+        Inst::LdurFp32 {
+            rt: S9,
+            rn: X29,
+            offset: -4,
         },
     );
 }

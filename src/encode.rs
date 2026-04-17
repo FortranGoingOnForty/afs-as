@@ -662,6 +662,26 @@ pub enum Inst {
     StrFpImm8 { rt: FpReg, rn: GpReg, offset: u16 },
     /// STR Qt, [Xn, #offset]
     StrFpImm128 { rt: FpReg, rn: GpReg, offset: u16 },
+    /// LDUR Dt, [Xn, #offset]
+    LdurFp64 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// LDUR St, [Xn, #offset]
+    LdurFp32 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// LDUR Ht, [Xn, #offset]
+    LdurFp16 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// LDUR Bt, [Xn, #offset]
+    LdurFp8 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// LDUR Qt, [Xn, #offset]
+    LdurFp128 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STUR Dt, [Xn, #offset]
+    SturFp64 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STUR St, [Xn, #offset]
+    SturFp32 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STUR Ht, [Xn, #offset]
+    SturFp16 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STUR Bt, [Xn, #offset]
+    SturFp8 { rt: FpReg, rn: GpReg, offset: i16 },
+    /// STUR Qt, [Xn, #offset]
+    SturFp128 { rt: FpReg, rn: GpReg, offset: i16 },
     /// LDR Dt, [Xn, Rm{, extend}]
     LdrFpReg64 {
         rt: FpReg,
@@ -2148,6 +2168,16 @@ impl Inst {
             Inst::StrFpImm16 { rt, rn, offset } => ldst_uimm_fp(0b01, 0b00, 1, *offset, *rn, *rt),
             Inst::StrFpImm8 { rt, rn, offset } => ldst_uimm_fp(0b00, 0b00, 0, *offset, *rn, *rt),
             Inst::StrFpImm128 { rt, rn, offset } => ldst_uimm_fp(0b00, 0b10, 4, *offset, *rn, *rt),
+            Inst::LdurFp64 { rt, rn, offset } => ldst_idx_fp(0b11, 0b01, *offset, 0b00, *rn, *rt),
+            Inst::LdurFp32 { rt, rn, offset } => ldst_idx_fp(0b10, 0b01, *offset, 0b00, *rn, *rt),
+            Inst::LdurFp16 { rt, rn, offset } => ldst_idx_fp(0b01, 0b01, *offset, 0b00, *rn, *rt),
+            Inst::LdurFp8 { rt, rn, offset } => ldst_idx_fp(0b00, 0b01, *offset, 0b00, *rn, *rt),
+            Inst::LdurFp128 { rt, rn, offset } => ldst_idx_fp(0b00, 0b11, *offset, 0b00, *rn, *rt),
+            Inst::SturFp64 { rt, rn, offset } => ldst_idx_fp(0b11, 0b00, *offset, 0b00, *rn, *rt),
+            Inst::SturFp32 { rt, rn, offset } => ldst_idx_fp(0b10, 0b00, *offset, 0b00, *rn, *rt),
+            Inst::SturFp16 { rt, rn, offset } => ldst_idx_fp(0b01, 0b00, *offset, 0b00, *rn, *rt),
+            Inst::SturFp8 { rt, rn, offset } => ldst_idx_fp(0b00, 0b00, *offset, 0b00, *rn, *rt),
+            Inst::SturFp128 { rt, rn, offset } => ldst_idx_fp(0b00, 0b10, *offset, 0b00, *rn, *rt),
             Inst::LdrFpReg64 {
                 rt,
                 rn,

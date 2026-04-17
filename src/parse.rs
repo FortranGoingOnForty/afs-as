@@ -2455,7 +2455,7 @@ impl<'a> Parser<'a> {
         if self.peek_is_scalar_fp_reg() {
             return self.parse_simd_lane_extract();
         }
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let imm = self.parse_immediate_const_expr("mov immediate")?;
@@ -2468,8 +2468,8 @@ impl<'a> Parser<'a> {
                 )))
             }
         } else {
-            let (rm, _) = self.parse_gp_reg_with_size()?;
-            if rm == SP || rd == SP {
+            let (rm, _, rm_kind) = self.parse_gp_reg_with_size_kind()?;
+            if rm_kind == GpRegKind::Sp || rd_kind == GpRegKind::Sp {
                 // MOV involving SP → ADD Xd, Xn, #0 (SP can't be used in ORR shifted reg)
                 Ok(Inst::AddImm {
                     rd,
@@ -2944,6 +2944,54 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn fp_mem_offset_inst(
+        &self,
+        is_load: bool,
+        width: FpMemWidth,
+        rt: FpReg,
+        rn: GpReg,
+        offset: i64,
+    ) -> Result<Inst, ParseError> {
+        let scale = 1i64 << width.scale();
+        let fits_unsigned = offset >= 0 && offset % scale == 0 && (offset >> width.scale()) <= 0xFFF;
+        if fits_unsigned {
+            let offset = offset as u16;
+            return Ok(match (is_load, width) {
+                (true, FpMemWidth::H16) => Inst::LdrFpImm16 { rt, rn, offset },
+                (false, FpMemWidth::H16) => Inst::StrFpImm16 { rt, rn, offset },
+                (true, FpMemWidth::B8) => Inst::LdrFpImm8 { rt, rn, offset },
+                (false, FpMemWidth::B8) => Inst::StrFpImm8 { rt, rn, offset },
+                (true, FpMemWidth::D64) => Inst::LdrFpImm64 { rt, rn, offset },
+                (false, FpMemWidth::D64) => Inst::StrFpImm64 { rt, rn, offset },
+                (true, FpMemWidth::S32) => Inst::LdrFpImm32 { rt, rn, offset },
+                (false, FpMemWidth::S32) => Inst::StrFpImm32 { rt, rn, offset },
+                (true, FpMemWidth::Q128) => Inst::LdrFpImm128 { rt, rn, offset },
+                (false, FpMemWidth::Q128) => Inst::StrFpImm128 { rt, rn, offset },
+            });
+        }
+
+        if (-256..=255).contains(&offset) {
+            let offset = offset as i16;
+            return Ok(match (is_load, width) {
+                (true, FpMemWidth::H16) => Inst::LdurFp16 { rt, rn, offset },
+                (false, FpMemWidth::H16) => Inst::SturFp16 { rt, rn, offset },
+                (true, FpMemWidth::B8) => Inst::LdurFp8 { rt, rn, offset },
+                (false, FpMemWidth::B8) => Inst::SturFp8 { rt, rn, offset },
+                (true, FpMemWidth::D64) => Inst::LdurFp64 { rt, rn, offset },
+                (false, FpMemWidth::D64) => Inst::SturFp64 { rt, rn, offset },
+                (true, FpMemWidth::S32) => Inst::LdurFp32 { rt, rn, offset },
+                (false, FpMemWidth::S32) => Inst::SturFp32 { rt, rn, offset },
+                (true, FpMemWidth::Q128) => Inst::LdurFp128 { rt, rn, offset },
+                (false, FpMemWidth::Q128) => Inst::SturFp128 { rt, rn, offset },
+            });
+        }
+
+        Err(self.err(format!(
+            "FP/SIMD memory offset {offset} is out of range for {}",
+            if is_load { "LDR" } else { "STR" }
+        )))
+    }
+
     fn parse_ldur_stur(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
@@ -3328,58 +3376,7 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::Instruction(inst));
         }
 
-        let inst = match (is_load, width) {
-            (true, FpMemWidth::H16) => Inst::LdrFpImm16 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::H16) => Inst::StrFpImm16 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (true, FpMemWidth::B8) => Inst::LdrFpImm8 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::B8) => Inst::StrFpImm8 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (true, FpMemWidth::D64) => Inst::LdrFpImm64 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::D64) => Inst::StrFpImm64 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (true, FpMemWidth::S32) => Inst::LdrFpImm32 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::S32) => Inst::StrFpImm32 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (true, FpMemWidth::Q128) => Inst::LdrFpImm128 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::Q128) => Inst::StrFpImm128 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-        };
+        let inst = self.fp_mem_offset_inst(is_load, width, rt, rn, offset)?;
         Ok(Stmt::Instruction(inst))
     }
 
@@ -5759,6 +5756,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_mov_wzr_keeps_zero_register() {
+        assert_eq!(
+            parse_inst("mov w26, wzr"),
+            Inst::OrrReg {
+                rd: W26,
+                rn: WZR,
+                rm: WZR,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
     fn parse_ubfiz_() {
         assert_eq!(
             parse_inst("ubfiz w8, w0, #5, #3"),
@@ -6579,6 +6589,30 @@ mod tests {
                 rt: D2,
                 rn: X3,
                 offset: 16
+            }
+        );
+    }
+
+    #[test]
+    fn parse_str_s_negative_offset_uses_unscaled() {
+        assert_eq!(
+            parse_inst("str s8, [x29, #-4]"),
+            Inst::SturFp32 {
+                rt: S8,
+                rn: X29,
+                offset: -4
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_s_negative_offset_uses_unscaled() {
+        assert_eq!(
+            parse_inst("ldr s9, [x29, #-4]"),
+            Inst::LdurFp32 {
+                rt: S9,
+                rn: X29,
+                offset: -4
             }
         );
     }
