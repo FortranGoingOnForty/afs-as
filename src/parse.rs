@@ -2953,7 +2953,8 @@ impl<'a> Parser<'a> {
         offset: i64,
     ) -> Result<Inst, ParseError> {
         let scale = 1i64 << width.scale();
-        let fits_unsigned = offset >= 0 && offset % scale == 0 && (offset >> width.scale()) <= 0xFFF;
+        let fits_unsigned =
+            offset >= 0 && offset % scale == 0 && (offset >> width.scale()) <= 0xFFF;
         if fits_unsigned {
             let offset = offset as u16;
             return Ok(match (is_load, width) {
