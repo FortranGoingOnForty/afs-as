@@ -167,6 +167,7 @@ fn allowed_section_attrs(seg: &str, sect: &str) -> Option<&'static [&'static str
         ("__text", "__literal16") => Some(&["regular", "16byte_literals"]),
         ("__text", "__const") => Some(&["regular"]),
         ("__data", "__data") => Some(&["regular"]),
+        ("__data", "__const") => Some(&["regular"]),
         // Apple `as` accepts either thread-local attr spelling here and
         // canonicalizes based on the section name.
         ("__data", "__thread_data") => {
@@ -201,8 +202,12 @@ fn validate_section_attrs(seg: &str, sect: &str, attrs: &[String]) -> Result<(),
     if unsupported.is_empty() {
         if seg.eq_ignore_ascii_case("__TEXT")
             && sect.eq_ignore_ascii_case("__text")
-            && attrs.iter().any(|attr| attr.eq_ignore_ascii_case("pure_instructions"))
-            && !attrs.iter().any(|attr| attr.eq_ignore_ascii_case("regular"))
+            && attrs
+                .iter()
+                .any(|attr| attr.eq_ignore_ascii_case("pure_instructions"))
+            && !attrs
+                .iter()
+                .any(|attr| attr.eq_ignore_ascii_case("regular"))
         {
             return Err(format!(
                 "section {},{} requires 'regular' when using 'pure_instructions'",
@@ -393,10 +398,7 @@ impl<'a> Parser<'a> {
         if consumed {
             Ok(attr)
         } else {
-            Err(self.err(format!(
-                "expected section attribute, got {}",
-                self.peek()
-            )))
+            Err(self.err(format!("expected section attribute, got {}", self.peek())))
         }
     }
 
@@ -1372,8 +1374,8 @@ impl<'a> Parser<'a> {
             "addp.8h" | "smaxp.8h" | "sminp.8h" | "umaxp.8h" | "uminp.8h" => {
                 self.parse_simd_int_arith_8h(mnemonic)
             }
-            "add.4s" | "addp.4s" | "sub.4s" | "smax.4s" | "smaxp.4s" | "smin.4s"
-            | "sminp.4s" | "umax.4s" | "umaxp.4s" | "umin.4s" | "uminp.4s" => {
+            "add.4s" | "addp.4s" | "sub.4s" | "smax.4s" | "smaxp.4s" | "smin.4s" | "sminp.4s"
+            | "umax.4s" | "umaxp.4s" | "umin.4s" | "uminp.4s" => {
                 self.parse_simd_int_arith_4s(mnemonic)
             }
             "addv.16b" | "umaxv.16b" | "smaxv.16b" | "uminv.16b" | "sminv.16b" => {
@@ -1382,26 +1384,22 @@ impl<'a> Parser<'a> {
             "addv.8h" | "umaxv.8h" | "smaxv.8h" | "uminv.8h" | "sminv.8h" => {
                 self.parse_simd_reduce_8h(mnemonic)
             }
-            "addv.4s" | "faddp.2s" | "fmaxv.4s" | "fminv.4s" | "fmaxnmv.4s"
-            | "fminnmv.4s" | "smaxv.4s" | "umaxv.4s" | "sminv.4s" | "uminv.4s" => {
+            "addv.4s" | "faddp.2s" | "fmaxv.4s" | "fminv.4s" | "fmaxnmv.4s" | "fminnmv.4s"
+            | "smaxv.4s" | "umaxv.4s" | "sminv.4s" | "uminv.4s" => {
                 self.parse_simd_reduce_4s(mnemonic)
             }
-            "cmeq.4s" | "cmhs.4s" | "cmhi.4s" | "cmge.4s" | "cmgt.4s" | "fcmeq.4s"
-            | "fcmge.4s" | "fcmgt.4s" => {
-                self.parse_simd_compare_4s(mnemonic)
-            }
+            "cmeq.4s" | "cmhs.4s" | "cmhi.4s" | "cmge.4s" | "cmgt.4s" | "fcmeq.4s" | "fcmge.4s"
+            | "fcmgt.4s" => self.parse_simd_compare_4s(mnemonic),
             "fcmeq.2d" | "fcmge.2d" | "fcmgt.2d" | "fcmle.2d" | "fcmlt.2d" => {
                 self.parse_simd_compare_2d(mnemonic)
             }
             "fadd.4s" | "faddp.4s" | "fmaxp.4s" | "fminp.4s" | "fmaxnmp.4s" | "fminnmp.4s"
-            | "fmla.4s" | "fmls.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" | "fmax.4s"
-            | "fmin.4s" | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
+            | "fmla.4s" | "fmls.4s" | "fsub.4s" | "fmul.4s" | "fdiv.4s" | "fmax.4s" | "fmin.4s"
+            | "fmaxnm.4s" | "fminnm.4s" | "frecps.4s" | "frsqrts.4s" => {
                 self.parse_simd_fp_arith_4s(mnemonic)
             }
-            "fadd.2d" | "fsub.2d" | "fmul.2d" | "fdiv.2d" | "fabd.2d" | "fmla.2d"
-            | "fmls.2d"
-            | "fmax.2d" | "fmin.2d" | "fmaxnm.2d" | "fminnm.2d" | "frecps.2d"
-            | "frsqrts.2d" => {
+            "fadd.2d" | "fsub.2d" | "fmul.2d" | "fdiv.2d" | "fabd.2d" | "fmla.2d" | "fmls.2d"
+            | "fmax.2d" | "fmin.2d" | "fmaxnm.2d" | "fminnm.2d" | "frecps.2d" | "frsqrts.2d" => {
                 self.parse_simd_fp_arith_2d(mnemonic)
             }
             "faddp.2d" | "fmaxp.2d" | "fminp.2d" | "fmaxnmp.2d" | "fminnmp.2d" => {
@@ -1413,8 +1411,10 @@ impl<'a> Parser<'a> {
                 self.parse_simd_fp_unary_4s(mnemonic)
             }
             "fabs.2d" | "fneg.2d" | "fsqrt.2d" | "scvtf.2d" | "ucvtf.2d" | "fcvtzs.2d"
-            | "fcvtzu.2d" | "frecpe.2d" | "frsqrte.2d" | "frintn.2d" | "frintm.2d" | "frintp.2d" | "frintz.2d"
-            | "frinta.2d" | "frinti.2d" => self.parse_simd_fp_unary_2d(mnemonic),
+            | "fcvtzu.2d" | "frecpe.2d" | "frsqrte.2d" | "frintn.2d" | "frintm.2d"
+            | "frintp.2d" | "frintz.2d" | "frinta.2d" | "frinti.2d" => {
+                self.parse_simd_fp_unary_2d(mnemonic)
+            }
             "fsub" => self.parse_fp_arith("fsub"),
             "fmul" => self.parse_fp_arith("fmul"),
             "fdiv" => self.parse_fp_arith("fdiv"),
@@ -2455,7 +2455,7 @@ impl<'a> Parser<'a> {
         if self.peek_is_scalar_fp_reg() {
             return self.parse_simd_lane_extract();
         }
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let imm = self.parse_immediate_const_expr("mov immediate")?;
@@ -2468,8 +2468,8 @@ impl<'a> Parser<'a> {
                 )))
             }
         } else {
-            let (rm, _) = self.parse_gp_reg_with_size()?;
-            if rm == SP || rd == SP {
+            let (rm, _, rm_kind) = self.parse_gp_reg_with_size_kind()?;
+            if rm_kind == GpRegKind::Sp || rd_kind == GpRegKind::Sp {
                 // MOV involving SP → ADD Xd, Xn, #0 (SP can't be used in ORR shifted reg)
                 Ok(Inst::AddImm {
                     rd,
@@ -2944,6 +2944,55 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn fp_mem_offset_inst(
+        &self,
+        is_load: bool,
+        width: FpMemWidth,
+        rt: FpReg,
+        rn: GpReg,
+        offset: i64,
+    ) -> Result<Inst, ParseError> {
+        let scale = 1i64 << width.scale();
+        let fits_unsigned =
+            offset >= 0 && offset % scale == 0 && (offset >> width.scale()) <= 0xFFF;
+        if fits_unsigned {
+            let offset = offset as u16;
+            return Ok(match (is_load, width) {
+                (true, FpMemWidth::H16) => Inst::LdrFpImm16 { rt, rn, offset },
+                (false, FpMemWidth::H16) => Inst::StrFpImm16 { rt, rn, offset },
+                (true, FpMemWidth::B8) => Inst::LdrFpImm8 { rt, rn, offset },
+                (false, FpMemWidth::B8) => Inst::StrFpImm8 { rt, rn, offset },
+                (true, FpMemWidth::D64) => Inst::LdrFpImm64 { rt, rn, offset },
+                (false, FpMemWidth::D64) => Inst::StrFpImm64 { rt, rn, offset },
+                (true, FpMemWidth::S32) => Inst::LdrFpImm32 { rt, rn, offset },
+                (false, FpMemWidth::S32) => Inst::StrFpImm32 { rt, rn, offset },
+                (true, FpMemWidth::Q128) => Inst::LdrFpImm128 { rt, rn, offset },
+                (false, FpMemWidth::Q128) => Inst::StrFpImm128 { rt, rn, offset },
+            });
+        }
+
+        if (-256..=255).contains(&offset) {
+            let offset = offset as i16;
+            return Ok(match (is_load, width) {
+                (true, FpMemWidth::H16) => Inst::LdurFp16 { rt, rn, offset },
+                (false, FpMemWidth::H16) => Inst::SturFp16 { rt, rn, offset },
+                (true, FpMemWidth::B8) => Inst::LdurFp8 { rt, rn, offset },
+                (false, FpMemWidth::B8) => Inst::SturFp8 { rt, rn, offset },
+                (true, FpMemWidth::D64) => Inst::LdurFp64 { rt, rn, offset },
+                (false, FpMemWidth::D64) => Inst::SturFp64 { rt, rn, offset },
+                (true, FpMemWidth::S32) => Inst::LdurFp32 { rt, rn, offset },
+                (false, FpMemWidth::S32) => Inst::SturFp32 { rt, rn, offset },
+                (true, FpMemWidth::Q128) => Inst::LdurFp128 { rt, rn, offset },
+                (false, FpMemWidth::Q128) => Inst::SturFp128 { rt, rn, offset },
+            });
+        }
+
+        Err(self.err(format!(
+            "FP/SIMD memory offset {offset} is out of range for {}",
+            if is_load { "LDR" } else { "STR" }
+        )))
+    }
+
     fn parse_ldur_stur(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
@@ -3328,58 +3377,7 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::Instruction(inst));
         }
 
-        let inst = match (is_load, width) {
-            (true, FpMemWidth::H16) => Inst::LdrFpImm16 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::H16) => Inst::StrFpImm16 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (true, FpMemWidth::B8) => Inst::LdrFpImm8 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::B8) => Inst::StrFpImm8 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (true, FpMemWidth::D64) => Inst::LdrFpImm64 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::D64) => Inst::StrFpImm64 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (true, FpMemWidth::S32) => Inst::LdrFpImm32 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::S32) => Inst::StrFpImm32 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (true, FpMemWidth::Q128) => Inst::LdrFpImm128 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            (false, FpMemWidth::Q128) => Inst::StrFpImm128 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-        };
+        let inst = self.fp_mem_offset_inst(is_load, width, rt, rn, offset)?;
         Ok(Stmt::Instruction(inst))
     }
 
@@ -5759,6 +5757,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_mov_wzr_keeps_zero_register() {
+        assert_eq!(
+            parse_inst("mov w26, wzr"),
+            Inst::OrrReg {
+                rd: W26,
+                rn: WZR,
+                rm: WZR,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
     fn parse_ubfiz_() {
         assert_eq!(
             parse_inst("ubfiz w8, w0, #5, #3"),
@@ -6579,6 +6590,30 @@ mod tests {
                 rt: D2,
                 rn: X3,
                 offset: 16
+            }
+        );
+    }
+
+    #[test]
+    fn parse_str_s_negative_offset_uses_unscaled() {
+        assert_eq!(
+            parse_inst("str s8, [x29, #-4]"),
+            Inst::SturFp32 {
+                rt: S8,
+                rn: X29,
+                offset: -4
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ldr_s_negative_offset_uses_unscaled() {
+        assert_eq!(
+            parse_inst("ldr s9, [x29, #-4]"),
+            Inst::LdurFp32 {
+                rt: S9,
+                rn: X29,
+                offset: -4
             }
         );
     }
@@ -10004,6 +10039,18 @@ mod tests {
             stmts,
             vec![Stmt::Directive(Directive::Section(
                 "__TEXT".into(),
+                "__const".into()
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_data_const_section_with_regular_attr() {
+        let stmts = parse_stmts(".section __DATA,__const,regular");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::Section(
+                "__DATA".into(),
                 "__const".into()
             ))]
         );

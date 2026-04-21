@@ -52,7 +52,11 @@ pub fn assemble_with_system(src_path: &Path, output: &Path) {
         ])
         .status()
         .expect("run system as");
-    assert!(status.success(), "system as failed for {}", src_path.display());
+    assert!(
+        status.success(),
+        "system as failed for {}",
+        src_path.display()
+    );
 }
 
 pub fn object_text_bytes(path: &Path) -> Vec<u8> {
@@ -60,7 +64,11 @@ pub fn object_text_bytes(path: &Path) -> Vec<u8> {
         .args(["-t", path.to_str().expect("object path")])
         .output()
         .expect("run otool -t");
-    assert!(output.status.success(), "otool -t failed for {}", path.display());
+    assert!(
+        output.status.success(),
+        "otool -t failed for {}",
+        path.display()
+    );
     parse_text_bytes(&String::from_utf8_lossy(&output.stdout))
 }
 
@@ -69,7 +77,11 @@ pub fn object_section_bytes(path: &Path, segment: &str, section: &str) -> Vec<u8
         .args(["-s", segment, section, path.to_str().expect("object path")])
         .output()
         .expect("run otool -s");
-    assert!(output.status.success(), "otool -s failed for {}", path.display());
+    assert!(
+        output.status.success(),
+        "otool -s failed for {}",
+        path.display()
+    );
     parse_section_bytes(&String::from_utf8_lossy(&output.stdout))
 }
 
@@ -109,11 +121,7 @@ pub fn object_symbol_string_offsets(path: &Path) -> Vec<(String, u32)> {
     let mut out = Vec::with_capacity(symtab.nsyms);
     for index in 0..symtab.nsyms {
         let base = symtab.symoff + index * 16;
-        let n_strx = u32::from_le_bytes(
-            data[base..base + 4]
-                .try_into()
-                .expect("n_strx bytes"),
-        );
+        let n_strx = u32::from_le_bytes(data[base..base + 4].try_into().expect("n_strx bytes"));
         let name = symbol_name_at(&data, symtab.stroff, n_strx);
         out.push((name, n_strx));
     }
@@ -294,9 +302,21 @@ fn parse_section_bytes(text: &str) -> Vec<u8> {
             }
             match hex.len() {
                 2 => bytes.push(u8::from_str_radix(hex, 16).expect("parse byte")),
-                4 => bytes.extend_from_slice(&u16::from_str_radix(hex, 16).expect("parse halfword").to_le_bytes()),
-                8 => bytes.extend_from_slice(&u32::from_str_radix(hex, 16).expect("parse word").to_le_bytes()),
-                16 => bytes.extend_from_slice(&u64::from_str_radix(hex, 16).expect("parse quad").to_le_bytes()),
+                4 => bytes.extend_from_slice(
+                    &u16::from_str_radix(hex, 16)
+                        .expect("parse halfword")
+                        .to_le_bytes(),
+                ),
+                8 => bytes.extend_from_slice(
+                    &u32::from_str_radix(hex, 16)
+                        .expect("parse word")
+                        .to_le_bytes(),
+                ),
+                16 => bytes.extend_from_slice(
+                    &u64::from_str_radix(hex, 16)
+                        .expect("parse quad")
+                        .to_le_bytes(),
+                ),
                 other => panic!("unexpected hex chunk length {} in otool output", other),
             }
         }

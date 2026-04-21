@@ -42,6 +42,11 @@ lit16:
     .quad 1
     .quad 2
 
+.section __DATA,__const,regular
+.p2align 3
+data_const:
+    .quad 7
+
 .section __DATA,__thread_data,thread_local_variables
 .p2align 2
 _tls_value$tlv$init:

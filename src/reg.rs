@@ -61,7 +61,7 @@ pub const X28: GpReg = GpReg::new(28);
 pub const X29: GpReg = GpReg::new(29); // frame pointer
 pub const X30: GpReg = GpReg::new(30); // link register
 pub const XZR: GpReg = GpReg::new(31); // zero register
-pub const SP: GpReg = GpReg::new(31);  // stack pointer (same encoding, different context)
+pub const SP: GpReg = GpReg::new(31); // stack pointer (same encoding, different context)
 
 // W aliases (same encoding, just signals 32-bit operation to the user).
 pub const W0: GpReg = X0;

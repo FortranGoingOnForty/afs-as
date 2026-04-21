@@ -7,12 +7,12 @@
 // not Rust's default byte groupings. This is intentional and more readable for ISA work.
 #![allow(clippy::unusual_byte_groupings)]
 
+pub mod assemble;
 pub mod encode;
 pub mod expr;
 pub mod lex;
-pub mod parse;
-pub mod assemble;
 pub mod macho;
+pub mod parse;
 
 /// ARM64 register definitions.
 pub mod reg;

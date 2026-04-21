@@ -125,7 +125,12 @@ fn generate_metadata_heavy_case(seed: u64) -> String {
     let _ = writeln!(src);
     let _ = writeln!(src, ".section __TEXT,__cstring,cstring_literals");
     let _ = writeln!(src, "msg_{}:", seed);
-    let _ = writeln!(src, "    .asciz \"meta-stress-{}-{:08x}\"", seed, rng.next_u32());
+    let _ = writeln!(
+        src,
+        "    .asciz \"meta-stress-{}-{:08x}\"",
+        seed,
+        rng.next_u32()
+    );
     let _ = writeln!(src);
     let _ = writeln!(src, ".section __TEXT,__const");
     let _ = writeln!(src, ".p2align 3");
@@ -287,10 +292,7 @@ fn assert_relocatable_parity(paths: &StressPaths, src: &str) {
         &[&paths.ours_obj, &paths.support_obj],
         &paths.ours_linked,
     );
-    common::link_relocatable_with_system(
-        &[&paths.ref_obj, &paths.support_obj],
-        &paths.ref_linked,
-    );
+    common::link_relocatable_with_system(&[&paths.ref_obj, &paths.support_obj], &paths.ref_linked);
 
     let ours = fs::read(&paths.ours_linked).expect("read ours linked");
     let reference = fs::read(&paths.ref_linked).expect("read ref linked");

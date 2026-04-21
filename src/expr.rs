@@ -7,7 +7,10 @@ use std::fmt;
 pub enum Expr {
     Int(i64),
     Symbol(String),
-    ModifiedSymbol { symbol: String, modifier: SymbolModifier },
+    ModifiedSymbol {
+        symbol: String,
+        modifier: SymbolModifier,
+    },
     CurrentLocation,
     UnaryMinus(Box<Expr>),
     Add(Box<Expr>, Box<Expr>),
@@ -35,9 +38,20 @@ pub enum SymbolValue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClassifiedExpr {
     Absolute(i64),
-    Relocatable { symbol: String, addend: i64 },
-    Difference { minuend: String, subtrahend: String, addend: i64 },
-    PointerToGot { symbol: String, addend: i64, pcrel: bool },
+    Relocatable {
+        symbol: String,
+        addend: i64,
+    },
+    Difference {
+        minuend: String,
+        subtrahend: String,
+        addend: i64,
+    },
+    PointerToGot {
+        symbol: String,
+        addend: i64,
+        pcrel: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,7 +132,11 @@ pub fn classify(
 
     for (term, coeff) in terms {
         match term {
-            Term::Plain(symbol) => match symbols.get(&symbol).copied().unwrap_or(SymbolValue::Undefined) {
+            Term::Plain(symbol) => match symbols
+                .get(&symbol)
+                .copied()
+                .unwrap_or(SymbolValue::Undefined)
+            {
                 SymbolValue::Absolute(value) => {
                     constant = checked_add(constant, checked_mul(value, coeff as i64)?)?;
                 }
@@ -133,7 +151,10 @@ pub fn classify(
                 }
                 SymbolValue::Undefined => push_plain_term(&mut remaining, symbol, coeff),
             },
-            Term::Modified { symbol, modifier: SymbolModifier::Got } => {
+            Term::Modified {
+                symbol,
+                modifier: SymbolModifier::Got,
+            } => {
                 push_plain_term(&mut got_terms, symbol, coeff);
             }
             Term::CurrentLocation => {
@@ -178,7 +199,8 @@ pub fn classify(
     if !got_terms.is_empty() || current_location_coeff != 0 {
         if !remaining.is_empty() {
             return Err(ClassifyError::Illegal(
-                "pointer-to-GOT expression cannot be combined with plain relocatable symbols".into(),
+                "pointer-to-GOT expression cannot be combined with plain relocatable symbols"
+                    .into(),
             ));
         }
         if got_terms.len() != 1 || got_terms[0].1 != 1 {
@@ -255,7 +277,14 @@ fn linearize(
             Ok(())
         }
         Expr::ModifiedSymbol { symbol, modifier } => {
-            push_term(terms, Term::Modified { symbol: symbol.clone(), modifier: *modifier }, sign);
+            push_term(
+                terms,
+                Term::Modified {
+                    symbol: symbol.clone(),
+                    modifier: *modifier,
+                },
+                sign,
+            );
             Ok(())
         }
         Expr::CurrentLocation => {
@@ -277,7 +306,10 @@ fn linearize(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Term {
     Plain(String),
-    Modified { symbol: String, modifier: SymbolModifier },
+    Modified {
+        symbol: String,
+        modifier: SymbolModifier,
+    },
     CurrentLocation,
 }
 
@@ -340,20 +372,47 @@ mod tests {
     fn classify_relocatable_symbol_plus_constant() {
         let expr = Expr::Add(Box::new(Expr::Symbol("foo".into())), Box::new(Expr::Int(4)));
         let mut symbols = BTreeMap::new();
-        symbols.insert("foo".into(), SymbolValue::Defined { section: 1, value: 12 });
+        symbols.insert(
+            "foo".into(),
+            SymbolValue::Defined {
+                section: 1,
+                value: 12,
+            },
+        );
         assert_eq!(
             classify(&expr, &symbols).unwrap(),
-            ClassifiedExpr::Relocatable { symbol: "foo".into(), addend: 4 }
+            ClassifiedExpr::Relocatable {
+                symbol: "foo".into(),
+                addend: 4
+            }
         );
     }
 
     #[test]
     fn classify_same_section_difference_as_absolute() {
-        let expr = Expr::Sub(Box::new(Expr::Symbol("foo".into())), Box::new(Expr::Symbol("bar".into())));
+        let expr = Expr::Sub(
+            Box::new(Expr::Symbol("foo".into())),
+            Box::new(Expr::Symbol("bar".into())),
+        );
         let mut symbols = BTreeMap::new();
-        symbols.insert("foo".into(), SymbolValue::Defined { section: 1, value: 16 });
-        symbols.insert("bar".into(), SymbolValue::Defined { section: 1, value: 24 });
-        assert_eq!(classify(&expr, &symbols).unwrap(), ClassifiedExpr::Absolute(-8));
+        symbols.insert(
+            "foo".into(),
+            SymbolValue::Defined {
+                section: 1,
+                value: 16,
+            },
+        );
+        symbols.insert(
+            "bar".into(),
+            SymbolValue::Defined {
+                section: 1,
+                value: 24,
+            },
+        );
+        assert_eq!(
+            classify(&expr, &symbols).unwrap(),
+            ClassifiedExpr::Absolute(-8)
+        );
     }
 
     #[test]
@@ -386,12 +445,33 @@ mod tests {
             )),
         );
         let mut symbols = BTreeMap::new();
-        symbols.insert("foo".into(), SymbolValue::Defined { section: 1, value: 16 });
-        symbols.insert("bar".into(), SymbolValue::Defined { section: 1, value: 24 });
-        symbols.insert("baz".into(), SymbolValue::Defined { section: 1, value: 20 });
+        symbols.insert(
+            "foo".into(),
+            SymbolValue::Defined {
+                section: 1,
+                value: 16,
+            },
+        );
+        symbols.insert(
+            "bar".into(),
+            SymbolValue::Defined {
+                section: 1,
+                value: 24,
+            },
+        );
+        symbols.insert(
+            "baz".into(),
+            SymbolValue::Defined {
+                section: 1,
+                value: 20,
+            },
+        );
         assert_eq!(
             classify(&expr, &symbols).unwrap(),
-            ClassifiedExpr::Relocatable { symbol: "foo".into(), addend: 4 }
+            ClassifiedExpr::Relocatable {
+                symbol: "foo".into(),
+                addend: 4
+            }
         );
     }
 

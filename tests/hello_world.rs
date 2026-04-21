@@ -27,16 +27,22 @@ fn assemble_link_run(asm: &str) -> (i32, String) {
     drop(file);
 
     // Link.
-    let sdk = Command::new("xcrun").args(["--show-sdk-path"]).output().unwrap();
+    let sdk = Command::new("xcrun")
+        .args(["--show-sdk-path"])
+        .output()
+        .unwrap();
     let sdk_path = String::from_utf8_lossy(&sdk.stdout).trim().to_string();
 
     let ld_status = Command::new("ld")
         .args([
             o_path.to_str().unwrap(),
-            "-o", bin_path.to_str().unwrap(),
+            "-o",
+            bin_path.to_str().unwrap(),
             "-lSystem",
-            "-syslibroot", &sdk_path,
-            "-e", "_main",
+            "-syslibroot",
+            &sdk_path,
+            "-e",
+            "_main",
         ])
         .output()
         .expect("ld failed");
@@ -59,7 +65,8 @@ fn assemble_link_run(asm: &str) -> (i32, String) {
 
 #[test]
 fn hello_world() {
-    let (code, stdout) = assemble_link_run("\
+    let (code, stdout) = assemble_link_run(
+        "\
 .global _main
 .p2align 2
 
@@ -76,14 +83,16 @@ _main:
 
 .data
 msg: .asciz \"Hello, World!\\n\"
-");
+",
+    );
     assert_eq!(code, 0);
     assert_eq!(stdout, "Hello, World!\n");
 }
 
 #[test]
 fn exit_code_42() {
-    let (code, _stdout) = assemble_link_run("\
+    let (code, _stdout) = assemble_link_run(
+        "\
 .global _main
 .p2align 2
 
@@ -91,13 +100,15 @@ _main:
     mov x0, #42
     mov x16, #1
     svc #0x80
-");
+",
+    );
     assert_eq!(code, 42);
 }
 
 #[test]
 fn exit_code_0() {
-    let (code, _stdout) = assemble_link_run("\
+    let (code, _stdout) = assemble_link_run(
+        "\
 .global _main
 .p2align 2
 
@@ -105,14 +116,16 @@ _main:
     mov x0, #0
     mov x16, #1
     svc #0x80
-");
+",
+    );
     assert_eq!(code, 0);
 }
 
 #[test]
 fn arithmetic_and_exit() {
     // Compute 6 * 7 = 42, exit with that code.
-    let (code, _stdout) = assemble_link_run("\
+    let (code, _stdout) = assemble_link_run(
+        "\
 .global _main
 .p2align 2
 
@@ -122,13 +135,15 @@ _main:
     mul x0, x0, x1
     mov x16, #1
     svc #0x80
-");
+",
+    );
     assert_eq!(code, 42);
 }
 
 #[test]
 fn write_data_string() {
-    let (code, stdout) = assemble_link_run("\
+    let (code, stdout) = assemble_link_run(
+        "\
 .global _main
 .p2align 2
 
@@ -147,7 +162,8 @@ _main:
 
 .data
 msg: .asciz \"ARMF!\"
-");
+",
+    );
     assert_eq!(code, 0);
     assert_eq!(stdout, "ARMF!");
 }

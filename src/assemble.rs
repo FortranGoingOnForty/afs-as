@@ -1801,6 +1801,8 @@ impl Assembler {
             Ok(("__TEXT", "__const", SectionKind::ConstData))
         } else if seg_lower == "__data" && sect_lower == "__data" {
             Ok(("__DATA", "__data", SectionKind::Data))
+        } else if seg_lower == "__data" && sect_lower == "__const" {
+            Ok(("__DATA", "__const", SectionKind::ConstData))
         } else if seg_lower == "__data" && sect_lower == "__thread_data" {
             Ok(("__DATA", "__thread_data", SectionKind::ThreadLocalData))
         } else if seg_lower == "__data" && sect_lower == "__thread_vars" {
@@ -1811,7 +1813,7 @@ impl Assembler {
             Ok(("__DATA", "__bss", SectionKind::ZeroFill))
         } else {
             Err(AsmError(format!(
-                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__literal16, __TEXT,__const, __DATA,__data, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__thread_bss, __DATA,__bss)",
+                "unsupported section {},{} (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__literal16, __TEXT,__const, __DATA,__data, __DATA,__const, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__thread_bss, __DATA,__bss)",
                 seg, sect
             )))
         }
@@ -2520,16 +2522,18 @@ impl Assembler {
                         .then_with(|| {
                             let a_is_section_temp = a.name.starts_with("ltmp");
                             let b_is_section_temp = b.name.starts_with("ltmp");
-                            let same_section_index =
-                                (a.section == b.section && a.section > 0).then(|| (a.section - 1) as usize);
+                            let same_section_index = (a.section == b.section && a.section > 0)
+                                .then(|| (a.section - 1) as usize);
                             let a_section_kind = (a.section > 0)
                                 .then(|| &self.sections[(a.section - 1) as usize].kind);
                             let a_non_temp_text_local = !a_is_section_temp
                                 && a.section > 0
-                                && self.sections[(a.section - 1) as usize].kind == SectionKind::Text;
+                                && self.sections[(a.section - 1) as usize].kind
+                                    == SectionKind::Text;
                             let b_non_temp_text_local = !b_is_section_temp
                                 && b.section > 0
-                                && self.sections[(b.section - 1) as usize].kind == SectionKind::Text;
+                                && self.sections[(b.section - 1) as usize].kind
+                                    == SectionKind::Text;
                             let a_page_target_base = !a_is_section_temp
                                 && page_target_base_use_order.contains_key(&a.name);
                             let b_page_target_base = !b_is_section_temp
@@ -2572,7 +2576,10 @@ impl Assembler {
                                     ) => b_is_section_temp.cmp(&a_is_section_temp),
                                     _ if same_section_index.is_some_and(|section| {
                                         section_temp_trailing_order.contains_key(&section)
-                                    }) => a_is_section_temp.cmp(&b_is_section_temp),
+                                    }) =>
+                                    {
+                                        a_is_section_temp.cmp(&b_is_section_temp)
+                                    }
                                     _ => std::cmp::Ordering::Equal,
                                 };
                                 if temp_cmp != std::cmp::Ordering::Equal {
@@ -2589,8 +2596,7 @@ impl Assembler {
                                     .contains_key(&((b.section - 1) as usize));
 
                             a_order.cmp(&b_order).then_with(|| {
-                                let trailing_temp_cmp =
-                                    a_is_trailing_temp.cmp(&b_is_trailing_temp);
+                                let trailing_temp_cmp = a_is_trailing_temp.cmp(&b_is_trailing_temp);
                                 if trailing_temp_cmp != std::cmp::Ordering::Equal {
                                     return trailing_temp_cmp;
                                 }
@@ -2598,14 +2604,9 @@ impl Assembler {
                                     .get(&a.name)
                                     .copied()
                                     .unwrap_or(usize::MAX)
-                                    .cmp(
-                                        &symbol_order
-                                            .get(&b.name)
-                                            .copied()
-                                            .unwrap_or(usize::MAX),
-                                    )
+                                    .cmp(&symbol_order.get(&b.name).copied().unwrap_or(usize::MAX))
                                     .then_with(|| a.name.cmp(&b.name))
-                                })
+                            })
                         })
                 }
                 _ => a.name.cmp(&b.name),
@@ -2934,32 +2935,22 @@ mod tests {
         let mut offset = 32usize;
         for _ in 0..ncmds {
             let cmd = u32::from_le_bytes(data[offset..offset + 4].try_into().expect("cmd"));
-            let cmdsize = u32::from_le_bytes(
-                data[offset + 4..offset + 8]
-                    .try_into()
-                    .expect("cmdsize"),
-            ) as usize;
+            let cmdsize =
+                u32::from_le_bytes(data[offset + 4..offset + 8].try_into().expect("cmdsize"))
+                    as usize;
             if cmd == 0x2 {
-                let symoff = u32::from_le_bytes(
-                    data[offset + 8..offset + 12]
-                        .try_into()
-                        .expect("symoff"),
-                ) as usize;
-                let nsyms = u32::from_le_bytes(
-                    data[offset + 12..offset + 16]
-                        .try_into()
-                        .expect("nsyms"),
-                ) as usize;
-                let stroff = u32::from_le_bytes(
-                    data[offset + 16..offset + 20]
-                        .try_into()
-                        .expect("stroff"),
-                ) as usize;
-                let strsize = u32::from_le_bytes(
-                    data[offset + 20..offset + 24]
-                        .try_into()
-                        .expect("strsize"),
-                ) as usize;
+                let symoff =
+                    u32::from_le_bytes(data[offset + 8..offset + 12].try_into().expect("symoff"))
+                        as usize;
+                let nsyms =
+                    u32::from_le_bytes(data[offset + 12..offset + 16].try_into().expect("nsyms"))
+                        as usize;
+                let stroff =
+                    u32::from_le_bytes(data[offset + 16..offset + 20].try_into().expect("stroff"))
+                        as usize;
+                let strsize =
+                    u32::from_le_bytes(data[offset + 20..offset + 24].try_into().expect("strsize"))
+                        as usize;
                 return (symoff, nsyms, stroff, strsize);
             }
             offset += cmdsize;
@@ -3633,6 +3624,29 @@ mod tests {
                 .unwrap()
                 .value,
             32
+        );
+    }
+
+    #[test]
+    fn assemble_supported_data_const_section() {
+        let obj = assemble_source(
+            ".section __DATA,__const\n\
+             .p2align 3\n\
+             value: .quad 42\n",
+        )
+        .unwrap();
+
+        let const_data = obj.section("__DATA", "__const").unwrap();
+        assert_eq!(const_data.kind, SectionKind::ConstData);
+        assert_eq!(const_data.align_pow2, 3);
+        assert_eq!(const_data.data, 42u64.to_le_bytes());
+        assert_eq!(
+            obj.symbols
+                .iter()
+                .find(|sym| sym.name == "value")
+                .unwrap()
+                .value,
+            0
         );
     }
 

@@ -49,7 +49,13 @@ fn style_mnemonic(rng: &mut Rng, mnemonic: &str) -> String {
 
 fn emit_line(src: &mut String, rng: &mut Rng, mnemonic: &str, operands: &str) {
     let indent = if rng.bounded(2) == 0 { "    " } else { "\t" };
-    let _ = writeln!(src, "{}{} {}", indent, style_mnemonic(rng, mnemonic), operands);
+    let _ = writeln!(
+        src,
+        "{}{} {}",
+        indent,
+        style_mnemonic(rng, mnemonic),
+        operands
+    );
 }
 
 fn generate_supported_case(seed: u64) -> String {
@@ -89,7 +95,12 @@ fn generate_supported_case(seed: u64) -> String {
     let _ = writeln!(src, "_fuzz_{}:", seed);
 
     emit_line(&mut src, &mut rng, "mov", "x9, x0");
-    emit_line(&mut src, &mut rng, "and", &format!("w8, w0, {}", logical_imm));
+    emit_line(
+        &mut src,
+        &mut rng,
+        "and",
+        &format!("w8, w0, {}", logical_imm),
+    );
     emit_line(
         &mut src,
         &mut rng,
@@ -111,19 +122,39 @@ fn generate_supported_case(seed: u64) -> String {
         "cmp",
         &format!("x13, x9, lsl #{}", lsl_shift),
     );
-    emit_line(&mut src, &mut rng, "csel", &format!("x14, x13, x12, {}", cond0));
-    emit_line(&mut src, &mut rng, "csinv", &format!("x15, x14, x13, {}", cond1));
+    emit_line(
+        &mut src,
+        &mut rng,
+        "csel",
+        &format!("x14, x13, x12, {}", cond0),
+    );
+    emit_line(
+        &mut src,
+        &mut rng,
+        "csinv",
+        &format!("x15, x14, x13, {}", cond1),
+    );
     emit_line(&mut src, &mut rng, "cmp", &format!("w10, #{}", cmp_imm));
 
     if include_numeric_local {
         let _ = writeln!(src, "1:");
         emit_line(&mut src, &mut rng, "cbz", "w11, 2f");
-        emit_line(&mut src, &mut rng, "tbz", &format!("x15, #{}, Lpage_{}", bit_index, seed));
+        emit_line(
+            &mut src,
+            &mut rng,
+            "tbz",
+            &format!("x15, #{}, Lpage_{}", bit_index, seed),
+        );
         emit_line(&mut src, &mut rng, "b", &format!("Ldone_{}", seed));
         let _ = writeln!(src, "2:");
     } else {
         emit_line(&mut src, &mut rng, "cbz", &format!("w11, Lpage_{}", seed));
-        emit_line(&mut src, &mut rng, "tbz", &format!("x15, #{}, Ldone_{}", bit_index, seed));
+        emit_line(
+            &mut src,
+            &mut rng,
+            "tbz",
+            &format!("x15, #{}, Ldone_{}", bit_index, seed),
+        );
     }
 
     let _ = writeln!(src, "Lpage_{}:", seed);
@@ -189,7 +220,12 @@ fn generate_supported_case(seed: u64) -> String {
         emit_line(&mut src, &mut rng, "fmov", &format!("d0, {}", fp_imm));
         emit_line(&mut src, &mut rng, "ldr", "d1, [sp, #8]");
         emit_line(&mut src, &mut rng, "fcmp", "d1, d0");
-        emit_line(&mut src, &mut rng, "fcsel", &format!("d0, d1, d0, {}", fp_cond));
+        emit_line(
+            &mut src,
+            &mut rng,
+            "fcsel",
+            &format!("d0, d1, d0, {}", fp_cond),
+        );
     }
 
     emit_line(&mut src, &mut rng, "dmb", "ish");
@@ -277,9 +313,29 @@ fn generate_supported_case(seed: u64) -> String {
 
 fn generate_garbage_case(seed: u64) -> String {
     const TOKENS: &[&str] = &[
-        ".", ",", ":", "#", "@", "@@PAGE", "\"", "'",
-        "text", "ldr", "q99", "0xZZ", "(", ")", "[", "]",
-        "Lx", ".unknown", ".cfi_bogus", "??", "!", "=", "-",
+        ".",
+        ",",
+        ":",
+        "#",
+        "@",
+        "@@PAGE",
+        "\"",
+        "'",
+        "text",
+        "ldr",
+        "q99",
+        "0xZZ",
+        "(",
+        ")",
+        "[",
+        "]",
+        "Lx",
+        ".unknown",
+        ".cfi_bogus",
+        "??",
+        "!",
+        "=",
+        "-",
     ];
 
     let mut rng = Rng::new(seed ^ 0xE703_7ED1_A0B4_28DB);
@@ -327,7 +383,13 @@ fn differential_seeded_surface_matches_system_as() {
 fn differential_garbage_cases_do_not_panic() {
     for seed in 1..=256u64 {
         let src = generate_garbage_case(seed);
-        let result = panic::catch_unwind(AssertUnwindSafe(|| afs_as::assemble::assemble_source(&src)));
-        assert!(result.is_ok(), "panic for garbage seed {}\n---source---\n{}", seed, src);
+        let result =
+            panic::catch_unwind(AssertUnwindSafe(|| afs_as::assemble::assemble_source(&src)));
+        assert!(
+            result.is_ok(),
+            "panic for garbage seed {}\n---source---\n{}",
+            seed,
+            src
+        );
     }
 }

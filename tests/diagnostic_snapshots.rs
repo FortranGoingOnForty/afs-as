@@ -78,7 +78,7 @@ fn snapshot_unsupported_section() {
     run_failure_snapshot(
         "unsupported-section.s",
         ".section __TEXT,__foo\n.space 16\n",
-        "<input>:1:1: error: unsupported section __TEXT,__foo (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__literal16, __TEXT,__const, __DATA,__data, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__thread_bss, __DATA,__bss)\n.section __TEXT,__foo\n^\n",
+        "<input>:1:1: error: unsupported section __TEXT,__foo (supported sections: __TEXT,__text, __TEXT,__cstring, __TEXT,__literal16, __TEXT,__const, __DATA,__data, __DATA,__const, __DATA,__thread_data, __DATA,__thread_vars, __DATA,__thread_bss, __DATA,__bss)\n.section __TEXT,__foo\n^\n",
     );
 }
 

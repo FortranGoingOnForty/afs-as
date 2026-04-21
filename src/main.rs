@@ -1,6 +1,6 @@
+use std::env;
 use std::fs;
 use std::io::{self, BufWriter, Read, Write};
-use std::env;
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -55,8 +55,7 @@ fn run() -> Result<(), (i32, String)> {
             Ok(())
         }
         Ok(Command::Assemble { input, output }) => {
-            assemble_cli(&input, &output)
-                .map_err(|err| (1, err.to_string()))
+            assemble_cli(&input, &output).map_err(|err| (1, err.to_string()))
         }
         Err(message) => Err((2, format!("afs-as: {}\n\n{}", message, USAGE))),
     }
@@ -127,13 +126,17 @@ fn is_stdio_path(path: &Path) -> bool {
 fn assemble_cli(input: &Path, output: &Path) -> Result<(), afs_as::assemble::AsmError> {
     let stdin_display = Path::new("<stdin>");
     let stdout_display = Path::new("<stdout>");
-    let input_display = if is_stdio_path(input) { stdin_display } else { input };
+    let input_display = if is_stdio_path(input) {
+        stdin_display
+    } else {
+        input
+    };
 
     let src = if is_stdio_path(input) {
         let mut src = String::new();
-        io::stdin()
-            .read_to_string(&mut src)
-            .map_err(|err| afs_as::assemble::AsmError::new(format!("{}", err)).with_path(input_display))?;
+        io::stdin().read_to_string(&mut src).map_err(|err| {
+            afs_as::assemble::AsmError::new(format!("{}", err)).with_path(input_display)
+        })?;
         src
     } else {
         fs::read_to_string(input)
@@ -146,20 +149,24 @@ fn assemble_cli(input: &Path, output: &Path) -> Result<(), afs_as::assemble::Asm
     if is_stdio_path(output) {
         let stdout = io::stdout();
         let mut writer = BufWriter::new(stdout.lock());
-        afs_as::macho::write_macho(&obj, &mut writer)
-            .map_err(|err| afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(stdout_display))?;
-        writer
-            .flush()
-            .map_err(|err| afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(stdout_display))?;
+        afs_as::macho::write_macho(&obj, &mut writer).map_err(|err| {
+            afs_as::assemble::AsmError::new(format!("writing output: {}", err))
+                .with_path(stdout_display)
+        })?;
+        writer.flush().map_err(|err| {
+            afs_as::assemble::AsmError::new(format!("writing output: {}", err))
+                .with_path(stdout_display)
+        })?;
     } else {
         let file = fs::File::create(output)
             .map_err(|err| afs_as::assemble::AsmError::new(format!("{}", err)).with_path(output))?;
         let mut writer = BufWriter::new(file);
-        afs_as::macho::write_macho(&obj, &mut writer)
-            .map_err(|err| afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(output))?;
-        writer
-            .flush()
-            .map_err(|err| afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(output))?;
+        afs_as::macho::write_macho(&obj, &mut writer).map_err(|err| {
+            afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(output)
+        })?;
+        writer.flush().map_err(|err| {
+            afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(output)
+        })?;
     }
 
     Ok(())
@@ -214,7 +221,10 @@ mod tests {
 
     #[test]
     fn parse_rejects_missing_input() {
-        assert_eq!(parse(Vec::<String>::new()), Err("missing input file".into()));
+        assert_eq!(
+            parse(Vec::<String>::new()),
+            Err("missing input file".into())
+        );
     }
 
     #[test]
@@ -265,15 +275,18 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_option() {
-        assert_eq!(
-            parse(["--wat"]),
-            Err("unrecognized option '--wat'".into())
-        );
+        assert_eq!(parse(["--wat"]), Err("unrecognized option '--wat'".into()));
     }
 
     #[test]
     fn default_output_replaces_existing_extension() {
-        assert_eq!(default_output_path(PathBuf::from("foo.s").as_path()), PathBuf::from("foo.o"));
-        assert_eq!(default_output_path(PathBuf::from("foo").as_path()), PathBuf::from("foo.o"));
+        assert_eq!(
+            default_output_path(PathBuf::from("foo.s").as_path()),
+            PathBuf::from("foo.o")
+        );
+        assert_eq!(
+            default_output_path(PathBuf::from("foo").as_path()),
+            PathBuf::from("foo.o")
+        );
     }
 }

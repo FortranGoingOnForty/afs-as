@@ -28,7 +28,19 @@ fn harness_can_inspect_object_metadata() {
     let load_commands = common::object_load_commands(&paths.obj);
     let symbols = common::object_symbols(&paths.obj);
 
-    assert!(load_commands.contains("LC_SEGMENT_64"), "missing LC_SEGMENT_64:\n{}", load_commands);
-    assert!(load_commands.contains("__text"), "missing __text section:\n{}", load_commands);
-    assert!(symbols.contains("_main"), "missing _main symbol:\n{}", symbols);
+    assert!(
+        load_commands.contains("LC_SEGMENT_64"),
+        "missing LC_SEGMENT_64:\n{}",
+        load_commands
+    );
+    assert!(
+        load_commands.contains("__text"),
+        "missing __text section:\n{}",
+        load_commands
+    );
+    assert!(
+        symbols.contains("_main"),
+        "missing _main symbol:\n{}",
+        symbols
+    );
 }

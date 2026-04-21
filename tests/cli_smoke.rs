@@ -1,6 +1,6 @@
 use std::fs;
-use std::path::PathBuf;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -40,19 +40,33 @@ fn help_flag_prints_usage_to_stdout() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stdout.contains("usage: afs-as <input.s> [-o <output.o>]"), "stdout:\n{}", stdout);
+    assert!(
+        stdout.contains("usage: afs-as <input.s> [-o <output.o>]"),
+        "stdout:\n{}",
+        stdout
+    );
     assert!(stdout.contains("exit status:"), "stdout:\n{}", stdout);
-    assert!(stdout.contains("0            success"), "stdout:\n{}", stdout);
+    assert!(
+        stdout.contains("0            success"),
+        "stdout:\n{}",
+        stdout
+    );
     assert!(stderr.is_empty(), "stderr:\n{}", stderr);
 }
 
 #[test]
 fn version_flag_prints_version_to_stdout() {
-    let output = afs_as().arg("--version").output().expect("run afs-as --version");
+    let output = afs_as()
+        .arg("--version")
+        .output()
+        .expect("run afs-as --version");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stdout.trim(), format!("afs-as {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        stdout.trim(),
+        format!("afs-as {}", env!("CARGO_PKG_VERSION"))
+    );
     assert!(stderr.is_empty(), "stderr:\n{}", stderr);
 }
 
@@ -61,8 +75,16 @@ fn missing_input_exits_with_usage_error() {
     let output = afs_as().output().expect("run afs-as without args");
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("afs-as: missing input file"), "stderr:\n{}", stderr);
-    assert!(stderr.contains("usage: afs-as <input.s> [-o <output.o>]"), "stderr:\n{}", stderr);
+    assert!(
+        stderr.contains("afs-as: missing input file"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("usage: afs-as <input.s> [-o <output.o>]"),
+        "stderr:\n{}",
+        stderr
+    );
 }
 
 #[test]
@@ -70,8 +92,16 @@ fn unknown_option_exits_with_usage_error() {
     let output = afs_as().arg("--wat").output().expect("run afs-as --wat");
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("afs-as: unrecognized option '--wat'"), "stderr:\n{}", stderr);
-    assert!(stderr.contains("Only a single input file is supported."), "stderr:\n{}", stderr);
+    assert!(
+        stderr.contains("afs-as: unrecognized option '--wat'"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("Only a single input file is supported."),
+        "stderr:\n{}",
+        stderr
+    );
 }
 
 #[test]
@@ -79,14 +109,14 @@ fn default_output_path_is_created_next_to_input() {
     let root = temp_root("afs_cli_default_output");
     let input = root.join("hello.s");
     let output = root.join("hello.o");
-    fs::write(
-        &input,
-        ".text\n.globl _entry\n_entry:\nret\n",
-    )
-    .expect("write input");
+    fs::write(&input, ".text\n.globl _entry\n_entry:\nret\n").expect("write input");
 
     let result = afs_as().arg(&input).output().expect("run afs-as");
-    assert!(result.status.success(), "stderr:\n{}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     assert!(output.exists(), "expected {} to exist", output.display());
     assert!(!fs::read(&output).expect("read output").is_empty());
 }
@@ -105,12 +135,17 @@ fn stdin_requires_explicit_output_path() {
 
 #[test]
 fn stdin_can_write_object_to_stdout() {
-    let output = run_with_stdin(
-        &["-", "-o", "-"],
-        ".text\n.globl _entry\n_entry:\nret\n",
+    let output = run_with_stdin(&["-", "-o", "-"], ".text\n.globl _entry\n_entry:\nret\n");
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.status.success(), "stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-    assert!(output.stderr.is_empty(), "stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.stderr.is_empty(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(
         output.stdout.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]),
         "stdout bytes: {:?}",
@@ -130,7 +165,11 @@ fn double_dash_allows_dash_prefixed_input_file() {
         .args(["--", "--version.s"])
         .output()
         .expect("run afs-as with --");
-    assert!(result.status.success(), "stderr:\n{}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     assert!(output.exists(), "expected {} to exist", output.display());
 }
 
@@ -190,7 +229,11 @@ fn assembly_errors_include_file_line_source_and_caret() {
         "stderr:\n{}",
         stderr
     );
-    assert!(stderr.contains("assembler-local label"), "stderr:\n{}", stderr);
+    assert!(
+        stderr.contains("assembler-local label"),
+        "stderr:\n{}",
+        stderr
+    );
     assert!(stderr.contains("ldr x0, _ext"), "stderr:\n{}", stderr);
     assert!(stderr.contains("^"), "stderr:\n{}", stderr);
 }

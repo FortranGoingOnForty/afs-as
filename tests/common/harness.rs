@@ -39,7 +39,11 @@ pub fn assemble_with_system(src_path: &Path, output: &Path) {
         ])
         .status()
         .expect("run system as");
-    assert!(status.success(), "system as failed for {}", src_path.display());
+    assert!(
+        status.success(),
+        "system as failed for {}",
+        src_path.display()
+    );
 }
 
 pub fn object_text_bytes(path: &Path) -> Vec<u8> {
@@ -47,7 +51,11 @@ pub fn object_text_bytes(path: &Path) -> Vec<u8> {
         .args(["-t", path.to_str().expect("object path")])
         .output()
         .expect("run otool -t");
-    assert!(output.status.success(), "otool -t failed for {}", path.display());
+    assert!(
+        output.status.success(),
+        "otool -t failed for {}",
+        path.display()
+    );
     parse_text_bytes(&String::from_utf8_lossy(&output.stdout))
 }
 

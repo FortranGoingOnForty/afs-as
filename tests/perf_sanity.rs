@@ -19,27 +19,19 @@ fn perf_source(blocks: usize) -> String {
     for index in 0..blocks {
         src.push_str(&format!("Lblock_{}:\n", index));
         src.push_str("  and w8, w0, #0xff\n");
-        src.push_str(&format!("  ubfiz w10, w8, #{}, #{}\n", index % 12, 4 + (index % 8)));
+        src.push_str(&format!(
+            "  ubfiz w10, w8, #{}, #{}\n",
+            index % 12,
+            4 + (index % 8)
+        ));
         src.push_str("  msub w11, w10, w8, w0\n");
         src.push_str(&format!("  add x9, x9, #{}\n", 1 + (index % 128)));
         src.push_str(&format!("  sub x12, x9, #{}\n", 1 + ((index * 3) % 96)));
         src.push_str(&format!("  add x13, x12, w11, uxtw #{}\n", index % 3));
-        src.push_str(&format!(
-            "  adrp x14, cstr{}_perf@PAGE\n",
-            index
-        ));
-        src.push_str(&format!(
-            "  add x14, x14, cstr{}_perf@PAGEOFF\n",
-            index
-        ));
-        src.push_str(&format!(
-            "  adrp x15, _ext_{}@GOTPAGE\n",
-            index
-        ));
-        src.push_str(&format!(
-            "  ldr x15, [x15, _ext_{}@GOTPAGEOFF]\n",
-            index
-        ));
+        src.push_str(&format!("  adrp x14, cstr{}_perf@PAGE\n", index));
+        src.push_str(&format!("  add x14, x14, cstr{}_perf@PAGEOFF\n", index));
+        src.push_str(&format!("  adrp x15, _ext_{}@GOTPAGE\n", index));
+        src.push_str(&format!("  ldr x15, [x15, _ext_{}@GOTPAGEOFF]\n", index));
         src.push_str(&format!("  cbz w11, Lskip_{}\n", index));
         src.push_str(&format!("  tbz x13, #{}, Ldone_{}\n", index % 32, index));
         src.push_str("  dmb ish\n");
@@ -118,7 +110,11 @@ fn run_cli(bin: &Path, input: &Path, output: &Path) -> Duration {
         .arg(output)
         .status()
         .expect("run afs-as cli");
-    assert!(status.success(), "afs-as CLI failed for {}", input.display());
+    assert!(
+        status.success(),
+        "afs-as CLI failed for {}",
+        input.display()
+    );
     start.elapsed()
 }
 

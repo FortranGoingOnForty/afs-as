@@ -88,7 +88,11 @@ fn mutation_cases() -> Vec<MutationCase> {
     vec![
         MutationCase {
             name: "bad_gp_register",
-            src: replace_once(base_instruction_source(), "add x0, x1, x2", "add x0, x32, x2"),
+            src: replace_once(
+                base_instruction_source(),
+                "add x0, x1, x2",
+                "add x0, x32, x2",
+            ),
             snippet_fragment: "add x0, x32, x2",
         },
         MutationCase {
@@ -131,12 +135,20 @@ fn mutation_cases() -> Vec<MutationCase> {
         },
         MutationCase {
             name: "bad_loh_arity",
-            src: replace_once(base_reloc_source(), ".loh AdrpAdd Lloh0, Lloh1", ".loh AdrpAdd Lloh0"),
+            src: replace_once(
+                base_reloc_source(),
+                ".loh AdrpAdd Lloh0, Lloh1",
+                ".loh AdrpAdd Lloh0",
+            ),
             snippet_fragment: ".loh AdrpAdd Lloh0",
         },
         MutationCase {
             name: "bad_loh_separator",
-            src: replace_once(base_reloc_source(), ".loh AdrpAdd Lloh0, Lloh1", ".loh AdrpAdd Lloh0 Lloh1"),
+            src: replace_once(
+                base_reloc_source(),
+                ".loh AdrpAdd Lloh0, Lloh1",
+                ".loh AdrpAdd Lloh0 Lloh1",
+            ),
             snippet_fragment: ".loh AdrpAdd Lloh0 Lloh1",
         },
         MutationCase {
@@ -168,7 +180,11 @@ fn mutation_cases() -> Vec<MutationCase> {
         },
         MutationCase {
             name: "unterminated_string",
-            src: replace_once(base_directive_source(), ".asciz \"hello\"", ".asciz \"hello"),
+            src: replace_once(
+                base_directive_source(),
+                ".asciz \"hello\"",
+                ".asciz \"hello",
+            ),
             snippet_fragment: ".asciz \"hello",
         },
         MutationCase {
