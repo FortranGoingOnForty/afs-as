@@ -1534,6 +1534,14 @@ pub enum Inst {
     MovLaneFromGpH { rd: FpReg, rd_index: u8, rn: GpReg },
     /// MOV.B Vd[index], Wn
     MovLaneFromGpB { rd: FpReg, rd_index: u8, rn: GpReg },
+    /// LD1.B { Vt }[index], [Xn]
+    Ld1LaneB { rt: FpReg, index: u8, rn: GpReg },
+    /// LD1.H { Vt }[index], [Xn]
+    Ld1LaneH { rt: FpReg, index: u8, rn: GpReg },
+    /// LD1.S { Vt }[index], [Xn]
+    Ld1LaneS { rt: FpReg, index: u8, rn: GpReg },
+    /// LD1.D { Vt }[index], [Xn]
+    Ld1LaneD { rt: FpReg, index: u8, rn: GpReg },
     /// FNEG Dd, Dn
     FnegD { rd: FpReg, rn: FpReg },
     /// FNEG Sd, Sn
@@ -2821,6 +2829,10 @@ impl Inst {
             Inst::MovLaneFromGpB { rd, rd_index, rn } => {
                 simd_insert_lane_gp(0, *rn, *rd_index, *rd)
             }
+            Inst::Ld1LaneB { rt, index, rn } => simd_load_lane(0, *rn, *index, *rt),
+            Inst::Ld1LaneH { rt, index, rn } => simd_load_lane(1, *rn, *index, *rt),
+            Inst::Ld1LaneS { rt, index, rn } => simd_load_lane(2, *rn, *index, *rt),
+            Inst::Ld1LaneD { rt, index, rn } => simd_load_lane(3, *rn, *index, *rt),
 
             Inst::FnegD { rd, rn } => fp_unary(0b01, 0b0000_10, *rn, *rd),
             Inst::FnegS { rd, rn } => fp_unary(0b00, 0b0000_10, *rn, *rd),
@@ -3312,6 +3324,23 @@ fn simd_insert_lane_b(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
 
 fn simd_insert_lane_gp(size_log2: u8, rn: GpReg, index: u8, rd: FpReg) -> u32 {
     0x4E001C00 | (simd_lane_imm5(size_log2, index) << 16) | (rn.enc() << 5) | rd.enc()
+}
+
+fn simd_load_lane(size_log2: u8, rn: GpReg, index: u8, rt: FpReg) -> u32 {
+    let base = match size_log2 {
+        0 => 0x0D400000,
+        1 => 0x0D404000,
+        2 => 0x0D408000,
+        3 => 0x0D408400,
+        _ => unreachable!(),
+    };
+    let low_bits = if size_log2 == 3 {
+        0
+    } else {
+        (index as u32) & ((1u32 << (3 - size_log2)) - 1)
+    };
+    let high_bit = ((index as u32) >> (3 - size_log2)) & 1;
+    base | (high_bit << 30) | (low_bits << (10 + size_log2)) | (rn.enc() << 5) | rt.enc()
 }
 
 #[cfg(test)]
@@ -7770,6 +7799,54 @@ mod tests {
             }
             .encode(),
             0x4E0F1D49
+        );
+    }
+    #[test]
+    fn ld1_s_v0_lane1_x8() {
+        assert_eq!(
+            Inst::Ld1LaneS {
+                rt: FpReg::new(0),
+                index: 1,
+                rn: X8
+            }
+            .encode(),
+            0x0D409100
+        );
+    }
+    #[test]
+    fn ld1_d_v2_lane1_x10() {
+        assert_eq!(
+            Inst::Ld1LaneD {
+                rt: FpReg::new(2),
+                index: 1,
+                rn: X10
+            }
+            .encode(),
+            0x4D408542
+        );
+    }
+    #[test]
+    fn ld1_h_v3_lane5_x11() {
+        assert_eq!(
+            Inst::Ld1LaneH {
+                rt: FpReg::new(3),
+                index: 5,
+                rn: X11
+            }
+            .encode(),
+            0x4D404963
+        );
+    }
+    #[test]
+    fn ld1_b_v4_lane7_x12() {
+        assert_eq!(
+            Inst::Ld1LaneB {
+                rt: FpReg::new(4),
+                index: 7,
+                rn: X12
+            }
+            .encode(),
+            0x0D401D84
         );
     }
     #[test]

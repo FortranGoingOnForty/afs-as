@@ -1320,6 +1320,7 @@ impl<'a> Parser<'a> {
             "mov.s" | "mov.d" | "mov.h" | "mov.b" => self.parse_simd_lane_insert(mnemonic),
             "umov.h" | "umov.b" => self.parse_simd_lane_extract_gp(mnemonic),
             "smov.h" | "smov.b" => self.parse_simd_lane_extract_gp_signed(mnemonic),
+            "ld1.s" | "ld1.d" | "ld1.h" | "ld1.b" => self.parse_simd_lane_load(mnemonic),
             "mov.8b" | "mov.16b" | "mov.4s" | "mov.2d" => self.parse_simd_mov(mnemonic),
             "dup.16b" | "dup.8h" | "dup.4s" | "dup.2d" => self.parse_simd_dup(mnemonic),
             "tbl.16b" => self.parse_simd_table_lookup("tbl.16b"),
@@ -2595,6 +2596,32 @@ impl<'a> Parser<'a> {
                 SimdLaneWidth::B8 => Inst::MovLaneFromGpB { rd, rd_index, rn },
             })
         }
+    }
+
+    fn parse_simd_lane_load(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let width = match mnemonic {
+            "ld1.s" => SimdLaneWidth::S32,
+            "ld1.d" => SimdLaneWidth::D64,
+            "ld1.h" => SimdLaneWidth::H16,
+            "ld1.b" => SimdLaneWidth::B8,
+            _ => unreachable!(),
+        };
+        self.expect(&Tok::LBrace)?;
+        let rt = self.parse_simd_reg()?;
+        self.expect(&Tok::RBrace)?;
+        self.expect(&Tok::LBracket)?;
+        let index = self.parse_lane_index(width.max_index())?;
+        self.expect(&Tok::RBracket)?;
+        self.expect(&Tok::Comma)?;
+        self.expect(&Tok::LBracket)?;
+        let rn = self.parse_gp_reg()?;
+        self.expect(&Tok::RBracket)?;
+        Ok(match width {
+            SimdLaneWidth::S32 => Inst::Ld1LaneS { rt, index, rn },
+            SimdLaneWidth::D64 => Inst::Ld1LaneD { rt, index, rn },
+            SimdLaneWidth::H16 => Inst::Ld1LaneH { rt, index, rn },
+            SimdLaneWidth::B8 => Inst::Ld1LaneB { rt, index, rn },
+        })
     }
 
     fn parse_mov_wide(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -9417,6 +9444,54 @@ mod tests {
                 rd: FpReg::new(9),
                 rd_index: 7,
                 rn: W10
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ld1_lane_s() {
+        assert_eq!(
+            parse_inst("ld1.s { v0 }[1], [x8]"),
+            Inst::Ld1LaneS {
+                rt: FpReg::new(0),
+                index: 1,
+                rn: X8
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ld1_lane_d() {
+        assert_eq!(
+            parse_inst("ld1.d { v2 }[1], [x10]"),
+            Inst::Ld1LaneD {
+                rt: FpReg::new(2),
+                index: 1,
+                rn: X10
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ld1_lane_h() {
+        assert_eq!(
+            parse_inst("ld1.h { v3 }[5], [x11]"),
+            Inst::Ld1LaneH {
+                rt: FpReg::new(3),
+                index: 5,
+                rn: X11
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ld1_lane_b() {
+        assert_eq!(
+            parse_inst("ld1.b { v4 }[7], [x12]"),
+            Inst::Ld1LaneB {
+                rt: FpReg::new(4),
+                index: 7,
+                rn: X12
             }
         );
     }
