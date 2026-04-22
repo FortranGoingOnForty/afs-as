@@ -6,6 +6,8 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, Write};
+use std::process::Command;
+use std::sync::OnceLock;
 
 // ---- Mach-O Constants ----
 
@@ -83,10 +85,31 @@ impl Default for BuildVersion {
     fn default() -> Self {
         Self {
             platform: PLATFORM_MACOS,
-            minos: pack_version(15, 0, 0),
+            minos: default_host_minos(),
             sdk: 0,
         }
     }
+}
+
+fn default_host_minos() -> u32 {
+    static HOST_MINOS: OnceLock<u32> = OnceLock::new();
+    *HOST_MINOS.get_or_init(|| {
+        Command::new("sw_vers")
+            .arg("-productVersion")
+            .output()
+            .ok()
+            .and_then(|out| out.status.success().then_some(out.stdout))
+            .and_then(|stdout| {
+                let version = String::from_utf8(stdout).ok()?;
+                version
+                    .trim()
+                    .split('.')
+                    .next()
+                    .and_then(|major| major.parse::<u32>().ok())
+            })
+            .map(|major| pack_version(major, 0, 0))
+            .unwrap_or_else(|| pack_version(15, 0, 0))
+    })
 }
 
 /// A symbol in the object file.
