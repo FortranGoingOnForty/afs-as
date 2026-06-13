@@ -1003,6 +1003,15 @@ fn render_dashboard(results: &[ProbeResult]) -> String {
 
 #[test]
 fn clang_probe_dashboard() {
+    // The dashboard assembles with the macOS system `as`, links for
+    // the Apple target, and RUNS the produced arm64 binaries — only a
+    // macOS arm64 host can do all three. On other hosts `as` is a
+    // GNU/x86 assembler and the probe dies on the first
+    // `.build_version` directive; skip cleanly instead.
+    if !(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64")) {
+        eprintln!("skipping: clang_probe_dashboard requires a macOS arm64 host toolchain");
+        return;
+    }
     let case_filter = std::env::var("AFS_CLANG_PROBE_CASE").ok();
     let opt_filter = std::env::var("AFS_CLANG_PROBE_OPT").ok();
     let fail_fast = std::env::var("AFS_CLANG_PROBE_FAIL_FAST")
