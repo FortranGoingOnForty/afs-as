@@ -380,9 +380,13 @@ fn split_sym_addend(s: &str) -> Option<(String, i64)> {
 }
 
 fn is_symbolish(s: &str) -> bool {
+    // No '@': `foo@PLT` / `foo@GOTPCREL` must NOT parse as a symbol
+    // literally named "foo@PLT" — that would silently create the wrong
+    // symbol. When the backend ever emits modifiers, they get parsed
+    // into an explicit reloc-kind field; until then they fail loudly.
     !s.is_empty()
         && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '$' || c == '@')
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '$')
         && !s.starts_with(|c: char| c.is_ascii_digit())
 }
 
