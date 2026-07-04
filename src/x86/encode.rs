@@ -380,10 +380,14 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
         return p.finish();
     }
 
-    // mov family with suffix.
+    // mov family with suffix. movq between GP and xmm belongs to the
+    // SSE path (66 REX.W 0F 6E/7E), so route on operand class.
+    let touches_xmm = ops
+        .iter()
+        .any(|o| matches!(o, Operand::Reg(r) if r.class == RegClass::Xmm));
     if let Some((stem, w)) = width_of_suffix(mnemonic) {
         match stem {
-            "mov" => return encode_mov(w, ops, mnemonic),
+            "mov" if !touches_xmm => return encode_mov(w, ops, mnemonic),
             "lea" => return encode_lea(w, ops, mnemonic),
             "add" | "or" | "and" | "sub" | "xor" | "cmp" => {
                 return encode_arith(stem, w, ops, mnemonic)
@@ -403,10 +407,278 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
         return Ok(enc);
     }
 
+    // SSE (scalar + the x10 packed baseline). Legacy encodings only —
+    // the corpus emits zero VEX.
+    if let Some(enc) = encode_sse(mnemonic, ops)? {
+        return Ok(enc);
+    }
+
     Err(format!(
         "unsupported mnemonic '{}' — grow the encoder with corpus evidence",
         mnemonic
     ))
+}
+
+// -------------------------------------------------------------------
+// SSE
+// -------------------------------------------------------------------
+
+/// Mandatory prefix for an SSE encoding row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sse {
+    None,
+    P66,
+    F2,
+    F3,
+}
+
+impl Sse {
+    fn emit(self, out: &mut Vec<u8>) {
+        match self {
+            Sse::None => {}
+            Sse::P66 => out.push(0x66),
+            Sse::F2 => out.push(0xf2),
+            Sse::F3 => out.push(0xf3),
+        }
+    }
+}
+
+fn xmm(op: &Operand) -> Option<Reg> {
+    match op {
+        Operand::Reg(r) if r.class == RegClass::Xmm => Some(*r),
+        _ => None,
+    }
+}
+
+/// xmm/m -> xmm ops that share the load-form shape (dst xmm in the
+/// reg field, src is r/m). Table: (mnemonic, prefix, opcode).
+const SSE_RM: &[(&str, Sse, u8)] = &[
+    // scalar arithmetic
+    ("addss", Sse::F3, 0x58),
+    ("addsd", Sse::F2, 0x58),
+    ("subss", Sse::F3, 0x5c),
+    ("subsd", Sse::F2, 0x5c),
+    ("mulss", Sse::F3, 0x59),
+    ("mulsd", Sse::F2, 0x59),
+    ("divss", Sse::F3, 0x5e),
+    ("divsd", Sse::F2, 0x5e),
+    ("minss", Sse::F3, 0x5d),
+    ("minsd", Sse::F2, 0x5d),
+    ("maxss", Sse::F3, 0x5f),
+    ("maxsd", Sse::F2, 0x5f),
+    ("sqrtss", Sse::F3, 0x51),
+    ("sqrtsd", Sse::F2, 0x51),
+    ("ucomiss", Sse::None, 0x2e),
+    ("ucomisd", Sse::P66, 0x2e),
+    ("cvtss2sd", Sse::F3, 0x5a),
+    ("cvtsd2ss", Sse::F2, 0x5a),
+    // packed float
+    ("addps", Sse::None, 0x58),
+    ("addpd", Sse::P66, 0x58),
+    ("subps", Sse::None, 0x5c),
+    ("subpd", Sse::P66, 0x5c),
+    ("mulps", Sse::None, 0x59),
+    ("mulpd", Sse::P66, 0x59),
+    ("minps", Sse::None, 0x5d),
+    ("minpd", Sse::P66, 0x5d),
+    ("maxps", Sse::None, 0x5f),
+    ("maxpd", Sse::P66, 0x5f),
+    ("andps", Sse::None, 0x54),
+    ("andpd", Sse::P66, 0x54),
+    ("orps", Sse::None, 0x56),
+    ("orpd", Sse::P66, 0x56),
+    ("xorps", Sse::None, 0x57),
+    ("xorpd", Sse::P66, 0x57),
+    // packed integer
+    ("paddd", Sse::P66, 0xfe),
+    ("psubd", Sse::P66, 0xfa),
+    ("pand", Sse::P66, 0xdb),
+    ("pandn", Sse::P66, 0xdf),
+    ("por", Sse::P66, 0xeb),
+    ("pxor", Sse::P66, 0xef),
+    ("pcmpgtd", Sse::P66, 0x66),
+    ("pmuludq", Sse::P66, 0xf4),
+];
+
+/// Moves with distinct load/store opcodes:
+/// (mnemonic, prefix, load_op xmm<-r/m, store_op r/m<-xmm).
+const SSE_MOV: &[(&str, Sse, u8, u8)] = &[
+    ("movss", Sse::F3, 0x10, 0x11),
+    ("movsd", Sse::F2, 0x10, 0x11),
+    ("movups", Sse::None, 0x10, 0x11),
+    ("movaps", Sse::None, 0x28, 0x29),
+    ("movdqa", Sse::P66, 0x6f, 0x7f),
+    ("movdqu", Sse::F3, 0x6f, 0x7f),
+];
+
+fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String> {
+    // Shared emitters ------------------------------------------------
+    let rm_form = |prefix: Sse, opcode: &[u8], ops: &[Operand]| -> Result<Encoded, String> {
+        let mut p = Parts::new();
+        prefix.emit(&mut p.prefix);
+        match ops {
+            [Operand::Reg(src), dst_op] if src.class == RegClass::Xmm => {
+                let dst = xmm(dst_op).ok_or("expected xmm destination")?;
+                p.rex.merge_reg(dst, RexSlot::R);
+                p.rex.merge_reg(*src, RexSlot::B);
+                p.opcode.extend_from_slice(opcode);
+                p.tail.push(0b11 << 6 | dst.low3() << 3 | src.low3());
+            }
+            [Operand::Mem(m), dst_op] => {
+                let dst = xmm(dst_op).ok_or("expected xmm destination")?;
+                p.rex.merge_reg(dst, RexSlot::R);
+                p.opcode.extend_from_slice(opcode);
+                p.mem(dst.low3(), m)?;
+            }
+            _ => return Err("expected xmm/mem source, xmm destination".into()),
+        }
+        p.finish()
+    };
+
+    if let Some((_, prefix, opcode)) = SSE_RM.iter().find(|(m, _, _)| *m == mnemonic) {
+        return rm_form(*prefix, &[0x0f, *opcode], ops).map(Some);
+    }
+
+    if let Some((_, prefix, load, store)) = SSE_MOV.iter().find(|(m, _, _, _)| *m == mnemonic) {
+        let mut p = Parts::new();
+        prefix.emit(&mut p.prefix);
+        match ops {
+            // store: xmm -> mem
+            [Operand::Reg(src), Operand::Mem(m)] if src.class == RegClass::Xmm => {
+                p.rex.merge_reg(*src, RexSlot::R);
+                p.opcode.extend_from_slice(&[0x0f, *store]);
+                p.mem(src.low3(), m)?;
+            }
+            // load / reg-reg: gas uses the load opcode for xmm,xmm
+            [src_op, Operand::Reg(dst)] if dst.class == RegClass::Xmm => {
+                p.rex.merge_reg(*dst, RexSlot::R);
+                p.opcode.extend_from_slice(&[0x0f, *load]);
+                match src_op {
+                    Operand::Reg(src) if src.class == RegClass::Xmm => {
+                        p.rex.merge_reg(*src, RexSlot::B);
+                        p.tail.push(0b11 << 6 | dst.low3() << 3 | src.low3());
+                    }
+                    Operand::Mem(m) => p.mem(dst.low3(), m)?,
+                    _ => return Err(format!("unsupported {} source", mnemonic)),
+                }
+            }
+            _ => return Err(format!("unsupported {} operands", mnemonic)),
+        }
+        return p.finish().map(Some);
+    }
+
+    // pshufd/shufps carry a trailing imm8: `op $imm, src, dst`.
+    if mnemonic == "pshufd" || mnemonic == "shufps" {
+        let (imm, src_op, dst_op) = match ops {
+            [Operand::Imm(i), s, d] => (*i, s, d),
+            _ => return Err(format!("{} expects $imm8, src, dst", mnemonic)),
+        };
+        let prefix = if mnemonic == "pshufd" { Sse::P66 } else { Sse::None };
+        let opcode = if mnemonic == "pshufd" { 0x70 } else { 0xc6 };
+        let mut enc = rm_form(prefix, &[0x0f, opcode], &[src_op.clone(), dst_op.clone()])?;
+        enc.bytes.push(imm as u8);
+        return Ok(Some(enc));
+    }
+
+    // movd / movq between GP and xmm: 66 (REX.W) 0F 6E (gp->xmm),
+    // 66 (REX.W) 0F 7E (xmm->gp).
+    if mnemonic == "movd" || (mnemonic == "movq" && ops.iter().any(|o| xmm(o).is_some())) {
+        let wide = mnemonic == "movq";
+        let mut p = Parts::new();
+        p.prefix.push(0x66);
+        if wide {
+            p.rex.w = true;
+        }
+        match ops {
+            [Operand::Reg(gp), dst_op] if gp.class == RegClass::Gp => {
+                let dst = xmm(dst_op).ok_or("expected xmm destination")?;
+                check_width(*gp, if wide { Width::Q } else { Width::L }, mnemonic)?;
+                p.rex.merge_reg(dst, RexSlot::R);
+                p.rex.merge_reg(*gp, RexSlot::B);
+                p.opcode.extend_from_slice(&[0x0f, 0x6e]);
+                p.tail.push(0b11 << 6 | dst.low3() << 3 | gp.low3());
+            }
+            [src_op, Operand::Reg(gp)] if gp.class == RegClass::Gp => {
+                let src = xmm(src_op).ok_or("expected xmm source")?;
+                check_width(*gp, if wide { Width::Q } else { Width::L }, mnemonic)?;
+                p.rex.merge_reg(src, RexSlot::R);
+                p.rex.merge_reg(*gp, RexSlot::B);
+                p.opcode.extend_from_slice(&[0x0f, 0x7e]);
+                p.tail.push(0b11 << 6 | src.low3() << 3 | gp.low3());
+            }
+            _ => return Err(format!("unsupported {} operands", mnemonic)),
+        }
+        return p.finish().map(Some);
+    }
+
+    // int -> float conversions: cvtsi2ss/sd + l/q suffix.
+    for (stem, prefix) in [("cvtsi2ss", Sse::F3), ("cvtsi2sd", Sse::F2)] {
+        if let Some(sfx) = mnemonic.strip_prefix(stem) {
+            let wide = match sfx {
+                "l" | "" => false,
+                "q" => true,
+                _ => continue,
+            };
+            let mut p = Parts::new();
+            prefix.emit(&mut p.prefix);
+            if wide {
+                p.rex.w = true;
+            }
+            match ops {
+                [Operand::Reg(gp), dst_op] if gp.class == RegClass::Gp => {
+                    let dst = xmm(dst_op).ok_or("expected xmm destination")?;
+                    check_width(*gp, if wide { Width::Q } else { Width::L }, mnemonic)?;
+                    p.rex.merge_reg(dst, RexSlot::R);
+                    p.rex.merge_reg(*gp, RexSlot::B);
+                    p.opcode.extend_from_slice(&[0x0f, 0x2a]);
+                    p.tail.push(0b11 << 6 | dst.low3() << 3 | gp.low3());
+                }
+                [Operand::Mem(m), dst_op] => {
+                    let dst = xmm(dst_op).ok_or("expected xmm destination")?;
+                    p.rex.merge_reg(dst, RexSlot::R);
+                    p.opcode.extend_from_slice(&[0x0f, 0x2a]);
+                    p.mem(dst.low3(), m)?;
+                }
+                _ => return Err(format!("unsupported {} operands", mnemonic)),
+            }
+            return p.finish().map(Some);
+        }
+    }
+
+    // float -> int truncating conversions: cvttss2si / cvttsd2si + l/q.
+    for (stem, prefix) in [("cvttss2si", Sse::F3), ("cvttsd2si", Sse::F2)] {
+        if let Some(sfx) = mnemonic.strip_prefix(stem) {
+            let wide = match sfx {
+                "l" | "" => false,
+                "q" => true,
+                _ => continue,
+            };
+            let mut p = Parts::new();
+            prefix.emit(&mut p.prefix);
+            if wide {
+                p.rex.w = true;
+            }
+            match ops {
+                [src_op, Operand::Reg(gp)] if gp.class == RegClass::Gp => {
+                    check_width(*gp, if wide { Width::Q } else { Width::L }, mnemonic)?;
+                    p.rex.merge_reg(*gp, RexSlot::R);
+                    p.opcode.extend_from_slice(&[0x0f, 0x2c]);
+                    match src_op {
+                        Operand::Reg(x) if x.class == RegClass::Xmm => {
+                            p.rex.merge_reg(*x, RexSlot::B);
+                            p.tail.push(0b11 << 6 | gp.low3() << 3 | x.low3());
+                        }
+                        Operand::Mem(m) => p.mem(gp.low3(), m)?,
+                        _ => return Err(format!("unsupported {} source", mnemonic)),
+                    }
+                }
+                _ => return Err(format!("unsupported {} operands", mnemonic)),
+            }
+            return p.finish().map(Some);
+        }
+    }
+
+    Ok(None)
 }
 
 fn cond_code(cc: &str) -> Option<u8> {
