@@ -254,6 +254,9 @@ fn assert_object_semantics(obj: &ObjectFile, src: &str) {
 
 #[test]
 fn generated_stress_objects_have_valid_internal_semantics() {
+    if !common::native_macho_host("generated_stress", "generated_stress_objects_have_valid_internal_semantics") {
+        return;
+    }
     for seed in 1..=24u64 {
         let src = generate_case(seed);
         let obj = panic::catch_unwind(AssertUnwindSafe(|| assemble::assemble_source(&src)))
@@ -274,6 +277,9 @@ fn generated_stress_objects_have_valid_internal_semantics() {
 
 #[test]
 fn generated_stress_objects_match_system_as() {
+    if !common::native_macho_host("generated_stress", "generated_stress_objects_match_system_as") {
+        return;
+    }
     for seed in 1..=8u64 {
         let src = generate_case(seed);
         let paths = common::TempPaths::new(&format!("afs_stress_{}", seed));

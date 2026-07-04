@@ -29,6 +29,9 @@ fn readme_example_source() -> &'static str {
 
 #[test]
 fn readme_file_examples_assemble_link_and_run() {
+    if !common::native_macho_host("readme_smoke", "readme_file_examples_assemble_link_and_run") {
+        return;
+    }
     let root = temp_root("afs_readme_file");
     let input = root.join("hello.s");
     let explicit_obj = root.join("hello-explicit.o");
@@ -74,6 +77,9 @@ fn readme_file_examples_assemble_link_and_run() {
 
 #[test]
 fn readme_stdin_stdout_example_assembles_links_and_runs() {
+    if !common::native_macho_host("readme_smoke", "readme_stdin_stdout_example_assembles_links_and_runs") {
+        return;
+    }
     let root = temp_root("afs_readme_stdio");
     let obj = root.join("hello.o");
     let bin = root.join("hello");

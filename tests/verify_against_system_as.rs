@@ -70,8 +70,26 @@ fn verify(asm: &str, inst: Inst) {
 
 // ---- Data processing ----
 
+
+/// Same policy as tests/common/corpus.rs::native_macho_host: this
+/// suite drives the macOS arm64 system toolchain; skip loudly on any
+/// other host.
+fn native_macho_host(suite: &str, test: &str) -> bool {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        return true;
+    }
+    eprintln!(
+        "\nHARNESS_SKIP suite={} test={} count=1 reason=\"needs a macOS arm64 host toolchain\"",
+        suite, test
+    );
+    false
+}
+
 #[test]
 fn sys_add_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_add_reg") {
+        return;
+    }
     verify(
         "add x5, x6, x7",
         Inst::AddReg {
@@ -84,6 +102,9 @@ fn sys_add_reg() {
 }
 #[test]
 fn sys_sub_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_sub_reg") {
+        return;
+    }
     verify(
         "sub x10, x11, x12",
         Inst::SubReg {
@@ -96,6 +117,9 @@ fn sys_sub_reg() {
 }
 #[test]
 fn sys_add_w() {
+    if !native_macho_host("verify_against_system_as", "sys_add_w") {
+        return;
+    }
     verify(
         "add w3, w4, w5",
         Inst::AddReg {
@@ -108,6 +132,9 @@ fn sys_add_w() {
 }
 #[test]
 fn sys_add_shift_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_add_shift_reg") {
+        return;
+    }
     verify(
         "add x0, x1, x2, lsl #3",
         Inst::AddShiftReg {
@@ -122,6 +149,9 @@ fn sys_add_shift_reg() {
 }
 #[test]
 fn sys_sub_shift_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_sub_shift_reg") {
+        return;
+    }
     verify(
         "sub w3, w4, w5, asr #7",
         Inst::SubShiftReg {
@@ -136,6 +166,9 @@ fn sys_sub_shift_reg() {
 }
 #[test]
 fn sys_cmp_shift_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_cmp_shift_reg") {
+        return;
+    }
     verify(
         "cmp x6, x7, lsr #4",
         Inst::SubsShiftReg {
@@ -150,6 +183,9 @@ fn sys_cmp_shift_reg() {
 }
 #[test]
 fn sys_add_ext_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_add_ext_reg") {
+        return;
+    }
     verify(
         "add x0, x0, w1, sxtw #3",
         Inst::AddExtReg {
@@ -164,6 +200,9 @@ fn sys_add_ext_reg() {
 }
 #[test]
 fn sys_add_ext_reg_sp_base() {
+    if !native_macho_host("verify_against_system_as", "sys_add_ext_reg_sp_base") {
+        return;
+    }
     verify(
         "add x11, sp, w12, sxtw #2",
         Inst::AddExtReg {
@@ -178,6 +217,9 @@ fn sys_add_ext_reg_sp_base() {
 }
 #[test]
 fn sys_sub_ext_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_sub_ext_reg") {
+        return;
+    }
     verify(
         "sub x2, x3, w4, uxtw #2",
         Inst::SubExtReg {
@@ -192,6 +234,9 @@ fn sys_sub_ext_reg() {
 }
 #[test]
 fn sys_cmp_ext_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_cmp_ext_reg") {
+        return;
+    }
     verify(
         "cmp x0, w1, sxtw",
         Inst::SubsExtReg {
@@ -206,6 +251,9 @@ fn sys_cmp_ext_reg() {
 }
 #[test]
 fn sys_mul() {
+    if !native_macho_host("verify_against_system_as", "sys_mul") {
+        return;
+    }
     verify(
         "mul x0, x1, x2",
         Inst::Mul {
@@ -218,6 +266,9 @@ fn sys_mul() {
 }
 #[test]
 fn sys_madd() {
+    if !native_macho_host("verify_against_system_as", "sys_madd") {
+        return;
+    }
     verify(
         "madd w0, w0, w0, w8",
         Inst::Madd {
@@ -231,6 +282,9 @@ fn sys_madd() {
 }
 #[test]
 fn sys_msub() {
+    if !native_macho_host("verify_against_system_as", "sys_msub") {
+        return;
+    }
     verify(
         "msub w9, w8, w1, w0",
         Inst::Msub {
@@ -244,6 +298,9 @@ fn sys_msub() {
 }
 #[test]
 fn sys_umull() {
+    if !native_macho_host("verify_against_system_as", "sys_umull") {
+        return;
+    }
     verify(
         "umull x9, w8, w9",
         Inst::Umull {
@@ -255,6 +312,9 @@ fn sys_umull() {
 }
 #[test]
 fn sys_sdiv() {
+    if !native_macho_host("verify_against_system_as", "sys_sdiv") {
+        return;
+    }
     verify(
         "sdiv x3, x4, x5",
         Inst::Sdiv {
@@ -267,6 +327,9 @@ fn sys_sdiv() {
 }
 #[test]
 fn sys_udiv() {
+    if !native_macho_host("verify_against_system_as", "sys_udiv") {
+        return;
+    }
     verify(
         "udiv x3, x4, x5",
         Inst::Udiv {
@@ -279,6 +342,9 @@ fn sys_udiv() {
 }
 #[test]
 fn sys_and() {
+    if !native_macho_host("verify_against_system_as", "sys_and") {
+        return;
+    }
     verify(
         "and x3, x4, x5",
         Inst::AndReg {
@@ -291,6 +357,9 @@ fn sys_and() {
 }
 #[test]
 fn sys_and_imm() {
+    if !native_macho_host("verify_against_system_as", "sys_and_imm") {
+        return;
+    }
     verify(
         "and w8, w8, #0x7",
         Inst::AndImm {
@@ -303,6 +372,9 @@ fn sys_and_imm() {
 }
 #[test]
 fn sys_orr() {
+    if !native_macho_host("verify_against_system_as", "sys_orr") {
+        return;
+    }
     verify(
         "orr x3, x4, x5",
         Inst::OrrReg {
@@ -315,6 +387,9 @@ fn sys_orr() {
 }
 #[test]
 fn sys_orn() {
+    if !native_macho_host("verify_against_system_as", "sys_orn") {
+        return;
+    }
     verify(
         "orn x3, x4, x5",
         Inst::OrnReg {
@@ -327,6 +402,9 @@ fn sys_orn() {
 }
 #[test]
 fn sys_eor() {
+    if !native_macho_host("verify_against_system_as", "sys_eor") {
+        return;
+    }
     verify(
         "eor x3, x4, x5",
         Inst::EorReg {
@@ -342,6 +420,9 @@ fn sys_eor() {
 
 #[test]
 fn sys_add_imm() {
+    if !native_macho_host("verify_against_system_as", "sys_add_imm") {
+        return;
+    }
     verify(
         "add x3, x4, #100",
         Inst::AddImm {
@@ -355,6 +436,9 @@ fn sys_add_imm() {
 }
 #[test]
 fn sys_sub_imm() {
+    if !native_macho_host("verify_against_system_as", "sys_sub_imm") {
+        return;
+    }
     verify(
         "sub x3, x4, #100",
         Inst::SubImm {
@@ -368,6 +452,9 @@ fn sys_sub_imm() {
 }
 #[test]
 fn sys_cmp_imm() {
+    if !native_macho_host("verify_against_system_as", "sys_cmp_imm") {
+        return;
+    }
     verify(
         "cmp x5, #255",
         Inst::SubsImm {
@@ -384,6 +471,9 @@ fn sys_cmp_imm() {
 
 #[test]
 fn sys_movz() {
+    if !native_macho_host("verify_against_system_as", "sys_movz") {
+        return;
+    }
     verify(
         "movz x8, #0xBEEF",
         Inst::Movz {
@@ -396,6 +486,9 @@ fn sys_movz() {
 }
 #[test]
 fn sys_movz_hi() {
+    if !native_macho_host("verify_against_system_as", "sys_movz_hi") {
+        return;
+    }
     verify(
         "movz x8, #0xCAFE, lsl #48",
         Inst::Movz {
@@ -408,6 +501,9 @@ fn sys_movz_hi() {
 }
 #[test]
 fn sys_movk() {
+    if !native_macho_host("verify_against_system_as", "sys_movk") {
+        return;
+    }
     verify(
         "movk x9, #0x1234, lsl #16",
         Inst::Movk {
@@ -420,6 +516,9 @@ fn sys_movk() {
 }
 #[test]
 fn sys_movn_hi() {
+    if !native_macho_host("verify_against_system_as", "sys_movn_hi") {
+        return;
+    }
     verify(
         "movn x0, #1, lsl #16",
         Inst::Movn {
@@ -433,6 +532,9 @@ fn sys_movn_hi() {
 
 #[test]
 fn sys_mov_wzr() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_wzr") {
+        return;
+    }
     verify(
         "mov w26, wzr",
         Inst::OrrReg {
@@ -448,6 +550,9 @@ fn sys_mov_wzr() {
 
 #[test]
 fn sys_lsl() {
+    if !native_macho_host("verify_against_system_as", "sys_lsl") {
+        return;
+    }
     verify(
         "lsl x0, x1, #7",
         Inst::LslImm {
@@ -460,6 +565,9 @@ fn sys_lsl() {
 }
 #[test]
 fn sys_lsr() {
+    if !native_macho_host("verify_against_system_as", "sys_lsr") {
+        return;
+    }
     verify(
         "lsr x0, x1, #15",
         Inst::LsrImm {
@@ -472,6 +580,9 @@ fn sys_lsr() {
 }
 #[test]
 fn sys_asr() {
+    if !native_macho_host("verify_against_system_as", "sys_asr") {
+        return;
+    }
     verify(
         "asr x0, x1, #31",
         Inst::AsrImm {
@@ -487,14 +598,23 @@ fn sys_asr() {
 
 #[test]
 fn sys_b() {
+    if !native_macho_host("verify_against_system_as", "sys_b") {
+        return;
+    }
     verify("b #20", Inst::B { offset: 20 });
 }
 #[test]
 fn sys_bl() {
+    if !native_macho_host("verify_against_system_as", "sys_bl") {
+        return;
+    }
     verify("bl #40", Inst::Bl { offset: 40 });
 }
 #[test]
 fn sys_b_eq() {
+    if !native_macho_host("verify_against_system_as", "sys_b_eq") {
+        return;
+    }
     verify(
         "b.eq #24",
         Inst::BCond {
@@ -505,6 +625,9 @@ fn sys_b_eq() {
 }
 #[test]
 fn sys_b_lt() {
+    if !native_macho_host("verify_against_system_as", "sys_b_lt") {
+        return;
+    }
     verify(
         "b.lt #32",
         Inst::BCond {
@@ -515,6 +638,9 @@ fn sys_b_lt() {
 }
 #[test]
 fn sys_cbz() {
+    if !native_macho_host("verify_against_system_as", "sys_cbz") {
+        return;
+    }
     verify(
         "cbz x5, #16",
         Inst::Cbz {
@@ -526,6 +652,9 @@ fn sys_cbz() {
 }
 #[test]
 fn sys_cbnz() {
+    if !native_macho_host("verify_against_system_as", "sys_cbnz") {
+        return;
+    }
     verify(
         "cbnz x10, #24",
         Inst::Cbnz {
@@ -537,6 +666,9 @@ fn sys_cbnz() {
 }
 #[test]
 fn sys_tbz() {
+    if !native_macho_host("verify_against_system_as", "sys_tbz") {
+        return;
+    }
     verify(
         "tbz x0, #5, #8",
         Inst::Tbz {
@@ -549,6 +681,9 @@ fn sys_tbz() {
 }
 #[test]
 fn sys_tbnz() {
+    if !native_macho_host("verify_against_system_as", "sys_tbnz") {
+        return;
+    }
     verify(
         "tbnz x1, #33, #12",
         Inst::Tbnz {
@@ -561,18 +696,30 @@ fn sys_tbnz() {
 }
 #[test]
 fn sys_ret() {
+    if !native_macho_host("verify_against_system_as", "sys_ret") {
+        return;
+    }
     verify("ret", Inst::Ret { rn: X30 });
 }
 #[test]
 fn sys_br() {
+    if !native_macho_host("verify_against_system_as", "sys_br") {
+        return;
+    }
     verify("br x8", Inst::Br { rn: X8 });
 }
 #[test]
 fn sys_blr() {
+    if !native_macho_host("verify_against_system_as", "sys_blr") {
+        return;
+    }
     verify("blr x9", Inst::Blr { rn: X9 });
 }
 #[test]
 fn sys_csel() {
+    if !native_macho_host("verify_against_system_as", "sys_csel") {
+        return;
+    }
     verify(
         "csel w0, w0, w1, gt",
         Inst::Csel {
@@ -586,6 +733,9 @@ fn sys_csel() {
 }
 #[test]
 fn sys_ccmp() {
+    if !native_macho_host("verify_against_system_as", "sys_ccmp") {
+        return;
+    }
     verify(
         "ccmp w0, #3, #4, ne",
         Inst::CcmpImm {
@@ -599,6 +749,9 @@ fn sys_ccmp() {
 }
 #[test]
 fn sys_ccmn() {
+    if !native_macho_host("verify_against_system_as", "sys_ccmn") {
+        return;
+    }
     verify(
         "ccmn x3, #9, #1, ge",
         Inst::CcmnImm {
@@ -612,6 +765,9 @@ fn sys_ccmn() {
 }
 #[test]
 fn sys_csinc() {
+    if !native_macho_host("verify_against_system_as", "sys_csinc") {
+        return;
+    }
     verify(
         "csinc x2, x3, x3, ne",
         Inst::Csinc {
@@ -625,6 +781,9 @@ fn sys_csinc() {
 }
 #[test]
 fn sys_csinv() {
+    if !native_macho_host("verify_against_system_as", "sys_csinv") {
+        return;
+    }
     verify(
         "csinv x2, x3, x4, ne",
         Inst::Csinv {
@@ -638,6 +797,9 @@ fn sys_csinv() {
 }
 #[test]
 fn sys_csneg() {
+    if !native_macho_host("verify_against_system_as", "sys_csneg") {
+        return;
+    }
     verify(
         "csneg x5, x6, x7, gt",
         Inst::Csneg {
@@ -651,6 +813,9 @@ fn sys_csneg() {
 }
 #[test]
 fn sys_csetm() {
+    if !native_macho_host("verify_against_system_as", "sys_csetm") {
+        return;
+    }
     verify(
         "csetm w8, eq",
         Inst::Csinv {
@@ -664,6 +829,9 @@ fn sys_csetm() {
 }
 #[test]
 fn sys_cinv() {
+    if !native_macho_host("verify_against_system_as", "sys_cinv") {
+        return;
+    }
     verify(
         "cinv w9, w10, mi",
         Inst::Csinv {
@@ -677,6 +845,9 @@ fn sys_cinv() {
 }
 #[test]
 fn sys_cneg() {
+    if !native_macho_host("verify_against_system_as", "sys_cneg") {
+        return;
+    }
     verify(
         "cneg x11, x12, lt",
         Inst::Csneg {
@@ -690,6 +861,9 @@ fn sys_cneg() {
 }
 #[test]
 fn sys_tst_imm() {
+    if !native_macho_host("verify_against_system_as", "sys_tst_imm") {
+        return;
+    }
     verify(
         "tst w8, #0x7",
         Inst::AndsImm {
@@ -702,6 +876,9 @@ fn sys_tst_imm() {
 }
 #[test]
 fn sys_ubfiz() {
+    if !native_macho_host("verify_against_system_as", "sys_ubfiz") {
+        return;
+    }
     verify(
         "ubfiz w8, w0, #5, #3",
         Inst::Ubfiz {
@@ -715,6 +892,9 @@ fn sys_ubfiz() {
 }
 #[test]
 fn sys_bfi() {
+    if !native_macho_host("verify_against_system_as", "sys_bfi") {
+        return;
+    }
     verify(
         "bfi w0, w8, #5, #27",
         Inst::Bfi {
@@ -728,6 +908,9 @@ fn sys_bfi() {
 }
 #[test]
 fn sys_bfxil() {
+    if !native_macho_host("verify_against_system_as", "sys_bfxil") {
+        return;
+    }
     verify(
         "bfxil w8, w0, #3, #5",
         Inst::Bfxil {
@@ -744,6 +927,9 @@ fn sys_bfxil() {
 
 #[test]
 fn sys_ldr64() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr64") {
+        return;
+    }
     verify(
         "ldr x3, [x4, #24]",
         Inst::LdrImm64 {
@@ -755,6 +941,9 @@ fn sys_ldr64() {
 }
 #[test]
 fn sys_str64() {
+    if !native_macho_host("verify_against_system_as", "sys_str64") {
+        return;
+    }
     verify(
         "str x3, [x4, #32]",
         Inst::StrImm64 {
@@ -766,6 +955,9 @@ fn sys_str64() {
 }
 #[test]
 fn sys_ldr32() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr32") {
+        return;
+    }
     verify(
         "ldr w3, [x4, #12]",
         Inst::LdrImm32 {
@@ -777,6 +969,9 @@ fn sys_ldr32() {
 }
 #[test]
 fn sys_str32() {
+    if !native_macho_host("verify_against_system_as", "sys_str32") {
+        return;
+    }
     verify(
         "str w3, [x4, #16]",
         Inst::StrImm32 {
@@ -788,6 +983,9 @@ fn sys_str32() {
 }
 #[test]
 fn sys_ldur64() {
+    if !native_macho_host("verify_against_system_as", "sys_ldur64") {
+        return;
+    }
     verify(
         "ldur x9, [x29, #-8]",
         Inst::Ldur64 {
@@ -799,6 +997,9 @@ fn sys_ldur64() {
 }
 #[test]
 fn sys_stur32() {
+    if !native_macho_host("verify_against_system_as", "sys_stur32") {
+        return;
+    }
     verify(
         "stur w6, [x7, #-4]",
         Inst::Stur32 {
@@ -810,6 +1011,9 @@ fn sys_stur32() {
 }
 #[test]
 fn sys_ldr_negative_alias() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_negative_alias") {
+        return;
+    }
     verify(
         "ldr x0, [x1, #-8]",
         Inst::Ldur64 {
@@ -821,6 +1025,9 @@ fn sys_ldr_negative_alias() {
 }
 #[test]
 fn sys_ldr_post32() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_post32") {
+        return;
+    }
     verify(
         "ldr w0, [x1], #4",
         Inst::LdrPost32 {
@@ -832,6 +1039,9 @@ fn sys_ldr_post32() {
 }
 #[test]
 fn sys_str_pre32() {
+    if !native_macho_host("verify_against_system_as", "sys_str_pre32") {
+        return;
+    }
     verify(
         "str w2, [x3, #-4]!",
         Inst::StrPre32 {
@@ -843,6 +1053,9 @@ fn sys_str_pre32() {
 }
 #[test]
 fn sys_ldr64_tlvp_pageoff() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr64_tlvp_pageoff") {
+        return;
+    }
     verify(
         "ldr x0, [x0, _tls_counter@TLVPPAGEOFF]",
         Inst::LdrImm64 {
@@ -854,14 +1067,23 @@ fn sys_ldr64_tlvp_pageoff() {
 }
 #[test]
 fn sys_ldr_lit64() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_lit64") {
+        return;
+    }
     verify("ldr x0, #8", Inst::LdrLit64 { rt: X0, offset: 8 });
 }
 #[test]
 fn sys_ldr_lit32() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_lit32") {
+        return;
+    }
     verify("ldr w1, #12", Inst::LdrLit32 { rt: W1, offset: 12 });
 }
 #[test]
 fn sys_ldr64_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr64_reg") {
+        return;
+    }
     verify(
         "ldr x0, [x1, x2]",
         Inst::LdrReg64 {
@@ -875,6 +1097,9 @@ fn sys_ldr64_reg() {
 }
 #[test]
 fn sys_ldr64_reg_uxtw() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr64_reg_uxtw") {
+        return;
+    }
     verify(
         "ldr x6, [x7, w8, uxtw #3]",
         Inst::LdrReg64 {
@@ -888,6 +1113,9 @@ fn sys_ldr64_reg_uxtw() {
 }
 #[test]
 fn sys_str64_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_str64_reg") {
+        return;
+    }
     verify(
         "str x12, [x13, x14]",
         Inst::StrReg64 {
@@ -901,6 +1129,9 @@ fn sys_str64_reg() {
 }
 #[test]
 fn sys_ldrb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrb") {
+        return;
+    }
     verify(
         "ldrb w0, [x1, #3]",
         Inst::Ldrb {
@@ -912,6 +1143,9 @@ fn sys_ldrb() {
 }
 #[test]
 fn sys_ldrsb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrsb") {
+        return;
+    }
     verify(
         "ldrsb w0, [x1, #3]",
         Inst::Ldrsb32 {
@@ -923,6 +1157,9 @@ fn sys_ldrsb() {
 }
 #[test]
 fn sys_ldrb_post() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrb_post") {
+        return;
+    }
     verify(
         "ldrb w9, [x1], #1",
         Inst::LdrbPost {
@@ -934,6 +1171,9 @@ fn sys_ldrb_post() {
 }
 #[test]
 fn sys_ldrsb_post() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrsb_post") {
+        return;
+    }
     verify(
         "ldrsb x9, [x1], #1",
         Inst::LdrsbPost64 {
@@ -945,6 +1185,9 @@ fn sys_ldrsb_post() {
 }
 #[test]
 fn sys_ldrh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrh") {
+        return;
+    }
     verify(
         "ldrh w0, [x1, #6]",
         Inst::Ldrh {
@@ -956,6 +1199,9 @@ fn sys_ldrh() {
 }
 #[test]
 fn sys_ldrsh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrsh") {
+        return;
+    }
     verify(
         "ldrsh x0, [x1, #4]",
         Inst::Ldrsh64 {
@@ -967,6 +1213,9 @@ fn sys_ldrsh() {
 }
 #[test]
 fn sys_strb() {
+    if !native_macho_host("verify_against_system_as", "sys_strb") {
+        return;
+    }
     verify(
         "strb w8, [x9]",
         Inst::Strb {
@@ -978,6 +1227,9 @@ fn sys_strb() {
 }
 #[test]
 fn sys_strb_post() {
+    if !native_macho_host("verify_against_system_as", "sys_strb_post") {
+        return;
+    }
     verify(
         "strb w9, [x8], #1",
         Inst::StrbPost {
@@ -989,6 +1241,9 @@ fn sys_strb_post() {
 }
 #[test]
 fn sys_strh_pre() {
+    if !native_macho_host("verify_against_system_as", "sys_strh_pre") {
+        return;
+    }
     verify(
         "strh w5, [x6, #2]!",
         Inst::StrhPre {
@@ -1000,6 +1255,9 @@ fn sys_strh_pre() {
 }
 #[test]
 fn sys_ldrsw() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrsw") {
+        return;
+    }
     verify(
         "ldrsw x0, [x1, #8]",
         Inst::Ldrsw {
@@ -1011,6 +1269,9 @@ fn sys_ldrsw() {
 }
 #[test]
 fn sys_ldrh_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrh_reg") {
+        return;
+    }
     verify(
         "ldrh w3, [x4, w5, uxtw #1]",
         Inst::LdrhReg {
@@ -1024,6 +1285,9 @@ fn sys_ldrh_reg() {
 }
 #[test]
 fn sys_ldrsh_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrsh_reg") {
+        return;
+    }
     verify(
         "ldrsh w3, [x4, w5, uxtw #1]",
         Inst::LdrshReg32 {
@@ -1037,6 +1301,9 @@ fn sys_ldrsh_reg() {
 }
 #[test]
 fn sys_ldrb_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrb_reg") {
+        return;
+    }
     verify(
         "ldrb w0, [x1, x2]",
         Inst::LdrbReg {
@@ -1050,6 +1317,9 @@ fn sys_ldrb_reg() {
 }
 #[test]
 fn sys_ldrsw_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrsw_reg") {
+        return;
+    }
     verify(
         "ldrsw x6, [x7, w8, sxtw #2]",
         Inst::LdrswReg {
@@ -1063,30 +1333,51 @@ fn sys_ldrsw_reg() {
 }
 #[test]
 fn sys_ldaprb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldaprb") {
+        return;
+    }
     verify("ldaprb w0, [x1]", Inst::Ldaprb { rt: W0, rn: X1 });
 }
 #[test]
 fn sys_ldaprh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldaprh") {
+        return;
+    }
     verify("ldaprh w2, [x3]", Inst::Ldaprh { rt: W2, rn: X3 });
 }
 #[test]
 fn sys_ldapr() {
+    if !native_macho_host("verify_against_system_as", "sys_ldapr") {
+        return;
+    }
     verify("ldapr w8, [x9]", Inst::Ldapr32 { rt: W8, rn: X9 });
 }
 #[test]
 fn sys_stlrb() {
+    if !native_macho_host("verify_against_system_as", "sys_stlrb") {
+        return;
+    }
     verify("stlrb w4, [x5]", Inst::Stlrb { rt: W4, rn: X5 });
 }
 #[test]
 fn sys_stlrh() {
+    if !native_macho_host("verify_against_system_as", "sys_stlrh") {
+        return;
+    }
     verify("stlrh w6, [x7]", Inst::Stlrh { rt: W6, rn: X7 });
 }
 #[test]
 fn sys_stlr() {
+    if !native_macho_host("verify_against_system_as", "sys_stlr") {
+        return;
+    }
     verify("stlr x10, [x11]", Inst::Stlr64 { rt: X10, rn: X11 });
 }
 #[test]
 fn sys_ldaddalb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldaddalb") {
+        return;
+    }
     verify(
         "ldaddalb w0, w1, [x2]",
         Inst::Ldaddalb {
@@ -1098,6 +1389,9 @@ fn sys_ldaddalb() {
 }
 #[test]
 fn sys_ldaddalh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldaddalh") {
+        return;
+    }
     verify(
         "ldaddalh w3, w4, [x5]",
         Inst::Ldaddalh {
@@ -1109,6 +1403,9 @@ fn sys_ldaddalh() {
 }
 #[test]
 fn sys_ldumaxalb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldumaxalb") {
+        return;
+    }
     verify(
         "ldumaxalb w0, w1, [x2]",
         Inst::Ldumaxalb {
@@ -1120,6 +1417,9 @@ fn sys_ldumaxalb() {
 }
 #[test]
 fn sys_ldumaxalh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldumaxalh") {
+        return;
+    }
     verify(
         "ldumaxalh w3, w4, [x5]",
         Inst::Ldumaxalh {
@@ -1131,6 +1431,9 @@ fn sys_ldumaxalh() {
 }
 #[test]
 fn sys_ldsmaxalb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldsmaxalb") {
+        return;
+    }
     verify(
         "ldsmaxalb w18, w19, [x20]",
         Inst::Ldsmaxalb {
@@ -1142,6 +1445,9 @@ fn sys_ldsmaxalb() {
 }
 #[test]
 fn sys_ldsmaxalh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldsmaxalh") {
+        return;
+    }
     verify(
         "ldsmaxalh w24, w25, [x26]",
         Inst::Ldsmaxalh {
@@ -1153,6 +1459,9 @@ fn sys_ldsmaxalh() {
 }
 #[test]
 fn sys_ldaddal() {
+    if !native_macho_host("verify_against_system_as", "sys_ldaddal") {
+        return;
+    }
     verify(
         "ldaddal w0, w8, [x8]",
         Inst::Ldaddal32 {
@@ -1164,6 +1473,9 @@ fn sys_ldaddal() {
 }
 #[test]
 fn sys_ldumaxal() {
+    if !native_macho_host("verify_against_system_as", "sys_ldumaxal") {
+        return;
+    }
     verify(
         "ldumaxal x9, x10, [x11]",
         Inst::Ldumaxal64 {
@@ -1175,6 +1487,9 @@ fn sys_ldumaxal() {
 }
 #[test]
 fn sys_ldsmaxal() {
+    if !native_macho_host("verify_against_system_as", "sys_ldsmaxal") {
+        return;
+    }
     verify(
         "ldsmaxal w0, w1, [x2]",
         Inst::Ldsmaxal32 {
@@ -1186,6 +1501,9 @@ fn sys_ldsmaxal() {
 }
 #[test]
 fn sys_ldsminal() {
+    if !native_macho_host("verify_against_system_as", "sys_ldsminal") {
+        return;
+    }
     verify(
         "ldsminal x9, x10, [x11]",
         Inst::Ldsminal64 {
@@ -1197,6 +1515,9 @@ fn sys_ldsminal() {
 }
 #[test]
 fn sys_lduminalb() {
+    if !native_macho_host("verify_against_system_as", "sys_lduminalb") {
+        return;
+    }
     verify(
         "lduminalb w12, w13, [x14]",
         Inst::Lduminalb {
@@ -1208,6 +1529,9 @@ fn sys_lduminalb() {
 }
 #[test]
 fn sys_lduminalh() {
+    if !native_macho_host("verify_against_system_as", "sys_lduminalh") {
+        return;
+    }
     verify(
         "lduminalh w15, w16, [x17]",
         Inst::Lduminalh {
@@ -1219,6 +1543,9 @@ fn sys_lduminalh() {
 }
 #[test]
 fn sys_ldsminalb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldsminalb") {
+        return;
+    }
     verify(
         "ldsminalb w21, w22, [x23]",
         Inst::Ldsminalb {
@@ -1230,6 +1557,9 @@ fn sys_ldsminalb() {
 }
 #[test]
 fn sys_ldsminalh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldsminalh") {
+        return;
+    }
     verify(
         "ldsminalh w27, w28, [x29]",
         Inst::Ldsminalh {
@@ -1241,6 +1571,9 @@ fn sys_ldsminalh() {
 }
 #[test]
 fn sys_lduminal() {
+    if !native_macho_host("verify_against_system_as", "sys_lduminal") {
+        return;
+    }
     verify(
         "lduminal w18, w19, [x20]",
         Inst::Lduminal32 {
@@ -1252,6 +1585,9 @@ fn sys_lduminal() {
 }
 #[test]
 fn sys_ldclral() {
+    if !native_macho_host("verify_against_system_as", "sys_ldclral") {
+        return;
+    }
     verify(
         "ldclral w12, w13, [x14]",
         Inst::Ldclral32 {
@@ -1263,6 +1599,9 @@ fn sys_ldclral() {
 }
 #[test]
 fn sys_ldclralb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldclralb") {
+        return;
+    }
     verify(
         "ldclralb w6, w7, [x8]",
         Inst::Ldclralb {
@@ -1274,6 +1613,9 @@ fn sys_ldclralb() {
 }
 #[test]
 fn sys_ldclralh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldclralh") {
+        return;
+    }
     verify(
         "ldclralh w15, w16, [x17]",
         Inst::Ldclralh {
@@ -1285,6 +1627,9 @@ fn sys_ldclralh() {
 }
 #[test]
 fn sys_ldeoral() {
+    if !native_macho_host("verify_against_system_as", "sys_ldeoral") {
+        return;
+    }
     verify(
         "ldeoral x9, x10, [x11]",
         Inst::Ldeoral64 {
@@ -1296,6 +1641,9 @@ fn sys_ldeoral() {
 }
 #[test]
 fn sys_ldeoralb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldeoralb") {
+        return;
+    }
     verify(
         "ldeoralb w3, w4, [x5]",
         Inst::Ldeoralb {
@@ -1307,6 +1655,9 @@ fn sys_ldeoralb() {
 }
 #[test]
 fn sys_ldeoralh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldeoralh") {
+        return;
+    }
     verify(
         "ldeoralh w12, w13, [x14]",
         Inst::Ldeoralh {
@@ -1318,6 +1669,9 @@ fn sys_ldeoralh() {
 }
 #[test]
 fn sys_ldsetal() {
+    if !native_macho_host("verify_against_system_as", "sys_ldsetal") {
+        return;
+    }
     verify(
         "ldsetal w0, w1, [x2]",
         Inst::Ldsetal32 {
@@ -1329,6 +1683,9 @@ fn sys_ldsetal() {
 }
 #[test]
 fn sys_ldsetalb() {
+    if !native_macho_host("verify_against_system_as", "sys_ldsetalb") {
+        return;
+    }
     verify(
         "ldsetalb w0, w1, [x2]",
         Inst::Ldsetalb {
@@ -1340,6 +1697,9 @@ fn sys_ldsetalb() {
 }
 #[test]
 fn sys_ldsetalh() {
+    if !native_macho_host("verify_against_system_as", "sys_ldsetalh") {
+        return;
+    }
     verify(
         "ldsetalh w9, w10, [x11]",
         Inst::Ldsetalh {
@@ -1351,6 +1711,9 @@ fn sys_ldsetalh() {
 }
 #[test]
 fn sys_swpal() {
+    if !native_macho_host("verify_against_system_as", "sys_swpal") {
+        return;
+    }
     verify(
         "swpal w0, w0, [x8]",
         Inst::Swpal32 {
@@ -1362,6 +1725,9 @@ fn sys_swpal() {
 }
 #[test]
 fn sys_swpalb() {
+    if !native_macho_host("verify_against_system_as", "sys_swpalb") {
+        return;
+    }
     verify(
         "swpalb w8, w9, [x10]",
         Inst::Swpalb {
@@ -1373,6 +1739,9 @@ fn sys_swpalb() {
 }
 #[test]
 fn sys_swpalh() {
+    if !native_macho_host("verify_against_system_as", "sys_swpalh") {
+        return;
+    }
     verify(
         "swpalh w11, w12, [x13]",
         Inst::Swpalh {
@@ -1384,6 +1753,9 @@ fn sys_swpalh() {
 }
 #[test]
 fn sys_casalb() {
+    if !native_macho_host("verify_against_system_as", "sys_casalb") {
+        return;
+    }
     verify(
         "casalb w6, w7, [x8]",
         Inst::Casalb {
@@ -1395,6 +1767,9 @@ fn sys_casalb() {
 }
 #[test]
 fn sys_casalh() {
+    if !native_macho_host("verify_against_system_as", "sys_casalh") {
+        return;
+    }
     verify(
         "casalh w9, w10, [x11]",
         Inst::Casalh {
@@ -1406,6 +1781,9 @@ fn sys_casalh() {
 }
 #[test]
 fn sys_subs_uxtb() {
+    if !native_macho_host("verify_against_system_as", "sys_subs_uxtb") {
+        return;
+    }
     verify(
         "subs w10, w8, w9, uxtb",
         Inst::SubsExtReg {
@@ -1420,6 +1798,9 @@ fn sys_subs_uxtb() {
 }
 #[test]
 fn sys_subs_uxth() {
+    if !native_macho_host("verify_against_system_as", "sys_subs_uxth") {
+        return;
+    }
     verify(
         "subs w11, w12, w13, uxth",
         Inst::SubsExtReg {
@@ -1434,6 +1815,9 @@ fn sys_subs_uxth() {
 }
 #[test]
 fn sys_subs_sxtb() {
+    if !native_macho_host("verify_against_system_as", "sys_subs_sxtb") {
+        return;
+    }
     verify(
         "subs x14, x15, w16, sxtb",
         Inst::SubsExtReg {
@@ -1448,6 +1832,9 @@ fn sys_subs_sxtb() {
 }
 #[test]
 fn sys_subs_sxth() {
+    if !native_macho_host("verify_against_system_as", "sys_subs_sxth") {
+        return;
+    }
     verify(
         "subs x17, x18, w19, sxth #1",
         Inst::SubsExtReg {
@@ -1462,6 +1849,9 @@ fn sys_subs_sxth() {
 }
 #[test]
 fn sys_swpal_x() {
+    if !native_macho_host("verify_against_system_as", "sys_swpal_x") {
+        return;
+    }
     verify(
         "swpal x1, x2, [x3]",
         Inst::Swpal64 {
@@ -1473,6 +1863,9 @@ fn sys_swpal_x() {
 }
 #[test]
 fn sys_casal() {
+    if !native_macho_host("verify_against_system_as", "sys_casal") {
+        return;
+    }
     verify(
         "casal w4, w5, [x6]",
         Inst::Casal32 {
@@ -1484,6 +1877,9 @@ fn sys_casal() {
 }
 #[test]
 fn sys_casal_x() {
+    if !native_macho_host("verify_against_system_as", "sys_casal_x") {
+        return;
+    }
     verify(
         "casal x7, x8, [x9]",
         Inst::Casal64 {
@@ -1495,10 +1891,16 @@ fn sys_casal_x() {
 }
 #[test]
 fn sys_ldrsw_lit() {
+    if !native_macho_host("verify_against_system_as", "sys_ldrsw_lit") {
+        return;
+    }
     verify("ldrsw x1, #8", Inst::LdrswLit { rt: X1, offset: 8 });
 }
 #[test]
 fn sys_ldr_d() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_d") {
+        return;
+    }
     verify(
         "ldr d0, [x1]",
         Inst::LdrFpImm64 {
@@ -1510,6 +1912,9 @@ fn sys_ldr_d() {
 }
 #[test]
 fn sys_ldr_q() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_q") {
+        return;
+    }
     verify(
         "ldr q0, [sp, #16]",
         Inst::LdrFpImm128 {
@@ -1521,6 +1926,9 @@ fn sys_ldr_q() {
 }
 #[test]
 fn sys_ldr_h() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_h") {
+        return;
+    }
     verify(
         "ldr h2, [sp, #14]",
         Inst::LdrFpImm16 {
@@ -1532,6 +1940,9 @@ fn sys_ldr_h() {
 }
 #[test]
 fn sys_ldr_b() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_b") {
+        return;
+    }
     verify(
         "ldr b2, [sp, #15]",
         Inst::LdrFpImm8 {
@@ -1543,6 +1954,9 @@ fn sys_ldr_b() {
 }
 #[test]
 fn sys_str_q() {
+    if !native_macho_host("verify_against_system_as", "sys_str_q") {
+        return;
+    }
     verify(
         "str q1, [x0]",
         Inst::StrFpImm128 {
@@ -1554,6 +1968,9 @@ fn sys_str_q() {
 }
 #[test]
 fn sys_str_h() {
+    if !native_macho_host("verify_against_system_as", "sys_str_h") {
+        return;
+    }
     verify(
         "str h2, [sp, #14]",
         Inst::StrFpImm16 {
@@ -1565,6 +1982,9 @@ fn sys_str_h() {
 }
 #[test]
 fn sys_str_b() {
+    if !native_macho_host("verify_against_system_as", "sys_str_b") {
+        return;
+    }
     verify(
         "str b2, [sp, #15]",
         Inst::StrFpImm8 {
@@ -1576,6 +1996,9 @@ fn sys_str_b() {
 }
 #[test]
 fn sys_ldr_q_lit() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_q_lit") {
+        return;
+    }
     verify(
         "ldr q0, #16",
         Inst::LdrFpLit128 {
@@ -1586,6 +2009,9 @@ fn sys_ldr_q_lit() {
 }
 #[test]
 fn sys_ldr_q_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_q_reg") {
+        return;
+    }
     verify(
         "ldr q0, [x1, x2]",
         Inst::LdrFpReg128 {
@@ -1599,6 +2025,9 @@ fn sys_ldr_q_reg() {
 }
 #[test]
 fn sys_str_q_reg_uxtw() {
+    if !native_macho_host("verify_against_system_as", "sys_str_q_reg_uxtw") {
+        return;
+    }
     verify(
         "str q1, [x3, w4, uxtw #4]",
         Inst::StrFpReg128 {
@@ -1612,6 +2041,9 @@ fn sys_str_q_reg_uxtw() {
 }
 #[test]
 fn sys_ldr_q_post() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_q_post") {
+        return;
+    }
     verify(
         "ldr q0, [sp], #16",
         Inst::LdrFpPost128 {
@@ -1623,6 +2055,9 @@ fn sys_ldr_q_post() {
 }
 #[test]
 fn sys_str_q_pre() {
+    if !native_macho_host("verify_against_system_as", "sys_str_q_pre") {
+        return;
+    }
     verify(
         "str q1, [sp, #-16]!",
         Inst::StrFpPre128 {
@@ -1634,6 +2069,9 @@ fn sys_str_q_pre() {
 }
 #[test]
 fn sys_str_d_off() {
+    if !native_macho_host("verify_against_system_as", "sys_str_d_off") {
+        return;
+    }
     verify(
         "str d2, [x3, #16]",
         Inst::StrFpImm64 {
@@ -1645,6 +2083,9 @@ fn sys_str_d_off() {
 }
 #[test]
 fn sys_ldr_s_reg() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_s_reg") {
+        return;
+    }
     verify(
         "ldr s4, [x5, x6]",
         Inst::LdrFpReg32 {
@@ -1658,6 +2099,9 @@ fn sys_ldr_s_reg() {
 }
 #[test]
 fn sys_str_s_reg_uxtw() {
+    if !native_macho_host("verify_against_system_as", "sys_str_s_reg_uxtw") {
+        return;
+    }
     verify(
         "str s7, [x8, w9, uxtw #2]",
         Inst::StrFpReg32 {
@@ -1671,10 +2115,16 @@ fn sys_str_s_reg_uxtw() {
 }
 #[test]
 fn sys_ldr_d_lit() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_d_lit") {
+        return;
+    }
     verify("ldr d10, #8", Inst::LdrFpLit64 { rt: D10, offset: 8 });
 }
 #[test]
 fn sys_ldr_d_post() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_d_post") {
+        return;
+    }
     verify(
         "ldr d0, [sp], #8",
         Inst::LdrFpPost64 {
@@ -1686,6 +2136,9 @@ fn sys_ldr_d_post() {
 }
 #[test]
 fn sys_str_s_pre() {
+    if !native_macho_host("verify_against_system_as", "sys_str_s_pre") {
+        return;
+    }
     verify(
         "str s3, [sp, #-8]!",
         Inst::StrFpPre32 {
@@ -1698,6 +2151,9 @@ fn sys_str_s_pre() {
 
 #[test]
 fn sys_str_s_neg_offset() {
+    if !native_macho_host("verify_against_system_as", "sys_str_s_neg_offset") {
+        return;
+    }
     verify(
         "str s8, [x29, #-4]",
         Inst::SturFp32 {
@@ -1710,6 +2166,9 @@ fn sys_str_s_neg_offset() {
 
 #[test]
 fn sys_ldr_s_neg_offset() {
+    if !native_macho_host("verify_against_system_as", "sys_ldr_s_neg_offset") {
+        return;
+    }
     verify(
         "ldr s9, [x29, #-4]",
         Inst::LdurFp32 {
@@ -1724,10 +2183,16 @@ fn sys_ldr_s_neg_offset() {
 
 #[test]
 fn sys_adr() {
+    if !native_macho_host("verify_against_system_as", "sys_adr") {
+        return;
+    }
     verify("adr x0, #8", Inst::Adr { rd: X0, imm: 8 });
 }
 #[test]
 fn sys_adrp_tlvp() {
+    if !native_macho_host("verify_against_system_as", "sys_adrp_tlvp") {
+        return;
+    }
     verify(
         "adrp x0, _tls_counter@TLVPPAGE",
         Inst::Adrp { rd: X0, imm: 0 },
@@ -1738,6 +2203,9 @@ fn sys_adrp_tlvp() {
 
 #[test]
 fn sys_stp_pre() {
+    if !native_macho_host("verify_against_system_as", "sys_stp_pre") {
+        return;
+    }
     verify(
         "stp x29, x30, [sp, #-32]!",
         Inst::StpPre64 {
@@ -1750,6 +2218,9 @@ fn sys_stp_pre() {
 }
 #[test]
 fn sys_ldp_post() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_post") {
+        return;
+    }
     verify(
         "ldp x29, x30, [sp], #32",
         Inst::LdpPost64 {
@@ -1762,6 +2233,9 @@ fn sys_ldp_post() {
 }
 #[test]
 fn sys_stp_off() {
+    if !native_macho_host("verify_against_system_as", "sys_stp_off") {
+        return;
+    }
     verify(
         "stp x19, x20, [sp, #32]",
         Inst::StpOff64 {
@@ -1774,6 +2248,9 @@ fn sys_stp_off() {
 }
 #[test]
 fn sys_ldp_off() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_off") {
+        return;
+    }
     verify(
         "ldp x21, x22, [sp, #48]",
         Inst::LdpOff64 {
@@ -1786,6 +2263,9 @@ fn sys_ldp_off() {
 }
 #[test]
 fn sys_ldp_off32() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_off32") {
+        return;
+    }
     verify(
         "ldp w9, w8, [x8]",
         Inst::LdpOff32 {
@@ -1798,6 +2278,9 @@ fn sys_ldp_off32() {
 }
 #[test]
 fn sys_stp_off32() {
+    if !native_macho_host("verify_against_system_as", "sys_stp_off32") {
+        return;
+    }
     verify(
         "stp w1, w2, [sp, #16]",
         Inst::StpOff32 {
@@ -1810,6 +2293,9 @@ fn sys_stp_off32() {
 }
 #[test]
 fn sys_ldp_post32() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_post32") {
+        return;
+    }
     verify(
         "ldp w9, w8, [sp], #8",
         Inst::LdpPost32 {
@@ -1822,6 +2308,9 @@ fn sys_ldp_post32() {
 }
 #[test]
 fn sys_ldp_pre32() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_pre32") {
+        return;
+    }
     verify(
         "ldp w9, w8, [sp, #-8]!",
         Inst::LdpPre32 {
@@ -1834,6 +2323,9 @@ fn sys_ldp_pre32() {
 }
 #[test]
 fn sys_ldp_d_pre() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_d_pre") {
+        return;
+    }
     verify(
         "ldp d8, d9, [sp, #-16]!",
         Inst::LdpFpPre64 {
@@ -1846,6 +2338,9 @@ fn sys_ldp_d_pre() {
 }
 #[test]
 fn sys_stp_d_post() {
+    if !native_macho_host("verify_against_system_as", "sys_stp_d_post") {
+        return;
+    }
     verify(
         "stp d10, d11, [sp], #16",
         Inst::StpFpPost64 {
@@ -1858,6 +2353,9 @@ fn sys_stp_d_post() {
 }
 #[test]
 fn sys_ldp_d_off() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_d_off") {
+        return;
+    }
     verify(
         "ldp d12, d13, [sp, #32]",
         Inst::LdpFpOff64 {
@@ -1870,6 +2368,9 @@ fn sys_ldp_d_off() {
 }
 #[test]
 fn sys_stp_s_post() {
+    if !native_macho_host("verify_against_system_as", "sys_stp_s_post") {
+        return;
+    }
     verify(
         "stp s0, s1, [sp], #8",
         Inst::StpFpPost32 {
@@ -1882,6 +2383,9 @@ fn sys_stp_s_post() {
 }
 #[test]
 fn sys_ldp_s_pre() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_s_pre") {
+        return;
+    }
     verify(
         "ldp s2, s3, [sp, #-8]!",
         Inst::LdpFpPre32 {
@@ -1894,6 +2398,9 @@ fn sys_ldp_s_pre() {
 }
 #[test]
 fn sys_stp_q_pre() {
+    if !native_macho_host("verify_against_system_as", "sys_stp_q_pre") {
+        return;
+    }
     verify(
         "stp q0, q1, [sp, #-32]!",
         Inst::StpFpPre128 {
@@ -1906,6 +2413,9 @@ fn sys_stp_q_pre() {
 }
 #[test]
 fn sys_ldp_q_post() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_q_post") {
+        return;
+    }
     verify(
         "ldp q2, q3, [sp], #32",
         Inst::LdpFpPost128 {
@@ -1918,6 +2428,9 @@ fn sys_ldp_q_post() {
 }
 #[test]
 fn sys_ldp_q_off() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_q_off") {
+        return;
+    }
     verify(
         "ldp q4, q5, [sp, #64]",
         Inst::LdpFpOff128 {
@@ -1930,6 +2443,9 @@ fn sys_ldp_q_off() {
 }
 #[test]
 fn sys_ldp_s_off() {
+    if !native_macho_host("verify_against_system_as", "sys_ldp_s_off") {
+        return;
+    }
     verify(
         "ldp s4, s5, [sp, #16]",
         Inst::LdpFpOff32 {
@@ -1945,6 +2461,9 @@ fn sys_ldp_s_off() {
 
 #[test]
 fn sys_fadd_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fadd_d") {
+        return;
+    }
     verify(
         "fadd d5, d6, d7",
         Inst::FaddD {
@@ -1956,6 +2475,9 @@ fn sys_fadd_d() {
 }
 #[test]
 fn sys_fsub_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fsub_d") {
+        return;
+    }
     verify(
         "fsub d5, d6, d7",
         Inst::FsubD {
@@ -1967,6 +2489,9 @@ fn sys_fsub_d() {
 }
 #[test]
 fn sys_fmul_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmul_d") {
+        return;
+    }
     verify(
         "fmul d5, d6, d7",
         Inst::FmulD {
@@ -1978,6 +2503,9 @@ fn sys_fmul_d() {
 }
 #[test]
 fn sys_fdiv_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fdiv_d") {
+        return;
+    }
     verify(
         "fdiv d5, d6, d7",
         Inst::FdivD {
@@ -1989,6 +2517,9 @@ fn sys_fdiv_d() {
 }
 #[test]
 fn sys_fadd_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fadd_s") {
+        return;
+    }
     verify(
         "fadd s5, s6, s7",
         Inst::FaddS {
@@ -2000,6 +2531,9 @@ fn sys_fadd_s() {
 }
 #[test]
 fn sys_fadd_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fadd_2d") {
+        return;
+    }
     verify(
         "fadd.2d v0, v1, v2",
         Inst::FaddV2D {
@@ -2011,6 +2545,9 @@ fn sys_fadd_2d() {
 }
 #[test]
 fn sys_fadd_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fadd_4s") {
+        return;
+    }
     verify(
         "fadd.4s v0, v1, v2",
         Inst::FaddV4S {
@@ -2022,6 +2559,9 @@ fn sys_fadd_4s() {
 }
 #[test]
 fn sys_add_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_add_4s") {
+        return;
+    }
     verify(
         "add.4s v0, v1, v2",
         Inst::AddV4S {
@@ -2033,6 +2573,9 @@ fn sys_add_4s() {
 }
 #[test]
 fn sys_addp_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_addp_2d") {
+        return;
+    }
     verify(
         "addp.2d v0, v1, v2",
         Inst::AddpV2D {
@@ -2044,6 +2587,9 @@ fn sys_addp_2d() {
 }
 #[test]
 fn sys_addp_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_addp_16b") {
+        return;
+    }
     verify(
         "addp.16b v6, v7, v8",
         Inst::AddpV16B {
@@ -2055,6 +2601,9 @@ fn sys_addp_16b() {
 }
 #[test]
 fn sys_addp_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_addp_8h") {
+        return;
+    }
     verify(
         "addp.8h v0, v1, v2",
         Inst::AddpV8H {
@@ -2066,6 +2615,9 @@ fn sys_addp_8h() {
 }
 #[test]
 fn sys_addp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_addp_4s") {
+        return;
+    }
     verify(
         "addp.4s v0, v1, v2",
         Inst::AddpV4S {
@@ -2077,6 +2629,9 @@ fn sys_addp_4s() {
 }
 #[test]
 fn sys_fmax_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmax_2d") {
+        return;
+    }
     verify(
         "fmax.2d v0, v0, v1",
         Inst::FmaxV2D {
@@ -2088,6 +2643,9 @@ fn sys_fmax_2d() {
 }
 #[test]
 fn sys_fmax_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmax_4s") {
+        return;
+    }
     verify(
         "fmax.4s v0, v0, v1",
         Inst::FmaxV4S {
@@ -2099,6 +2657,9 @@ fn sys_fmax_4s() {
 }
 #[test]
 fn sys_fmaxnm_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxnm_4s") {
+        return;
+    }
     verify(
         "fmaxnm.4s v0, v1, v2",
         Inst::FmaxnmV4S {
@@ -2110,6 +2671,9 @@ fn sys_fmaxnm_4s() {
 }
 #[test]
 fn sys_fmaxnm_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxnm_2d") {
+        return;
+    }
     verify(
         "fmaxnm.2d v0, v0, v1",
         Inst::FmaxnmV2D {
@@ -2121,6 +2685,9 @@ fn sys_fmaxnm_2d() {
 }
 #[test]
 fn sys_fmin_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmin_2d") {
+        return;
+    }
     verify(
         "fmin.2d v2, v3, v4",
         Inst::FminV2D {
@@ -2132,6 +2699,9 @@ fn sys_fmin_2d() {
 }
 #[test]
 fn sys_fmin_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmin_4s") {
+        return;
+    }
     verify(
         "fmin.4s v2, v3, v4",
         Inst::FminV4S {
@@ -2143,6 +2713,9 @@ fn sys_fmin_4s() {
 }
 #[test]
 fn sys_fminnm_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fminnm_4s") {
+        return;
+    }
     verify(
         "fminnm.4s v3, v4, v5",
         Inst::FminnmV4S {
@@ -2154,6 +2727,9 @@ fn sys_fminnm_4s() {
 }
 #[test]
 fn sys_fminnm_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fminnm_2d") {
+        return;
+    }
     verify(
         "fminnm.2d v2, v3, v4",
         Inst::FminnmV2D {
@@ -2165,6 +2741,9 @@ fn sys_fminnm_2d() {
 }
 #[test]
 fn sys_smax_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_smax_4s") {
+        return;
+    }
     verify(
         "smax.4s v5, v6, v7",
         Inst::SmaxV4S {
@@ -2176,6 +2755,9 @@ fn sys_smax_4s() {
 }
 #[test]
 fn sys_smaxp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_smaxp_4s") {
+        return;
+    }
     verify(
         "smaxp.4s v6, v7, v8",
         Inst::SmaxpV4S {
@@ -2187,6 +2769,9 @@ fn sys_smaxp_4s() {
 }
 #[test]
 fn sys_smaxp_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_smaxp_16b") {
+        return;
+    }
     verify(
         "smaxp.16b v6, v7, v8",
         Inst::SmaxpV16B {
@@ -2198,6 +2783,9 @@ fn sys_smaxp_16b() {
 }
 #[test]
 fn sys_smaxp_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_smaxp_8h") {
+        return;
+    }
     verify(
         "smaxp.8h v6, v7, v8",
         Inst::SmaxpV8H {
@@ -2209,6 +2797,9 @@ fn sys_smaxp_8h() {
 }
 #[test]
 fn sys_smin_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_smin_4s") {
+        return;
+    }
     verify(
         "smin.4s v8, v9, v10",
         Inst::SminV4S {
@@ -2220,6 +2811,9 @@ fn sys_smin_4s() {
 }
 #[test]
 fn sys_sminp_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_sminp_16b") {
+        return;
+    }
     verify(
         "sminp.16b v9, v10, v11",
         Inst::SminpV16B {
@@ -2231,6 +2825,9 @@ fn sys_sminp_16b() {
 }
 #[test]
 fn sys_sminp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_sminp_4s") {
+        return;
+    }
     verify(
         "sminp.4s v9, v10, v11",
         Inst::SminpV4S {
@@ -2242,6 +2839,9 @@ fn sys_sminp_4s() {
 }
 #[test]
 fn sys_sminp_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_sminp_8h") {
+        return;
+    }
     verify(
         "sminp.8h v9, v10, v11",
         Inst::SminpV8H {
@@ -2253,6 +2853,9 @@ fn sys_sminp_8h() {
 }
 #[test]
 fn sys_umax_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_umax_4s") {
+        return;
+    }
     verify(
         "umax.4s v0, v0, v1",
         Inst::UmaxV4S {
@@ -2264,6 +2867,9 @@ fn sys_umax_4s() {
 }
 #[test]
 fn sys_umaxp_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_umaxp_16b") {
+        return;
+    }
     verify(
         "umaxp.16b v0, v1, v2",
         Inst::UmaxpV16B {
@@ -2275,6 +2881,9 @@ fn sys_umaxp_16b() {
 }
 #[test]
 fn sys_umaxp_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_umaxp_8h") {
+        return;
+    }
     verify(
         "umaxp.8h v0, v1, v2",
         Inst::UmaxpV8H {
@@ -2286,6 +2895,9 @@ fn sys_umaxp_8h() {
 }
 #[test]
 fn sys_umaxp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_umaxp_4s") {
+        return;
+    }
     verify(
         "umaxp.4s v0, v1, v2",
         Inst::UmaxpV4S {
@@ -2297,6 +2909,9 @@ fn sys_umaxp_4s() {
 }
 #[test]
 fn sys_uminp_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_uminp_16b") {
+        return;
+    }
     verify(
         "uminp.16b v3, v4, v5",
         Inst::UminpV16B {
@@ -2308,6 +2923,9 @@ fn sys_uminp_16b() {
 }
 #[test]
 fn sys_uminp_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_uminp_8h") {
+        return;
+    }
     verify(
         "uminp.8h v3, v4, v5",
         Inst::UminpV8H {
@@ -2319,6 +2937,9 @@ fn sys_uminp_8h() {
 }
 #[test]
 fn sys_umin_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_umin_4s") {
+        return;
+    }
     verify(
         "umin.4s v2, v3, v4",
         Inst::UminV4S {
@@ -2330,6 +2951,9 @@ fn sys_umin_4s() {
 }
 #[test]
 fn sys_uminp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_uminp_4s") {
+        return;
+    }
     verify(
         "uminp.4s v3, v4, v5",
         Inst::UminpV4S {
@@ -2341,6 +2965,9 @@ fn sys_uminp_4s() {
 }
 #[test]
 fn sys_addv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_addv_4s") {
+        return;
+    }
     verify(
         "addv.4s s0, v0",
         Inst::AddvV4S {
@@ -2351,6 +2978,9 @@ fn sys_addv_4s() {
 }
 #[test]
 fn sys_addv_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_addv_16b") {
+        return;
+    }
     verify(
         "addv.16b b0, v0",
         Inst::AddvV16B {
@@ -2361,6 +2991,9 @@ fn sys_addv_16b() {
 }
 #[test]
 fn sys_addv_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_addv_8h") {
+        return;
+    }
     verify(
         "addv.8h h0, v0",
         Inst::AddvV8H {
@@ -2371,6 +3004,9 @@ fn sys_addv_8h() {
 }
 #[test]
 fn sys_faddp_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_faddp_2d") {
+        return;
+    }
     verify(
         "faddp.2d v0, v1, v2",
         Inst::FaddpV2D {
@@ -2382,6 +3018,9 @@ fn sys_faddp_2d() {
 }
 #[test]
 fn sys_faddp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_faddp_4s") {
+        return;
+    }
     verify(
         "faddp.4s v0, v1, v2",
         Inst::FaddpV4S {
@@ -2393,6 +3032,9 @@ fn sys_faddp_4s() {
 }
 #[test]
 fn sys_fmaxp_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxp_2d") {
+        return;
+    }
     verify(
         "fmaxp.2d v3, v4, v5",
         Inst::FmaxpV2D {
@@ -2404,6 +3046,9 @@ fn sys_fmaxp_2d() {
 }
 #[test]
 fn sys_fmaxp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxp_4s") {
+        return;
+    }
     verify(
         "fmaxp.4s v0, v1, v2",
         Inst::FmaxpV4S {
@@ -2415,6 +3060,9 @@ fn sys_fmaxp_4s() {
 }
 #[test]
 fn sys_fminp_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fminp_2d") {
+        return;
+    }
     verify(
         "fminp.2d v6, v7, v8",
         Inst::FminpV2D {
@@ -2426,6 +3074,9 @@ fn sys_fminp_2d() {
 }
 #[test]
 fn sys_fminp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fminp_4s") {
+        return;
+    }
     verify(
         "fminp.4s v3, v4, v5",
         Inst::FminpV4S {
@@ -2437,6 +3088,9 @@ fn sys_fminp_4s() {
 }
 #[test]
 fn sys_fmaxnmp_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxnmp_2d") {
+        return;
+    }
     verify(
         "fmaxnmp.2d v0, v1, v2",
         Inst::FmaxnmpV2D {
@@ -2448,6 +3102,9 @@ fn sys_fmaxnmp_2d() {
 }
 #[test]
 fn sys_fmaxnmp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxnmp_4s") {
+        return;
+    }
     verify(
         "fmaxnmp.4s v0, v1, v2",
         Inst::FmaxnmpV4S {
@@ -2459,6 +3116,9 @@ fn sys_fmaxnmp_4s() {
 }
 #[test]
 fn sys_fminnmp_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fminnmp_2d") {
+        return;
+    }
     verify(
         "fminnmp.2d v3, v4, v5",
         Inst::FminnmpV2D {
@@ -2470,6 +3130,9 @@ fn sys_fminnmp_2d() {
 }
 #[test]
 fn sys_fminnmp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fminnmp_4s") {
+        return;
+    }
     verify(
         "fminnmp.4s v3, v4, v5",
         Inst::FminnmpV4S {
@@ -2481,6 +3144,9 @@ fn sys_fminnmp_4s() {
 }
 #[test]
 fn sys_fmla_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmla_4s") {
+        return;
+    }
     verify(
         "fmla.4s v0, v1, v2",
         Inst::FmlaV4S {
@@ -2492,6 +3158,9 @@ fn sys_fmla_4s() {
 }
 #[test]
 fn sys_fmla_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmla_2d") {
+        return;
+    }
     verify(
         "fmla.2d v0, v1, v2",
         Inst::FmlaV2D {
@@ -2503,6 +3172,9 @@ fn sys_fmla_2d() {
 }
 #[test]
 fn sys_fmls_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmls_4s") {
+        return;
+    }
     verify(
         "fmls.4s v3, v4, v5",
         Inst::FmlsV4S {
@@ -2514,6 +3186,9 @@ fn sys_fmls_4s() {
 }
 #[test]
 fn sys_fmls_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmls_2d") {
+        return;
+    }
     verify(
         "fmls.2d v3, v4, v5",
         Inst::FmlsV2D {
@@ -2525,6 +3200,9 @@ fn sys_fmls_2d() {
 }
 #[test]
 fn sys_faddp_2s() {
+    if !native_macho_host("verify_against_system_as", "sys_faddp_2s") {
+        return;
+    }
     verify(
         "faddp.2s s3, v4",
         Inst::FaddpV2S {
@@ -2535,6 +3213,9 @@ fn sys_faddp_2s() {
 }
 #[test]
 fn sys_faddp_2d_scalar() {
+    if !native_macho_host("verify_against_system_as", "sys_faddp_2d_scalar") {
+        return;
+    }
     verify(
         "faddp.2d d0, v0",
         Inst::FaddpV2DScalar {
@@ -2545,6 +3226,9 @@ fn sys_faddp_2d_scalar() {
 }
 #[test]
 fn sys_fmaxp_2d_scalar() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxp_2d_scalar") {
+        return;
+    }
     verify(
         "fmaxp.2d d1, v2",
         Inst::FmaxpV2DScalar {
@@ -2555,6 +3239,9 @@ fn sys_fmaxp_2d_scalar() {
 }
 #[test]
 fn sys_fminp_2d_scalar() {
+    if !native_macho_host("verify_against_system_as", "sys_fminp_2d_scalar") {
+        return;
+    }
     verify(
         "fminp.2d d3, v4",
         Inst::FminpV2DScalar {
@@ -2565,6 +3252,9 @@ fn sys_fminp_2d_scalar() {
 }
 #[test]
 fn sys_fmaxnmp_2d_scalar() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxnmp_2d_scalar") {
+        return;
+    }
     verify(
         "fmaxnmp.2d d0, v0",
         Inst::FmaxnmpV2DScalar {
@@ -2575,6 +3265,9 @@ fn sys_fmaxnmp_2d_scalar() {
 }
 #[test]
 fn sys_fminnmp_2d_scalar() {
+    if !native_macho_host("verify_against_system_as", "sys_fminnmp_2d_scalar") {
+        return;
+    }
     verify(
         "fminnmp.2d d1, v2",
         Inst::FminnmpV2DScalar {
@@ -2585,6 +3278,9 @@ fn sys_fminnmp_2d_scalar() {
 }
 #[test]
 fn sys_fmaxv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxv_4s") {
+        return;
+    }
     verify(
         "fmaxv.4s s1, v2",
         Inst::FmaxvV4S {
@@ -2595,6 +3291,9 @@ fn sys_fmaxv_4s() {
 }
 #[test]
 fn sys_fmaxnmv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmaxnmv_4s") {
+        return;
+    }
     verify(
         "fmaxnmv.4s s1, v2",
         Inst::FmaxnmvV4S {
@@ -2605,6 +3304,9 @@ fn sys_fmaxnmv_4s() {
 }
 #[test]
 fn sys_fminv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fminv_4s") {
+        return;
+    }
     verify(
         "fminv.4s s3, v4",
         Inst::FminvV4S {
@@ -2615,6 +3317,9 @@ fn sys_fminv_4s() {
 }
 #[test]
 fn sys_fminnmv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fminnmv_4s") {
+        return;
+    }
     verify(
         "fminnmv.4s s3, v4",
         Inst::FminnmvV4S {
@@ -2625,6 +3330,9 @@ fn sys_fminnmv_4s() {
 }
 #[test]
 fn sys_umaxv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_umaxv_4s") {
+        return;
+    }
     verify(
         "umaxv.4s s1, v2",
         Inst::UmaxvV4S {
@@ -2635,6 +3343,9 @@ fn sys_umaxv_4s() {
 }
 #[test]
 fn sys_umaxv_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_umaxv_16b") {
+        return;
+    }
     verify(
         "umaxv.16b b0, v0",
         Inst::UmaxvV16B {
@@ -2645,6 +3356,9 @@ fn sys_umaxv_16b() {
 }
 #[test]
 fn sys_umaxv_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_umaxv_8h") {
+        return;
+    }
     verify(
         "umaxv.8h h0, v0",
         Inst::UmaxvV8H {
@@ -2655,6 +3369,9 @@ fn sys_umaxv_8h() {
 }
 #[test]
 fn sys_smaxv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_smaxv_4s") {
+        return;
+    }
     verify(
         "smaxv.4s s3, v4",
         Inst::SmaxvV4S {
@@ -2665,6 +3382,9 @@ fn sys_smaxv_4s() {
 }
 #[test]
 fn sys_smaxv_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_smaxv_16b") {
+        return;
+    }
     verify(
         "smaxv.16b b0, v0",
         Inst::SmaxvV16B {
@@ -2675,6 +3395,9 @@ fn sys_smaxv_16b() {
 }
 #[test]
 fn sys_smaxv_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_smaxv_8h") {
+        return;
+    }
     verify(
         "smaxv.8h h0, v0",
         Inst::SmaxvV8H {
@@ -2685,6 +3408,9 @@ fn sys_smaxv_8h() {
 }
 #[test]
 fn sys_uminv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_uminv_4s") {
+        return;
+    }
     verify(
         "uminv.4s s1, v2",
         Inst::UminvV4S {
@@ -2695,6 +3421,9 @@ fn sys_uminv_4s() {
 }
 #[test]
 fn sys_uminv_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_uminv_16b") {
+        return;
+    }
     verify(
         "uminv.16b b0, v0",
         Inst::UminvV16B {
@@ -2705,6 +3434,9 @@ fn sys_uminv_16b() {
 }
 #[test]
 fn sys_uminv_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_uminv_8h") {
+        return;
+    }
     verify(
         "uminv.8h h0, v0",
         Inst::UminvV8H {
@@ -2715,6 +3447,9 @@ fn sys_uminv_8h() {
 }
 #[test]
 fn sys_sminv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_sminv_4s") {
+        return;
+    }
     verify(
         "sminv.4s s3, v4",
         Inst::SminvV4S {
@@ -2725,6 +3460,9 @@ fn sys_sminv_4s() {
 }
 #[test]
 fn sys_sminv_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_sminv_16b") {
+        return;
+    }
     verify(
         "sminv.16b b0, v0",
         Inst::SminvV16B {
@@ -2735,6 +3473,9 @@ fn sys_sminv_16b() {
 }
 #[test]
 fn sys_sminv_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_sminv_8h") {
+        return;
+    }
     verify(
         "sminv.8h h0, v0",
         Inst::SminvV8H {
@@ -2745,6 +3486,9 @@ fn sys_sminv_8h() {
 }
 #[test]
 fn sys_fsub_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fsub_2d") {
+        return;
+    }
     verify(
         "fsub.2d v3, v4, v5",
         Inst::FsubV2D {
@@ -2756,6 +3500,9 @@ fn sys_fsub_2d() {
 }
 #[test]
 fn sys_fsub_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fsub_4s") {
+        return;
+    }
     verify(
         "fsub.4s v3, v4, v5",
         Inst::FsubV4S {
@@ -2767,6 +3514,9 @@ fn sys_fsub_4s() {
 }
 #[test]
 fn sys_sub_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_sub_4s") {
+        return;
+    }
     verify(
         "sub.4s v3, v4, v5",
         Inst::SubV4S {
@@ -2778,6 +3528,9 @@ fn sys_sub_4s() {
 }
 #[test]
 fn sys_fmul_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmul_2d") {
+        return;
+    }
     verify(
         "fmul.2d v6, v7, v8",
         Inst::FmulV2D {
@@ -2789,6 +3542,9 @@ fn sys_fmul_2d() {
 }
 #[test]
 fn sys_fmul_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmul_4s") {
+        return;
+    }
     verify(
         "fmul.4s v6, v7, v8",
         Inst::FmulV4S {
@@ -2800,6 +3556,9 @@ fn sys_fmul_4s() {
 }
 #[test]
 fn sys_fdiv_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fdiv_2d") {
+        return;
+    }
     verify(
         "fdiv.2d v9, v10, v11",
         Inst::FdivV2D {
@@ -2811,6 +3570,9 @@ fn sys_fdiv_2d() {
 }
 #[test]
 fn sys_fabd_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fabd_2d") {
+        return;
+    }
     verify(
         "fabd.2d v0, v1, v2",
         Inst::FabdV2D {
@@ -2822,6 +3584,9 @@ fn sys_fabd_2d() {
 }
 #[test]
 fn sys_fdiv_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fdiv_4s") {
+        return;
+    }
     verify(
         "fdiv.4s v9, v10, v11",
         Inst::FdivV4S {
@@ -2833,6 +3598,9 @@ fn sys_fdiv_4s() {
 }
 #[test]
 fn sys_fabs_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fabs_4s") {
+        return;
+    }
     verify(
         "fabs.4s v0, v0",
         Inst::FabsV4S {
@@ -2843,6 +3611,9 @@ fn sys_fabs_4s() {
 }
 #[test]
 fn sys_fneg_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fneg_4s") {
+        return;
+    }
     verify(
         "fneg.4s v6, v7",
         Inst::FnegV4S {
@@ -2853,6 +3624,9 @@ fn sys_fneg_4s() {
 }
 #[test]
 fn sys_fsqrt_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fsqrt_4s") {
+        return;
+    }
     verify(
         "fsqrt.4s v1, v2",
         Inst::FsqrtV4S {
@@ -2863,6 +3637,9 @@ fn sys_fsqrt_4s() {
 }
 #[test]
 fn sys_fabs_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fabs_2d") {
+        return;
+    }
     verify(
         "fabs.2d v0, v0",
         Inst::FabsV2D {
@@ -2873,6 +3650,9 @@ fn sys_fabs_2d() {
 }
 #[test]
 fn sys_fneg_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fneg_2d") {
+        return;
+    }
     verify(
         "fneg.2d v3, v4",
         Inst::FnegV2D {
@@ -2883,6 +3663,9 @@ fn sys_fneg_2d() {
 }
 #[test]
 fn sys_fsqrt_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fsqrt_2d") {
+        return;
+    }
     verify(
         "fsqrt.2d v1, v2",
         Inst::FsqrtV2D {
@@ -2893,6 +3676,9 @@ fn sys_fsqrt_2d() {
 }
 #[test]
 fn sys_scvtf_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_scvtf_2d") {
+        return;
+    }
     verify(
         "scvtf.2d v0, v0",
         Inst::ScvtfV2D {
@@ -2903,6 +3689,9 @@ fn sys_scvtf_2d() {
 }
 #[test]
 fn sys_ucvtf_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_ucvtf_2d") {
+        return;
+    }
     verify(
         "ucvtf.2d v1, v2",
         Inst::UcvtfV2D {
@@ -2913,6 +3702,9 @@ fn sys_ucvtf_2d() {
 }
 #[test]
 fn sys_fcvtzs_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fcvtzs_2d") {
+        return;
+    }
     verify(
         "fcvtzs.2d v3, v4",
         Inst::FcvtzsV2D {
@@ -2923,6 +3715,9 @@ fn sys_fcvtzs_2d() {
 }
 #[test]
 fn sys_fcvtzu_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fcvtzu_2d") {
+        return;
+    }
     verify(
         "fcvtzu.2d v5, v6",
         Inst::FcvtzuV2D {
@@ -2933,6 +3728,9 @@ fn sys_fcvtzu_2d() {
 }
 #[test]
 fn sys_frecpe_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frecpe_2d") {
+        return;
+    }
     verify(
         "frecpe.2d v0, v0",
         Inst::FrecpeV2D {
@@ -2943,6 +3741,9 @@ fn sys_frecpe_2d() {
 }
 #[test]
 fn sys_frecps_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frecps_2d") {
+        return;
+    }
     verify(
         "frecps.2d v1, v2, v3",
         Inst::FrecpsV2D {
@@ -2954,6 +3755,9 @@ fn sys_frecps_2d() {
 }
 #[test]
 fn sys_frsqrte_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frsqrte_2d") {
+        return;
+    }
     verify(
         "frsqrte.2d v4, v5",
         Inst::FrsqrteV2D {
@@ -2964,6 +3768,9 @@ fn sys_frsqrte_2d() {
 }
 #[test]
 fn sys_frsqrts_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frsqrts_2d") {
+        return;
+    }
     verify(
         "frsqrts.2d v6, v7, v8",
         Inst::FrsqrtsV2D {
@@ -2975,6 +3782,9 @@ fn sys_frsqrts_2d() {
 }
 #[test]
 fn sys_frintn_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frintn_2d") {
+        return;
+    }
     verify(
         "frintn.2d v0, v0",
         Inst::FrintnV2D {
@@ -2985,6 +3795,9 @@ fn sys_frintn_2d() {
 }
 #[test]
 fn sys_frintm_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frintm_2d") {
+        return;
+    }
     verify(
         "frintm.2d v1, v2",
         Inst::FrintmV2D {
@@ -2995,6 +3808,9 @@ fn sys_frintm_2d() {
 }
 #[test]
 fn sys_frintp_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frintp_2d") {
+        return;
+    }
     verify(
         "frintp.2d v3, v4",
         Inst::FrintpV2D {
@@ -3005,6 +3821,9 @@ fn sys_frintp_2d() {
 }
 #[test]
 fn sys_frintz_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frintz_2d") {
+        return;
+    }
     verify(
         "frintz.2d v5, v6",
         Inst::FrintzV2D {
@@ -3015,6 +3834,9 @@ fn sys_frintz_2d() {
 }
 #[test]
 fn sys_frinta_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frinta_2d") {
+        return;
+    }
     verify(
         "frinta.2d v7, v8",
         Inst::FrintaV2D {
@@ -3025,6 +3847,9 @@ fn sys_frinta_2d() {
 }
 #[test]
 fn sys_frinti_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_frinti_2d") {
+        return;
+    }
     verify(
         "frinti.2d v9, v10",
         Inst::FrintiV2D {
@@ -3035,6 +3860,9 @@ fn sys_frinti_2d() {
 }
 #[test]
 fn sys_scvtf_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_scvtf_4s") {
+        return;
+    }
     verify(
         "scvtf.4s v0, v1",
         Inst::ScvtfV4S {
@@ -3045,6 +3873,9 @@ fn sys_scvtf_4s() {
 }
 #[test]
 fn sys_ucvtf_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_ucvtf_4s") {
+        return;
+    }
     verify(
         "ucvtf.4s v2, v3",
         Inst::UcvtfV4S {
@@ -3055,6 +3886,9 @@ fn sys_ucvtf_4s() {
 }
 #[test]
 fn sys_fcvtzs_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fcvtzs_4s") {
+        return;
+    }
     verify(
         "fcvtzs.4s v4, v5",
         Inst::FcvtzsV4S {
@@ -3065,6 +3899,9 @@ fn sys_fcvtzs_4s() {
 }
 #[test]
 fn sys_fcvtzu_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fcvtzu_4s") {
+        return;
+    }
     verify(
         "fcvtzu.4s v6, v7",
         Inst::FcvtzuV4S {
@@ -3075,6 +3912,9 @@ fn sys_fcvtzu_4s() {
 }
 #[test]
 fn sys_frecpe_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frecpe_4s") {
+        return;
+    }
     verify(
         "frecpe.4s v0, v1",
         Inst::FrecpeV4S {
@@ -3085,6 +3925,9 @@ fn sys_frecpe_4s() {
 }
 #[test]
 fn sys_frecps_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frecps_4s") {
+        return;
+    }
     verify(
         "frecps.4s v2, v3, v4",
         Inst::FrecpsV4S {
@@ -3096,6 +3939,9 @@ fn sys_frecps_4s() {
 }
 #[test]
 fn sys_frsqrte_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frsqrte_4s") {
+        return;
+    }
     verify(
         "frsqrte.4s v5, v6",
         Inst::FrsqrteV4S {
@@ -3106,6 +3952,9 @@ fn sys_frsqrte_4s() {
 }
 #[test]
 fn sys_frsqrts_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frsqrts_4s") {
+        return;
+    }
     verify(
         "frsqrts.4s v7, v8, v9",
         Inst::FrsqrtsV4S {
@@ -3117,6 +3966,9 @@ fn sys_frsqrts_4s() {
 }
 #[test]
 fn sys_frintn_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frintn_4s") {
+        return;
+    }
     verify(
         "frintn.4s v0, v1",
         Inst::FrintnV4S {
@@ -3127,6 +3979,9 @@ fn sys_frintn_4s() {
 }
 #[test]
 fn sys_frintm_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frintm_4s") {
+        return;
+    }
     verify(
         "frintm.4s v2, v3",
         Inst::FrintmV4S {
@@ -3137,6 +3992,9 @@ fn sys_frintm_4s() {
 }
 #[test]
 fn sys_frintp_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frintp_4s") {
+        return;
+    }
     verify(
         "frintp.4s v4, v5",
         Inst::FrintpV4S {
@@ -3147,6 +4005,9 @@ fn sys_frintp_4s() {
 }
 #[test]
 fn sys_frintz_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frintz_4s") {
+        return;
+    }
     verify(
         "frintz.4s v6, v7",
         Inst::FrintzV4S {
@@ -3157,6 +4018,9 @@ fn sys_frintz_4s() {
 }
 #[test]
 fn sys_frinta_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frinta_4s") {
+        return;
+    }
     verify(
         "frinta.4s v0, v1",
         Inst::FrintaV4S {
@@ -3167,6 +4031,9 @@ fn sys_frinta_4s() {
 }
 #[test]
 fn sys_frinti_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_frinti_4s") {
+        return;
+    }
     verify(
         "frinti.4s v2, v3",
         Inst::FrintiV4S {
@@ -3177,6 +4044,9 @@ fn sys_frinti_4s() {
 }
 #[test]
 fn sys_and_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_and_16b") {
+        return;
+    }
     verify(
         "and.16b v6, v7, v8",
         Inst::AndV16B {
@@ -3188,6 +4058,9 @@ fn sys_and_16b() {
 }
 #[test]
 fn sys_bif_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_bif_16b") {
+        return;
+    }
     verify(
         "bif.16b v0, v1, v2",
         Inst::BifV16B {
@@ -3199,6 +4072,9 @@ fn sys_bif_16b() {
 }
 #[test]
 fn sys_bit_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_bit_16b") {
+        return;
+    }
     verify(
         "bit.16b v3, v4, v5",
         Inst::BitV16B {
@@ -3210,6 +4086,9 @@ fn sys_bit_16b() {
 }
 #[test]
 fn sys_bic_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_bic_16b") {
+        return;
+    }
     verify(
         "bic.16b v5, v6, v7",
         Inst::BicV16B {
@@ -3221,6 +4100,9 @@ fn sys_bic_16b() {
 }
 #[test]
 fn sys_bsl_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_bsl_16b") {
+        return;
+    }
     verify(
         "bsl.16b v6, v7, v8",
         Inst::BslV16B {
@@ -3232,6 +4114,9 @@ fn sys_bsl_16b() {
 }
 #[test]
 fn sys_cmeq_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_cmeq_4s") {
+        return;
+    }
     verify(
         "cmeq.4s v0, v0, v1",
         Inst::CmeqV4S {
@@ -3243,6 +4128,9 @@ fn sys_cmeq_4s() {
 }
 #[test]
 fn sys_fcmeq_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmeq_4s") {
+        return;
+    }
     verify(
         "fcmeq.4s v0, v1, v2",
         Inst::FcmeqV4S {
@@ -3254,6 +4142,9 @@ fn sys_fcmeq_4s() {
 }
 #[test]
 fn sys_fcmeq_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmeq_2d") {
+        return;
+    }
     verify(
         "fcmeq.2d v0, v1, v2",
         Inst::FcmeqV2D {
@@ -3265,6 +4156,9 @@ fn sys_fcmeq_2d() {
 }
 #[test]
 fn sys_cmhs_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_cmhs_4s") {
+        return;
+    }
     verify(
         "cmhs.4s v0, v0, v1",
         Inst::CmhsV4S {
@@ -3276,6 +4170,9 @@ fn sys_cmhs_4s() {
 }
 #[test]
 fn sys_cmhi_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_cmhi_4s") {
+        return;
+    }
     verify(
         "cmhi.4s v2, v3, v4",
         Inst::CmhiV4S {
@@ -3287,6 +4184,9 @@ fn sys_cmhi_4s() {
 }
 #[test]
 fn sys_cmge_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_cmge_4s") {
+        return;
+    }
     verify(
         "cmge.4s v5, v6, v7",
         Inst::CmgeV4S {
@@ -3298,6 +4198,9 @@ fn sys_cmge_4s() {
 }
 #[test]
 fn sys_fcmge_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmge_4s") {
+        return;
+    }
     verify(
         "fcmge.4s v3, v4, v5",
         Inst::FcmgeV4S {
@@ -3309,6 +4212,9 @@ fn sys_fcmge_4s() {
 }
 #[test]
 fn sys_fcmge_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmge_2d") {
+        return;
+    }
     verify(
         "fcmge.2d v3, v4, v5",
         Inst::FcmgeV2D {
@@ -3320,6 +4226,9 @@ fn sys_fcmge_2d() {
 }
 #[test]
 fn sys_cmgt_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_cmgt_4s") {
+        return;
+    }
     verify(
         "cmgt.4s v2, v3, v4",
         Inst::CmgtV4S {
@@ -3331,6 +4240,9 @@ fn sys_cmgt_4s() {
 }
 #[test]
 fn sys_fcmgt_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmgt_4s") {
+        return;
+    }
     verify(
         "fcmgt.4s v6, v7, v8",
         Inst::FcmgtV4S {
@@ -3342,6 +4254,9 @@ fn sys_fcmgt_4s() {
 }
 #[test]
 fn sys_fcmgt_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmgt_2d") {
+        return;
+    }
     verify(
         "fcmgt.2d v6, v7, v8",
         Inst::FcmgtV2D {
@@ -3353,6 +4268,9 @@ fn sys_fcmgt_2d() {
 }
 #[test]
 fn sys_fcmge_2d_zero() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmge_2d_zero") {
+        return;
+    }
     verify(
         "fcmge.2d v0, v0, #0.0",
         Inst::FcmgeZeroV2D {
@@ -3363,6 +4281,9 @@ fn sys_fcmge_2d_zero() {
 }
 #[test]
 fn sys_fcmgt_2d_zero() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmgt_2d_zero") {
+        return;
+    }
     verify(
         "fcmgt.2d v1, v1, #0.0",
         Inst::FcmgtZeroV2D {
@@ -3373,6 +4294,9 @@ fn sys_fcmgt_2d_zero() {
 }
 #[test]
 fn sys_fcmle_2d_zero() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmle_2d_zero") {
+        return;
+    }
     verify(
         "fcmle.2d v2, v2, #0.0",
         Inst::FcmleZeroV2D {
@@ -3383,6 +4307,9 @@ fn sys_fcmle_2d_zero() {
 }
 #[test]
 fn sys_fcmlt_2d_zero() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmlt_2d_zero") {
+        return;
+    }
     verify(
         "fcmlt.2d v3, v3, #0.0",
         Inst::FcmltZeroV2D {
@@ -3393,6 +4320,9 @@ fn sys_fcmlt_2d_zero() {
 }
 #[test]
 fn sys_orr_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_orr_16b") {
+        return;
+    }
     verify(
         "orr.16b v9, v10, v11",
         Inst::OrrV16B {
@@ -3404,6 +4334,9 @@ fn sys_orr_16b() {
 }
 #[test]
 fn sys_eor_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_eor_16b") {
+        return;
+    }
     verify(
         "eor.16b v12, v13, v14",
         Inst::EorV16B {
@@ -3415,6 +4348,9 @@ fn sys_eor_16b() {
 }
 #[test]
 fn sys_ext_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_ext_16b") {
+        return;
+    }
     verify(
         "ext.16b v0, v0, v0, #8",
         Inst::ExtV16B {
@@ -3427,6 +4363,9 @@ fn sys_ext_16b() {
 }
 #[test]
 fn sys_rev64_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_rev64_4s") {
+        return;
+    }
     verify(
         "rev64.4s v1, v2",
         Inst::Rev64V4S {
@@ -3437,6 +4376,9 @@ fn sys_rev64_4s() {
 }
 #[test]
 fn sys_zip1_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_zip1_4s") {
+        return;
+    }
     verify(
         "zip1.4s v0, v0, v1",
         Inst::Zip1V4S {
@@ -3448,6 +4390,9 @@ fn sys_zip1_4s() {
 }
 #[test]
 fn sys_zip1_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_zip1_2d") {
+        return;
+    }
     verify(
         "zip1.2d v0, v1, v2",
         Inst::Zip1V2D {
@@ -3459,6 +4404,9 @@ fn sys_zip1_2d() {
 }
 #[test]
 fn sys_zip2_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_zip2_4s") {
+        return;
+    }
     verify(
         "zip2.4s v2, v3, v4",
         Inst::Zip2V4S {
@@ -3470,6 +4418,9 @@ fn sys_zip2_4s() {
 }
 #[test]
 fn sys_zip2_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_zip2_2d") {
+        return;
+    }
     verify(
         "zip2.2d v3, v4, v5",
         Inst::Zip2V2D {
@@ -3481,6 +4432,9 @@ fn sys_zip2_2d() {
 }
 #[test]
 fn sys_uzp1_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_uzp1_4s") {
+        return;
+    }
     verify(
         "uzp1.4s v5, v6, v7",
         Inst::Uzp1V4S {
@@ -3492,6 +4446,9 @@ fn sys_uzp1_4s() {
 }
 #[test]
 fn sys_uzp1_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_uzp1_2d") {
+        return;
+    }
     verify(
         "uzp1.2d v6, v7, v8",
         Inst::Uzp1V2D {
@@ -3503,6 +4460,9 @@ fn sys_uzp1_2d() {
 }
 #[test]
 fn sys_uzp2_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_uzp2_4s") {
+        return;
+    }
     verify(
         "uzp2.4s v8, v9, v10",
         Inst::Uzp2V4S {
@@ -3514,6 +4474,9 @@ fn sys_uzp2_4s() {
 }
 #[test]
 fn sys_uzp2_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_uzp2_2d") {
+        return;
+    }
     verify(
         "uzp2.2d v9, v10, v11",
         Inst::Uzp2V2D {
@@ -3525,6 +4488,9 @@ fn sys_uzp2_2d() {
 }
 #[test]
 fn sys_trn1_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_trn1_4s") {
+        return;
+    }
     verify(
         "trn1.4s v11, v12, v13",
         Inst::Trn1V4S {
@@ -3536,6 +4502,9 @@ fn sys_trn1_4s() {
 }
 #[test]
 fn sys_trn1_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_trn1_2d") {
+        return;
+    }
     verify(
         "trn1.2d v12, v13, v14",
         Inst::Trn1V2D {
@@ -3547,6 +4516,9 @@ fn sys_trn1_2d() {
 }
 #[test]
 fn sys_trn2_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_trn2_4s") {
+        return;
+    }
     verify(
         "trn2.4s v3, v4, v5",
         Inst::Trn2V4S {
@@ -3558,6 +4530,9 @@ fn sys_trn2_4s() {
 }
 #[test]
 fn sys_trn2_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_trn2_2d") {
+        return;
+    }
     verify(
         "trn2.2d v15, v16, v17",
         Inst::Trn2V2D {
@@ -3569,6 +4544,9 @@ fn sys_trn2_2d() {
 }
 #[test]
 fn sys_tbl_16b_single() {
+    if !native_macho_host("verify_against_system_as", "sys_tbl_16b_single") {
+        return;
+    }
     verify(
         "tbl.16b v0, { v1 }, v2",
         Inst::TblV16B {
@@ -3581,6 +4559,9 @@ fn sys_tbl_16b_single() {
 }
 #[test]
 fn sys_tbl_16b_pair() {
+    if !native_macho_host("verify_against_system_as", "sys_tbl_16b_pair") {
+        return;
+    }
     verify(
         "tbl.16b v3, { v4, v5 }, v6",
         Inst::TblV16B {
@@ -3593,6 +4574,9 @@ fn sys_tbl_16b_pair() {
 }
 #[test]
 fn sys_tbl_16b_triple() {
+    if !native_macho_host("verify_against_system_as", "sys_tbl_16b_triple") {
+        return;
+    }
     verify(
         "tbl.16b v7, { v8, v9, v10 }, v11",
         Inst::TblV16B {
@@ -3605,6 +4589,9 @@ fn sys_tbl_16b_triple() {
 }
 #[test]
 fn sys_tbl_16b_quad() {
+    if !native_macho_host("verify_against_system_as", "sys_tbl_16b_quad") {
+        return;
+    }
     verify(
         "tbl.16b v12, { v13, v14, v15, v16 }, v17",
         Inst::TblV16B {
@@ -3617,6 +4604,9 @@ fn sys_tbl_16b_quad() {
 }
 #[test]
 fn sys_tbx_16b_single() {
+    if !native_macho_host("verify_against_system_as", "sys_tbx_16b_single") {
+        return;
+    }
     verify(
         "tbx.16b v18, { v19 }, v20",
         Inst::TbxV16B {
@@ -3629,6 +4619,9 @@ fn sys_tbx_16b_single() {
 }
 #[test]
 fn sys_tbx_16b_pair() {
+    if !native_macho_host("verify_against_system_as", "sys_tbx_16b_pair") {
+        return;
+    }
     verify(
         "tbx.16b v21, { v22, v23 }, v24",
         Inst::TbxV16B {
@@ -3641,6 +4634,9 @@ fn sys_tbx_16b_pair() {
 }
 #[test]
 fn sys_mov_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_16b") {
+        return;
+    }
     verify(
         "mov.16b v0, v2",
         Inst::MovV16B {
@@ -3651,6 +4647,9 @@ fn sys_mov_16b() {
 }
 #[test]
 fn sys_mov_8b() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_8b") {
+        return;
+    }
     verify(
         "mov.8b v1, v3",
         Inst::MovV8B {
@@ -3661,6 +4660,9 @@ fn sys_mov_8b() {
 }
 #[test]
 fn sys_mov_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_4s") {
+        return;
+    }
     verify(
         "mov.4s v4, v5",
         Inst::MovV4S {
@@ -3671,6 +4673,9 @@ fn sys_mov_4s() {
 }
 #[test]
 fn sys_mov_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_2d") {
+        return;
+    }
     verify(
         "mov.2d v6, v7",
         Inst::MovV2D {
@@ -3681,22 +4686,37 @@ fn sys_mov_2d() {
 }
 #[test]
 fn sys_fmov_reg_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmov_reg_s") {
+        return;
+    }
     verify("fmov s1, s2", Inst::FmovRegS { rd: S1, rn: S2 });
 }
 #[test]
 fn sys_fmov_reg_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmov_reg_d") {
+        return;
+    }
     verify("fmov d1, d2", Inst::FmovRegD { rd: D1, rn: D2 });
 }
 #[test]
 fn sys_fmov_to_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmov_to_s") {
+        return;
+    }
     verify("fmov s0, w1", Inst::FmovToS { rd: S0, rn: W1 });
 }
 #[test]
 fn sys_fmov_from_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmov_from_s") {
+        return;
+    }
     verify("fmov w0, s1", Inst::FmovFromS { rd: W0, rn: S1 });
 }
 #[test]
 fn sys_mov_from_lane_s() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_from_lane_s") {
+        return;
+    }
     verify(
         "mov s0, v1[2]",
         Inst::MovFromLaneS {
@@ -3708,6 +4728,9 @@ fn sys_mov_from_lane_s() {
 }
 #[test]
 fn sys_mov_from_lane_d() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_from_lane_d") {
+        return;
+    }
     verify(
         "mov d3, v4[1]",
         Inst::MovFromLaneD {
@@ -3719,6 +4742,9 @@ fn sys_mov_from_lane_d() {
 }
 #[test]
 fn sys_mov_lane_s() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_lane_s") {
+        return;
+    }
     verify(
         "mov.s v5[0], v6[0]",
         Inst::MovLaneS {
@@ -3731,6 +4757,9 @@ fn sys_mov_lane_s() {
 }
 #[test]
 fn sys_mov_lane_d() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_lane_d") {
+        return;
+    }
     verify(
         "mov.d v7[1], v8[1]",
         Inst::MovLaneD {
@@ -3743,6 +4772,9 @@ fn sys_mov_lane_d() {
 }
 #[test]
 fn sys_mov_lane_h() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_lane_h") {
+        return;
+    }
     verify(
         "mov.h v0[5], v1[0]",
         Inst::MovLaneH {
@@ -3755,6 +4787,9 @@ fn sys_mov_lane_h() {
 }
 #[test]
 fn sys_mov_lane_b() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_lane_b") {
+        return;
+    }
     verify(
         "mov.b v0[7], v1[0]",
         Inst::MovLaneB {
@@ -3767,6 +4802,9 @@ fn sys_mov_lane_b() {
 }
 #[test]
 fn sys_mov_from_lane_gp_s() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_from_lane_gp_s") {
+        return;
+    }
     verify(
         "mov.s w0, v1[2]",
         Inst::MovFromLaneGpS {
@@ -3778,6 +4816,9 @@ fn sys_mov_from_lane_gp_s() {
 }
 #[test]
 fn sys_mov_from_lane_gp_d() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_from_lane_gp_d") {
+        return;
+    }
     verify(
         "mov.d x0, v1[1]",
         Inst::MovFromLaneGpD {
@@ -3789,6 +4830,9 @@ fn sys_mov_from_lane_gp_d() {
 }
 #[test]
 fn sys_umov_h() {
+    if !native_macho_host("verify_against_system_as", "sys_umov_h") {
+        return;
+    }
     verify(
         "umov.h w1, v2[5]",
         Inst::UmovFromLaneH {
@@ -3800,6 +4844,9 @@ fn sys_umov_h() {
 }
 #[test]
 fn sys_umov_b() {
+    if !native_macho_host("verify_against_system_as", "sys_umov_b") {
+        return;
+    }
     verify(
         "umov.b w3, v4[7]",
         Inst::UmovFromLaneB {
@@ -3811,6 +4858,9 @@ fn sys_umov_b() {
 }
 #[test]
 fn sys_smov_h() {
+    if !native_macho_host("verify_against_system_as", "sys_smov_h") {
+        return;
+    }
     verify(
         "smov.h w1, v2[3]",
         Inst::SmovFromLaneH {
@@ -3822,6 +4872,9 @@ fn sys_smov_h() {
 }
 #[test]
 fn sys_smov_b() {
+    if !native_macho_host("verify_against_system_as", "sys_smov_b") {
+        return;
+    }
     verify(
         "smov.b w0, v0[0]",
         Inst::SmovFromLaneB {
@@ -3833,6 +4886,9 @@ fn sys_smov_b() {
 }
 #[test]
 fn sys_mov_lane_from_gp_s() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_lane_from_gp_s") {
+        return;
+    }
     verify(
         "mov.s v5[1], w6",
         Inst::MovLaneFromGpS {
@@ -3844,6 +4900,9 @@ fn sys_mov_lane_from_gp_s() {
 }
 #[test]
 fn sys_mov_lane_from_gp_d() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_lane_from_gp_d") {
+        return;
+    }
     verify(
         "mov.d v0[1], x1",
         Inst::MovLaneFromGpD {
@@ -3855,6 +4914,9 @@ fn sys_mov_lane_from_gp_d() {
 }
 #[test]
 fn sys_mov_lane_from_gp_h() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_lane_from_gp_h") {
+        return;
+    }
     verify(
         "mov.h v7[5], w8",
         Inst::MovLaneFromGpH {
@@ -3866,6 +4928,9 @@ fn sys_mov_lane_from_gp_h() {
 }
 #[test]
 fn sys_mov_lane_from_gp_b() {
+    if !native_macho_host("verify_against_system_as", "sys_mov_lane_from_gp_b") {
+        return;
+    }
     verify(
         "mov.b v9[7], w10",
         Inst::MovLaneFromGpB {
@@ -3877,6 +4942,9 @@ fn sys_mov_lane_from_gp_b() {
 }
 #[test]
 fn sys_dup_16b() {
+    if !native_macho_host("verify_against_system_as", "sys_dup_16b") {
+        return;
+    }
     verify(
         "dup.16b v0, v1[15]",
         Inst::DupV16B {
@@ -3888,6 +4956,9 @@ fn sys_dup_16b() {
 }
 #[test]
 fn sys_dup_8h() {
+    if !native_macho_host("verify_against_system_as", "sys_dup_8h") {
+        return;
+    }
     verify(
         "dup.8h v1, v2[5]",
         Inst::DupV8H {
@@ -3899,6 +4970,9 @@ fn sys_dup_8h() {
 }
 #[test]
 fn sys_dup_4s() {
+    if !native_macho_host("verify_against_system_as", "sys_dup_4s") {
+        return;
+    }
     verify(
         "dup.4s v3, v4[2]",
         Inst::DupV4S {
@@ -3910,6 +4984,9 @@ fn sys_dup_4s() {
 }
 #[test]
 fn sys_dup_2d() {
+    if !native_macho_host("verify_against_system_as", "sys_dup_2d") {
+        return;
+    }
     verify(
         "dup.2d v5, v6[1]",
         Inst::DupV2D {
@@ -3921,26 +4998,44 @@ fn sys_dup_2d() {
 }
 #[test]
 fn sys_fneg_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fneg_d") {
+        return;
+    }
     verify("fneg d3, d4", Inst::FnegD { rd: D3, rn: D4 });
 }
 #[test]
 fn sys_fabs_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fabs_d") {
+        return;
+    }
     verify("fabs d3, d4", Inst::FabsD { rd: D3, rn: D4 });
 }
 #[test]
 fn sys_fsqrt_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fsqrt_d") {
+        return;
+    }
     verify("fsqrt d3, d4", Inst::FsqrtD { rd: D3, rn: D4 });
 }
 #[test]
 fn sys_fcmp_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fcmp_d") {
+        return;
+    }
     verify("fcmp d3, d4", Inst::FcmpD { rn: D3, rm: D4 });
 }
 #[test]
 fn sys_fmov_imm_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmov_imm_d") {
+        return;
+    }
     verify("fmov d2, #3.50000000", Inst::FmovImmD { rd: D2, imm8: 12 });
 }
 #[test]
 fn sys_fcsel_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fcsel_d") {
+        return;
+    }
     verify(
         "fcsel d0, d0, d1, mi",
         Inst::FcselD {
@@ -3953,6 +5048,9 @@ fn sys_fcsel_d() {
 }
 #[test]
 fn sys_fmadd_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmadd_d") {
+        return;
+    }
     verify(
         "fmadd d0, d1, d2, d3",
         Inst::FmaddD {
@@ -3968,26 +5066,44 @@ fn sys_fmadd_d() {
 
 #[test]
 fn sys_fcvtzs() {
+    if !native_macho_host("verify_against_system_as", "sys_fcvtzs") {
+        return;
+    }
     verify("fcvtzs x5, d6", Inst::FcvtzsD { rd: X5, rn: D6 });
 }
 #[test]
 fn sys_scvtf() {
+    if !native_macho_host("verify_against_system_as", "sys_scvtf") {
+        return;
+    }
     verify("scvtf d5, x6", Inst::ScvtfD { rd: D5, rn: X6 });
 }
 #[test]
 fn sys_fmov_to() {
+    if !native_macho_host("verify_against_system_as", "sys_fmov_to") {
+        return;
+    }
     verify("fmov d5, x6", Inst::FmovToD { rd: D5, rn: X6 });
 }
 #[test]
 fn sys_fmov_from() {
+    if !native_macho_host("verify_against_system_as", "sys_fmov_from") {
+        return;
+    }
     verify("fmov x5, d6", Inst::FmovFromD { rd: X5, rn: D6 });
 }
 #[test]
 fn sys_fmov_imm_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmov_imm_s") {
+        return;
+    }
     verify("fmov s2, #3.50000000", Inst::FmovImmS { rd: S2, imm8: 12 });
 }
 #[test]
 fn sys_fcsel_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fcsel_s") {
+        return;
+    }
     verify(
         "fcsel s0, s0, s1, mi",
         Inst::FcselS {
@@ -4003,34 +5119,58 @@ fn sys_fcsel_s() {
 
 #[test]
 fn sys_svc() {
+    if !native_macho_host("verify_against_system_as", "sys_svc") {
+        return;
+    }
     verify("svc #0x80", Inst::Svc { imm16: 0x80 });
 }
 #[test]
 fn sys_nop() {
+    if !native_macho_host("verify_against_system_as", "sys_nop") {
+        return;
+    }
     verify("nop", Inst::Nop);
 }
 #[test]
 fn sys_yield() {
+    if !native_macho_host("verify_against_system_as", "sys_yield") {
+        return;
+    }
     verify("yield", Inst::Yield);
 }
 #[test]
 fn sys_wfe() {
+    if !native_macho_host("verify_against_system_as", "sys_wfe") {
+        return;
+    }
     verify("wfe", Inst::Wfe);
 }
 #[test]
 fn sys_wfi() {
+    if !native_macho_host("verify_against_system_as", "sys_wfi") {
+        return;
+    }
     verify("wfi", Inst::Wfi);
 }
 #[test]
 fn sys_sev() {
+    if !native_macho_host("verify_against_system_as", "sys_sev") {
+        return;
+    }
     verify("sev", Inst::Sev);
 }
 #[test]
 fn sys_sevl() {
+    if !native_macho_host("verify_against_system_as", "sys_sevl") {
+        return;
+    }
     verify("sevl", Inst::Sevl);
 }
 #[test]
 fn sys_isb() {
+    if !native_macho_host("verify_against_system_as", "sys_isb") {
+        return;
+    }
     verify(
         "isb",
         Inst::Isb {
@@ -4040,6 +5180,9 @@ fn sys_isb() {
 }
 #[test]
 fn sys_dmb_ish() {
+    if !native_macho_host("verify_against_system_as", "sys_dmb_ish") {
+        return;
+    }
     verify(
         "dmb ish",
         Inst::Dmb {
@@ -4049,6 +5192,9 @@ fn sys_dmb_ish() {
 }
 #[test]
 fn sys_dsb_ishst() {
+    if !native_macho_host("verify_against_system_as", "sys_dsb_ishst") {
+        return;
+    }
     verify(
         "dsb ishst",
         Inst::Dsb {
@@ -4058,5 +5204,8 @@ fn sys_dsb_ishst() {
 }
 #[test]
 fn sys_brk() {
+    if !native_macho_host("verify_against_system_as", "sys_brk") {
+        return;
+    }
     verify("brk #42", Inst::Brk { imm16: 42 });
 }

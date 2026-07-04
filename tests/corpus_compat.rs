@@ -14,6 +14,9 @@ fn assemble_fixture(name: &str) -> common::TempPaths {
 
 #[test]
 fn corpus_hello_world_matches_text_bytes_and_runs() {
+    if !common::native_macho_host("corpus_compat", "corpus_hello_world_matches_text_bytes_and_runs") {
+        return;
+    }
     let paths = assemble_fixture("hello_world.s");
 
     assert_eq!(
@@ -37,6 +40,9 @@ fn corpus_hello_world_matches_text_bytes_and_runs() {
 
 #[test]
 fn corpus_local_branches_match_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_local_branches_match_text_bytes") {
+        return;
+    }
     let paths = assemble_fixture("local_branches.s");
     assert_eq!(
         common::object_text_bytes(&paths.obj),
@@ -46,6 +52,9 @@ fn corpus_local_branches_match_text_bytes() {
 
 #[test]
 fn corpus_numeric_local_labels_match_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_numeric_local_labels_match_text_bytes") {
+        return;
+    }
     let paths = assemble_fixture("numeric_local_labels.s");
     assert_eq!(
         common::object_text_bytes(&paths.obj),
@@ -55,6 +64,9 @@ fn corpus_numeric_local_labels_match_text_bytes() {
 
 #[test]
 fn corpus_addressing_surface_matches_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_addressing_surface_matches_text_bytes") {
+        return;
+    }
     let paths = assemble_fixture("addressing_surface.s");
     assert_eq!(
         common::object_text_bytes(&paths.obj),
@@ -64,6 +76,9 @@ fn corpus_addressing_surface_matches_text_bytes() {
 
 #[test]
 fn corpus_fp_load_store_surface_matches_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_fp_load_store_surface_matches_text_bytes") {
+        return;
+    }
     let paths = assemble_fixture("fp_load_store_surface.s");
     assert_eq!(
         common::object_text_bytes(&paths.obj),
@@ -73,6 +88,9 @@ fn corpus_fp_load_store_surface_matches_text_bytes() {
 
 #[test]
 fn corpus_fp_pair_surface_matches_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_fp_pair_surface_matches_text_bytes") {
+        return;
+    }
     let paths = assemble_fixture("fp_pair_surface.s");
     assert_eq!(
         common::object_text_bytes(&paths.obj),
@@ -82,6 +100,9 @@ fn corpus_fp_pair_surface_matches_text_bytes() {
 
 #[test]
 fn corpus_system_hints_matches_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_system_hints_matches_text_bytes") {
+        return;
+    }
     let paths = assemble_fixture("system_hints.s");
     assert_eq!(
         common::object_text_bytes(&paths.obj),
@@ -91,6 +112,9 @@ fn corpus_system_hints_matches_text_bytes() {
 
 #[test]
 fn corpus_branch_address_surface_matches_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_branch_address_surface_matches_text_bytes") {
+        return;
+    }
     let paths = assemble_fixture("branch_address_surface.s");
     assert_eq!(
         common::object_text_bytes(&paths.obj),
@@ -100,6 +124,9 @@ fn corpus_branch_address_surface_matches_text_bytes() {
 
 #[test]
 fn corpus_numeric_local_labels_match_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_numeric_local_labels_match_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("numeric_local_labels.s");
     assert_eq!(
         common::object_symbols_preserve_order(&paths.obj),
@@ -113,6 +140,9 @@ fn corpus_numeric_local_labels_match_raw_object() {
 
 #[test]
 fn corpus_branch_address_surface_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_branch_address_surface_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("branch_address_surface.s");
     assert_eq!(
         common::object_symbols_preserve_order(&paths.obj),
@@ -126,6 +156,9 @@ fn corpus_branch_address_surface_matches_raw_object() {
 
 #[test]
 fn corpus_fp_load_store_surface_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_fp_load_store_surface_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("fp_load_store_surface.s");
     assert_eq!(
         common::object_symbols_preserve_order(&paths.obj),
@@ -139,6 +172,9 @@ fn corpus_fp_load_store_surface_matches_raw_object() {
 
 #[test]
 fn corpus_clang_literal_addr_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_clang_literal_addr_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("clang_literal_addr.s");
     assert_eq!(
         normalize_tool_output(&common::object_load_commands(&paths.obj)),
@@ -156,6 +192,9 @@ fn corpus_clang_literal_addr_matches_raw_object() {
 
 #[test]
 fn corpus_clang_fp_spill_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_clang_fp_spill_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("clang_fp_spill.s");
     assert_eq!(
         common::object_symbols_preserve_order(&paths.obj),
@@ -169,6 +208,9 @@ fn corpus_clang_fp_spill_matches_raw_object() {
 
 #[test]
 fn corpus_clang_extern_call_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_clang_extern_call_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("clang_extern_call.s");
     assert_eq!(
         normalize_tool_output(&common::object_load_commands(&paths.obj)),
@@ -186,6 +228,9 @@ fn corpus_clang_extern_call_matches_raw_object() {
 
 #[test]
 fn corpus_clang_local_branch_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_clang_local_branch_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("clang_local_branch.s");
     assert_eq!(
         normalize_tool_output(&common::object_load_commands(&paths.obj)),
@@ -203,6 +248,9 @@ fn corpus_clang_local_branch_matches_raw_object() {
 
 #[test]
 fn corpus_clang_got_load_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_clang_got_load_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("clang_got_load.s");
     assert_eq!(
         normalize_tool_output(&common::object_load_commands(&paths.obj)),
@@ -224,6 +272,9 @@ fn corpus_clang_got_load_matches_raw_object() {
 
 #[test]
 fn corpus_clang_tlvp_load_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_clang_tlvp_load_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("clang_tlvp_load.s");
     assert_eq!(
         normalize_tool_output(&common::object_load_commands(&paths.obj)),
@@ -245,6 +296,9 @@ fn corpus_clang_tlvp_load_matches_raw_object() {
 
 #[test]
 fn corpus_got_pointer_data_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_got_pointer_data_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("got_pointer_data.s");
     assert_eq!(
         normalize_tool_output(&common::object_relocations(&paths.obj)),
@@ -262,6 +316,9 @@ fn corpus_got_pointer_data_matches_raw_object() {
 
 #[test]
 fn corpus_got_pointer_data_links_relocatable_with_support() {
+    if !common::native_macho_host("corpus_compat", "corpus_got_pointer_data_links_relocatable_with_support") {
+        return;
+    }
     let paths = assemble_fixture("got_pointer_data.s");
     let root = paths.asm.parent().expect("temp root");
     let support = root.join("link-support.o");
@@ -280,6 +337,9 @@ fn corpus_got_pointer_data_links_relocatable_with_support() {
 
 #[test]
 fn corpus_addend_relocs_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_addend_relocs_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("addend_relocs.s");
     assert_eq!(
         normalize_tool_output(&common::object_relocations(&paths.obj)),
@@ -297,6 +357,9 @@ fn corpus_addend_relocs_matches_raw_object() {
 
 #[test]
 fn corpus_shifted_addsub_matches_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_shifted_addsub_matches_text_bytes") {
+        return;
+    }
     let paths = assemble_fixture("shifted_addsub.s");
     assert_eq!(
         common::object_text_bytes(&paths.obj),
@@ -306,6 +369,9 @@ fn corpus_shifted_addsub_matches_text_bytes() {
 
 #[test]
 fn corpus_extended_addsub_matches_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_extended_addsub_matches_text_bytes") {
+        return;
+    }
     let paths = assemble_fixture("extended_addsub.s");
     assert_eq!(
         common::object_text_bytes(&paths.obj),
@@ -315,6 +381,9 @@ fn corpus_extended_addsub_matches_text_bytes() {
 
 #[test]
 fn corpus_conditional_select_surface_matches_raw_object() {
+    if !common::native_macho_host("corpus_compat", "corpus_conditional_select_surface_matches_raw_object") {
+        return;
+    }
     let paths = assemble_fixture("conditional_select_surface.s");
     assert_eq!(
         common::object_symbols_preserve_order(&paths.obj),
@@ -328,6 +397,9 @@ fn corpus_conditional_select_surface_matches_raw_object() {
 
 #[test]
 fn corpus_external_call_matches_relocations_and_symbols() {
+    if !common::native_macho_host("corpus_compat", "corpus_external_call_matches_relocations_and_symbols") {
+        return;
+    }
     let paths = assemble_fixture("external_call.s");
 
     let ours_relocs = common::object_relocations(&paths.obj);
@@ -363,6 +435,9 @@ fn corpus_external_call_matches_relocations_and_symbols() {
 
 #[test]
 fn corpus_external_branches_match_relocations_and_symbols() {
+    if !common::native_macho_host("corpus_compat", "corpus_external_branches_match_relocations_and_symbols") {
+        return;
+    }
     let paths = assemble_fixture("external_branches.s");
 
     let ours_relocs = common::object_relocations(&paths.obj);
@@ -398,6 +473,9 @@ fn corpus_external_branches_match_relocations_and_symbols() {
 
 #[test]
 fn corpus_external_branches_link_relocatable_with_support() {
+    if !common::native_macho_host("corpus_compat", "corpus_external_branches_link_relocatable_with_support") {
+        return;
+    }
     let paths = assemble_fixture("external_branches.s");
     let root = paths.asm.parent().expect("temp root");
     let support = root.join("link-support.o");
@@ -416,12 +494,18 @@ fn corpus_external_branches_link_relocatable_with_support() {
 
 #[test]
 fn fixture_paths_are_resolved_from_corpus_directory() {
+    if !common::native_macho_host("corpus_compat", "fixture_paths_are_resolved_from_corpus_directory") {
+        return;
+    }
     let path = common::fixture_path("hello_world.s");
     assert!(path.ends_with("tests/corpus/hello_world.s"));
 }
 
 #[test]
 fn corpus_cstring_section_matches_load_commands_and_symbols() {
+    if !common::native_macho_host("corpus_compat", "corpus_cstring_section_matches_load_commands_and_symbols") {
+        return;
+    }
     let paths = assemble_fixture("cstring_data.s");
 
     let ours_load = common::object_load_commands(&paths.obj);
@@ -452,6 +536,9 @@ fn corpus_cstring_section_matches_load_commands_and_symbols() {
 
 #[test]
 fn corpus_section_inventory_matches_load_commands_and_symbols() {
+    if !common::native_macho_host("corpus_compat", "corpus_section_inventory_matches_load_commands_and_symbols") {
+        return;
+    }
     let paths = assemble_fixture("section_inventory.s");
 
     let ours_load = common::object_load_commands(&paths.obj);
@@ -497,6 +584,9 @@ fn corpus_section_inventory_matches_load_commands_and_symbols() {
 
 #[test]
 fn corpus_symbol_attributes_match_nm_output() {
+    if !common::native_macho_host("corpus_compat", "corpus_symbol_attributes_match_nm_output") {
+        return;
+    }
     let paths = assemble_fixture("symbol_attrs.s");
 
     let ours_symbols = common::object_symbols_verbose(&paths.obj);
@@ -526,6 +616,9 @@ fn corpus_symbol_attributes_match_nm_output() {
 
 #[test]
 fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
+    if !common::native_macho_host("corpus_compat", "corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols") {
+        return;
+    }
     let paths = assemble_fixture("macho_writer_mix.s");
 
     let ours_load = common::object_load_commands(&paths.obj);
@@ -624,6 +717,9 @@ fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
 
 #[test]
 fn corpus_macho_writer_mix_links_relocatable_with_support() {
+    if !common::native_macho_host("corpus_compat", "corpus_macho_writer_mix_links_relocatable_with_support") {
+        return;
+    }
     let paths = assemble_fixture("macho_writer_mix.s");
     let root = paths.asm.parent().expect("temp root");
     let support = root.join("link-support.o");
@@ -642,6 +738,9 @@ fn corpus_macho_writer_mix_links_relocatable_with_support() {
 
 #[test]
 fn corpus_string_suffixes_matches_string_table_layout() {
+    if !common::native_macho_host("corpus_compat", "corpus_string_suffixes_matches_string_table_layout") {
+        return;
+    }
     let paths = assemble_fixture("string_suffixes.s");
 
     assert_eq!(
@@ -664,6 +763,9 @@ fn corpus_string_suffixes_matches_string_table_layout() {
 
 #[test]
 fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
+    if !common::native_macho_host("corpus_compat", "corpus_expression_symbols_match_bytes_relocations_and_symbols") {
+        return;
+    }
     let paths = assemble_fixture("expression_symbols.s");
 
     let ours_text = common::object_text_bytes(&paths.obj);
@@ -689,6 +791,9 @@ fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
 
 #[test]
 fn corpus_expression_symbols_link_relocatable_with_support() {
+    if !common::native_macho_host("corpus_compat", "corpus_expression_symbols_link_relocatable_with_support") {
+        return;
+    }
     let paths = assemble_fixture("expression_symbols.s");
     let root = paths.asm.parent().expect("temp root");
     let support = root.join("link-support.o");
@@ -707,6 +812,9 @@ fn corpus_expression_symbols_link_relocatable_with_support() {
 
 #[test]
 fn corpus_storage_directives_match_bytes_sections_and_symbols() {
+    if !common::native_macho_host("corpus_compat", "corpus_storage_directives_match_bytes_sections_and_symbols") {
+        return;
+    }
     let paths = assemble_fixture("storage_directives.s");
 
     let ours_text = common::object_text_bytes(&paths.obj);
@@ -748,6 +856,9 @@ fn corpus_storage_directives_match_bytes_sections_and_symbols() {
 
 #[test]
 fn corpus_alignment_directives_match_text_data_and_section_alignment() {
+    if !common::native_macho_host("corpus_compat", "corpus_alignment_directives_match_text_data_and_section_alignment") {
+        return;
+    }
     let paths = assemble_fixture("alignment_directives.s");
 
     let ours_text = common::object_text_bytes(&paths.obj);
@@ -778,6 +889,9 @@ fn corpus_alignment_directives_match_text_data_and_section_alignment() {
 
 #[test]
 fn corpus_metadata_directives_match_header_and_load_commands() {
+    if !common::native_macho_host("corpus_compat", "corpus_metadata_directives_match_header_and_load_commands") {
+        return;
+    }
     let paths = assemble_fixture("metadata_directives.s");
 
     let ours_header = common::object_header(&paths.obj);
@@ -813,6 +927,9 @@ fn corpus_metadata_directives_match_header_and_load_commands() {
 
 #[test]
 fn corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations() {
+    if !common::native_macho_host("corpus_compat", "corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations") {
+        return;
+    }
     let paths = assemble_fixture("cfi_surface.s");
 
     let ours_text = common::object_text_bytes(&paths.obj);
@@ -846,6 +963,9 @@ fn corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations() {
 
 #[test]
 fn corpus_cfi_nostack_matches_load_commands_and_relocations() {
+    if !common::native_macho_host("corpus_compat", "corpus_cfi_nostack_matches_load_commands_and_relocations") {
+        return;
+    }
     let paths = assemble_fixture("cfi_nostack.s");
 
     let ours_text = common::object_text_bytes(&paths.obj);
@@ -868,6 +988,9 @@ fn corpus_cfi_nostack_matches_load_commands_and_relocations() {
 
 #[test]
 fn corpus_cfi_saved_pairs_matches_load_commands_and_relocations() {
+    if !common::native_macho_host("corpus_compat", "corpus_cfi_saved_pairs_matches_load_commands_and_relocations") {
+        return;
+    }
     let paths = assemble_fixture("cfi_saved_pairs.s");
 
     let ours_text = common::object_text_bytes(&paths.obj);
@@ -890,6 +1013,9 @@ fn corpus_cfi_saved_pairs_matches_load_commands_and_relocations() {
 
 #[test]
 fn corpus_cfi_dwarf_fallback_matches_load_commands_relocations_and_eh_frame() {
+    if !common::native_macho_host("corpus_compat", "corpus_cfi_dwarf_fallback_matches_load_commands_relocations_and_eh_frame") {
+        return;
+    }
     let paths = assemble_fixture("cfi_dwarf_fallback.s");
 
     let ours_text = common::object_text_bytes(&paths.obj);

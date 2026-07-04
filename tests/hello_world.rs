@@ -63,8 +63,26 @@ fn assemble_link_run(asm: &str) -> (i32, String) {
     (code, stdout)
 }
 
+
+/// Same policy as tests/common/corpus.rs::native_macho_host: this
+/// suite drives the macOS arm64 system toolchain; skip loudly on any
+/// other host.
+fn native_macho_host(suite: &str, test: &str) -> bool {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        return true;
+    }
+    eprintln!(
+        "\nHARNESS_SKIP suite={} test={} count=1 reason=\"needs a macOS arm64 host toolchain\"",
+        suite, test
+    );
+    false
+}
+
 #[test]
 fn hello_world() {
+    if !native_macho_host("hello_world", "hello_world") {
+        return;
+    }
     let (code, stdout) = assemble_link_run(
         "\
 .global _main
@@ -91,6 +109,9 @@ msg: .asciz \"Hello, World!\\n\"
 
 #[test]
 fn exit_code_42() {
+    if !native_macho_host("hello_world", "exit_code_42") {
+        return;
+    }
     let (code, _stdout) = assemble_link_run(
         "\
 .global _main
@@ -107,6 +128,9 @@ _main:
 
 #[test]
 fn exit_code_0() {
+    if !native_macho_host("hello_world", "exit_code_0") {
+        return;
+    }
     let (code, _stdout) = assemble_link_run(
         "\
 .global _main
@@ -123,6 +147,9 @@ _main:
 
 #[test]
 fn arithmetic_and_exit() {
+    if !native_macho_host("hello_world", "arithmetic_and_exit") {
+        return;
+    }
     // Compute 6 * 7 = 42, exit with that code.
     let (code, _stdout) = assemble_link_run(
         "\
@@ -142,6 +169,9 @@ _main:
 
 #[test]
 fn write_data_string() {
+    if !native_macho_host("hello_world", "write_data_string") {
+        return;
+    }
     let (code, stdout) = assemble_link_run(
         "\
 .global _main

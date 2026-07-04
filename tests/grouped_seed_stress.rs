@@ -313,6 +313,9 @@ fn assert_relocatable_parity(paths: &StressPaths, src: &str) {
 
 #[test]
 fn grouped_metadata_heavy_cases_match_system_as_and_link_relocatable() {
+    if !common::native_macho_host("grouped_seed_stress", "grouped_metadata_heavy_cases_match_system_as_and_link_relocatable") {
+        return;
+    }
     for seed in 1..=4u64 {
         let src = generate_metadata_heavy_case(seed);
         let paths = assert_raw_parity(&format!("afs_grouped_meta_{}", seed), &src);
@@ -322,6 +325,9 @@ fn grouped_metadata_heavy_cases_match_system_as_and_link_relocatable() {
 
 #[test]
 fn grouped_section_switch_cases_match_system_as() {
+    if !common::native_macho_host("grouped_seed_stress", "grouped_section_switch_cases_match_system_as") {
+        return;
+    }
     for seed in 1..=6u64 {
         let src = generate_section_switch_case(seed);
         let _paths = assert_raw_parity(&format!("afs_grouped_switch_{}", seed), &src);

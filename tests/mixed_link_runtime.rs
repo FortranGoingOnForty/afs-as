@@ -104,6 +104,9 @@ fn assemble_fixtures() -> MixedPaths {
 
 #[test]
 fn mixed_link_runtime_inputs_match_system_as() {
+    if !common::native_macho_host("mixed_link_runtime", "mixed_link_runtime_inputs_match_system_as") {
+        return;
+    }
     let paths = assemble_fixtures();
 
     assert_eq!(
@@ -118,6 +121,9 @@ fn mixed_link_runtime_inputs_match_system_as() {
 
 #[test]
 fn mixed_link_runtime_relocatable_matches_system_as() {
+    if !common::native_macho_host("mixed_link_runtime", "mixed_link_runtime_relocatable_matches_system_as") {
+        return;
+    }
     let paths = assemble_fixtures();
 
     common::link_relocatable_with_system(
@@ -174,6 +180,9 @@ fn mixed_link_runtime_relocatable_matches_system_as() {
 
 #[test]
 fn mixed_link_runtime_binary_matches_reference() {
+    if !common::native_macho_host("mixed_link_runtime", "mixed_link_runtime_binary_matches_reference") {
+        return;
+    }
     let paths = assemble_fixtures();
 
     link_objects_with_system(

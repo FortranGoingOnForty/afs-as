@@ -972,7 +972,7 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
         Some(sh) => section_bytes(bytes, sh)?,
         None => &[],
     };
-    if symtab_bytes.len() % SYM_SIZE != 0 {
+    if !symtab_bytes.len().is_multiple_of(SYM_SIZE) {
         return Err(ElfError::new(".symtab size not a multiple of 24"));
     }
     let nsyms = symtab_bytes.len() / SYM_SIZE;
@@ -1031,7 +1031,7 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
             continue; // relocations for a skipped section (e.g. .eh_frame filtered later)
         };
         let body = section_bytes(bytes, sh)?;
-        if body.len() % RELA_SIZE != 0 {
+        if !body.len().is_multiple_of(RELA_SIZE) {
             return Err(ElfError::new("rela size not a multiple of 24"));
         }
         let mut relas = Vec::with_capacity(body.len() / RELA_SIZE);
