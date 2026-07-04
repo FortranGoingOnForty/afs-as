@@ -65,6 +65,12 @@ const CASES: &[&str] = &[
     "xorl %eax, %eax",
     "xorq %rax, %rax",
     "andb $1, %cl",
+    // width-reinterpreted immediates pick the sign-extended 83 form
+    "orw $65535, %ax",
+    "xorw $65535, %bx",
+    "cmpw $65408, %cx",
+    "addl $4294967295, %edx",
+    "sbbw $65535, %r9w",
     // carry chain (i128 lowering)
     "sbbq $0, %rdx",
     "sbbq -80(%rbp), %rdx",
