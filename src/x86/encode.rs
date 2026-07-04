@@ -933,6 +933,15 @@ fn encode_arith(stem: &str, w: Width, ops: &[Operand], mnemonic: &str) -> Encode
             p.mem(dst.low3(), m)?;
         }
         [Operand::Imm(imm), rm] => {
+            // Reinterpret the immediate at operand width first: gas
+            // treats `orw $65535, %ax` as -1 and picks the 83
+            // sign-extended-imm8 form.
+            let imm = &match w {
+                Width::B => *imm as i8 as i64,
+                Width::W => *imm as i16 as i64,
+                Width::L => *imm as i32 as i64,
+                _ => *imm,
+            };
             let fits8 = i8::try_from(*imm).is_ok();
             // gas prefers the accumulator short forms (04/0C/.../3D)
             // when the destination is al/ax/eax/rax and the immediate
