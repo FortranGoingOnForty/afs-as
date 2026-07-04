@@ -8,6 +8,7 @@
 //! suites. Unsupported forms fail loudly with file/line diagnostics —
 //! never assemble silently.
 
+pub mod parse;
 pub mod reg;
 
 pub use reg::{Reg, RegClass, Width};
