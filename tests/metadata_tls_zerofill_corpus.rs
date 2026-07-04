@@ -24,6 +24,9 @@ fn normalize_tool_output(text: &str) -> String {
 
 #[test]
 fn metadata_tls_zerofill_matches_system_as() {
+    if !common::native_macho_host("metadata_tls_zerofill_corpus", "metadata_tls_zerofill_matches_system_as") {
+        return;
+    }
     let paths = assemble_fixture("metadata_tls_zerofill.s");
 
     let ours_header = common::object_header(&paths.obj);

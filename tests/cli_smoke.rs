@@ -237,3 +237,55 @@ fn assembly_errors_include_file_line_source_and_caret() {
     assert!(stderr.contains("ldr x0, _ext"), "stderr:\n{}", stderr);
     assert!(stderr.contains("^"), "stderr:\n{}", stderr);
 }
+
+#[test]
+fn dash_dash_64_writes_elf64_object() {
+    let root = temp_root("afs_as_cli_elf");
+    let src_path = root.join("in.s");
+    let obj_path = root.join("out.o");
+    fs::write(
+        &src_path,
+        ".text\n.globl f\n.type f, @function\nf:\n    movl $42, %eax\n    ret\n.size f, .-f\n",
+    )
+    .expect("write source");
+
+    let output = afs_as()
+        .args(["--64", "-o"])
+        .arg(&obj_path)
+        .arg(&src_path)
+        .output()
+        .expect("run afs-as --64");
+    assert!(
+        output.status.success(),
+        "afs-as --64 failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let bytes = fs::read(&obj_path).expect("read object");
+    let obj = afs_as::elf::parse_elf(&bytes).expect("parse ELF output");
+    assert_eq!(obj.machine, afs_as::elf::EM_X86_64);
+    let text = obj.section_by_name(".text").expect(".text");
+    assert_eq!(text.data, [0xb8, 0x2a, 0x00, 0x00, 0x00, 0xc3]);
+    let f = obj.symbols.iter().find(|s| s.name == "f").expect("f sym");
+    assert_eq!(f.size, 6);
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn dash_dash_64_errors_carry_input_path_and_line() {
+    let root = temp_root("afs_as_cli_elf_err");
+    let src_path = root.join("bad.s");
+    fs::write(&src_path, ".text\n    frobnicate %rax\n").expect("write source");
+
+    let output = afs_as()
+        .args(["--64", "-o"])
+        .arg(root.join("bad.o"))
+        .arg(&src_path)
+        .output()
+        .expect("run afs-as --64");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("bad.s"), "stderr: {}", stderr);
+    assert!(stderr.contains("line 2"), "stderr: {}", stderr);
+    fs::remove_dir_all(&root).ok();
+}

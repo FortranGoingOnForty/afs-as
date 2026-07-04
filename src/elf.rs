@@ -923,12 +923,18 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
             symtab = Some((i, sh));
         }
     }
-    let (symtab_idx, symtab_sh) =
-        symtab.ok_or_else(|| ElfError::new("missing .symtab"))?;
-    let strtab_sh = shdrs
-        .get(symtab_sh.sh_link as usize)
-        .ok_or_else(|| ElfError::new(".symtab sh_link out of range"))?;
-    let strtab_bytes = section_bytes(bytes, strtab_sh)?;
+    // gas omits .symtab entirely for objects that define no symbols;
+    // treat that as an empty symbol table.
+    let (symtab_idx, strtab_bytes): (usize, &[u8]) = match symtab {
+        Some((idx, sh)) => {
+            let strtab_sh = shdrs
+                .get(sh.sh_link as usize)
+                .ok_or_else(|| ElfError::new(".symtab sh_link out of range"))?;
+            (idx, section_bytes(bytes, strtab_sh)?)
+        }
+        None => (usize::MAX, &[]),
+    };
+    let symtab_sh = symtab.map(|(_, sh)| sh);
 
     // Map file section index -> model content index.
     let mut file_to_model: HashMap<usize, usize> = HashMap::new();
@@ -962,8 +968,11 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
     // Symbols. File idx -> model idx (skipping the null and SECTION
     // symbols, which the writer synthesizes/omits — but keep a map so
     // relas against section symbols can be re-pointed).
-    let symtab_bytes = section_bytes(bytes, symtab_sh)?;
-    if symtab_bytes.len() % SYM_SIZE != 0 {
+    let symtab_bytes: &[u8] = match symtab_sh {
+        Some(sh) => section_bytes(bytes, sh)?,
+        None => &[],
+    };
+    if !symtab_bytes.len().is_multiple_of(SYM_SIZE) {
         return Err(ElfError::new(".symtab size not a multiple of 24"));
     }
     let nsyms = symtab_bytes.len() / SYM_SIZE;
@@ -1022,7 +1031,7 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
             continue; // relocations for a skipped section (e.g. .eh_frame filtered later)
         };
         let body = section_bytes(bytes, sh)?;
-        if body.len() % RELA_SIZE != 0 {
+        if !body.len().is_multiple_of(RELA_SIZE) {
             return Err(ElfError::new("rela size not a multiple of 24"));
         }
         let mut relas = Vec::with_capacity(body.len() / RELA_SIZE);

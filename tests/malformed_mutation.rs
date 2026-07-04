@@ -231,6 +231,9 @@ fn system_as_rejects(path: &Path) {
 
 #[test]
 fn structured_mutations_fail_with_source_context() {
+    if !common::native_macho_host("malformed_mutation", "structured_mutations_fail_with_source_context") {
+        return;
+    }
     for case in mutation_cases() {
         let paths = common::TempPaths::new(&format!("afs_mutation_{}", case.name));
         fs::write(&paths.asm, &case.src).expect("write mutation source");

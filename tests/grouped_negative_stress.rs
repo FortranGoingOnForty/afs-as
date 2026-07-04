@@ -149,6 +149,9 @@ fn system_as_rejects(path: &Path) {
 
 #[test]
 fn grouped_mutations_fail_with_source_context_and_no_panics() {
+    if !common::native_macho_host("grouped_negative_stress", "grouped_mutations_fail_with_source_context_and_no_panics") {
+        return;
+    }
     for case in mutation_cases() {
         let paths = common::TempPaths::new(&format!("afs_grouped_neg_{}", case.name));
         fs::write(&paths.asm, &case.src).expect("write grouped mutation source");
@@ -192,6 +195,9 @@ fn grouped_mutations_fail_with_source_context_and_no_panics() {
 
 #[test]
 fn duplicate_build_version_uses_last_directive_like_system_as() {
+    if !common::native_macho_host("grouped_negative_stress", "duplicate_build_version_uses_last_directive_like_system_as") {
+        return;
+    }
     let src = "\
 .build_version macos, 11, 0 sdk_version 15, 5
 .build_version macos, 12, 0 sdk_version 15, 5

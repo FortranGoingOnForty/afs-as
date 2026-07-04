@@ -141,8 +141,26 @@ where
     best_duration(samples)
 }
 
+
+/// Same policy as tests/common/corpus.rs::native_macho_host: this
+/// suite drives the macOS arm64 system toolchain; skip loudly on any
+/// other host.
+fn native_macho_host(suite: &str, test: &str) -> bool {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        return true;
+    }
+    eprintln!(
+        "\nHARNESS_SKIP suite={} test={} count=1 reason=\"needs a macOS arm64 host toolchain\"",
+        suite, test
+    );
+    false
+}
+
 #[test]
 fn library_scaling_stays_reasonable_on_large_generated_input() {
+    if !native_macho_host("perf_sanity", "library_scaling_stays_reasonable_on_large_generated_input") {
+        return;
+    }
     let medium = perf_source(96);
     let large = perf_source(192);
 
@@ -162,6 +180,9 @@ fn library_scaling_stays_reasonable_on_large_generated_input() {
 
 #[test]
 fn cli_throughput_stays_under_generous_absolute_cap() {
+    if !native_macho_host("perf_sanity", "cli_throughput_stays_under_generous_absolute_cap") {
+        return;
+    }
     let src = perf_source(192);
     let tmp = std::env::temp_dir().join(format!(
         "afs_perf_sanity_{}_{}",

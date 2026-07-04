@@ -24,6 +24,9 @@ fn normalize_tool_output(text: &str) -> String {
 
 #[test]
 fn metadata_stress_mix_matches_system_as() {
+    if !common::native_macho_host("metadata_stress_mix_corpus", "metadata_stress_mix_matches_system_as") {
+        return;
+    }
     let paths = assemble_fixture("metadata_stress_mix.s");
 
     let ours_header = common::object_header(&paths.obj);

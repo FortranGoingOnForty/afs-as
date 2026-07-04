@@ -323,3 +323,20 @@ fn parse_section_bytes(text: &str) -> Vec<u8> {
     }
     bytes
 }
+
+/// The Mach-O corpus suites assemble ARM64 Apple-dialect fixtures with
+/// the SYSTEM assembler and compare/link/run — only a macOS arm64 host
+/// can do that. Off-host, print the standard skip notice and have the
+/// caller return (same policy clang_probe_dashboard adopted in
+/// a02dc89; on FreeBSD/Linux the system `as` is a GNU/x86 assembler
+/// and every fixture dies on `.build_version`).
+pub fn native_macho_host(suite: &str, test: &str) -> bool {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        return true;
+    }
+    eprintln!(
+        "\nHARNESS_SKIP suite={} test={} count=1 reason=\"needs a macOS arm64 host toolchain\"",
+        suite, test
+    );
+    false
+}

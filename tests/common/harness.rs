@@ -88,3 +88,17 @@ fn parse_text_bytes(text: &str) -> Vec<u8> {
     }
     bytes
 }
+
+/// See tests/common/corpus.rs::native_macho_host — same policy: these
+/// suites drive the macOS arm64 system toolchain and must skip loudly
+/// anywhere else.
+pub fn native_macho_host(suite: &str, test: &str) -> bool {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        return true;
+    }
+    eprintln!(
+        "\nHARNESS_SKIP suite={} test={} count=1 reason=\"needs a macOS arm64 host toolchain\"",
+        suite, test
+    );
+    false
+}

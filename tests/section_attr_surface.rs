@@ -12,8 +12,26 @@ fn temp_root(prefix: &str) -> PathBuf {
     root
 }
 
+
+/// Same policy as tests/common/corpus.rs::native_macho_host: this
+/// suite drives the macOS arm64 system toolchain; skip loudly on any
+/// other host.
+fn native_macho_host(suite: &str, test: &str) -> bool {
+    if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        return true;
+    }
+    eprintln!(
+        "\nHARNESS_SKIP suite={} test={} count=1 reason=\"needs a macOS arm64 host toolchain\"",
+        suite, test
+    );
+    false
+}
+
 #[test]
 fn section_attrs_match_system_as() {
+    if !native_macho_host("section_attr_surface", "section_attrs_match_system_as") {
+        return;
+    }
     let root = temp_root("afs_section_attr_surface");
     let input = root.join("section-attrs.s");
     let ours = root.join("ours.o");

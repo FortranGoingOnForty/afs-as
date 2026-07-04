@@ -17,3 +17,4 @@ pub mod parse;
 
 /// ARM64 register definitions.
 pub mod reg;
+pub mod x86;
