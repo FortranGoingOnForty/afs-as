@@ -399,7 +399,10 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
                 return encode_arith(stem, w, ops, mnemonic)
             }
             "test" => return encode_test(w, ops, mnemonic),
-            "imul" => return encode_imul(w, ops, mnemonic),
+            // Two-byte-opcode RM forms sharing one shape.
+            "imul" => return encode_rm_0f(0xaf, w, ops, mnemonic),
+            "bsr" => return encode_rm_0f(0xbd, w, ops, mnemonic),
+            "bsf" => return encode_rm_0f(0xbc, w, ops, mnemonic),
             "idiv" | "div" | "neg" | "not" | "mul" => {
                 return encode_group3_5(stem, w, ops, mnemonic)
             }
@@ -468,6 +471,8 @@ const SSE_RM: &[(&str, Sse, u8)] = &[
     ("mulsd", Sse::F2, 0x59),
     ("divss", Sse::F3, 0x5e),
     ("divsd", Sse::F2, 0x5e),
+    ("divps", Sse::None, 0x5e),
+    ("divpd", Sse::P66, 0x5e),
     ("minss", Sse::F3, 0x5d),
     ("minsd", Sse::F2, 0x5d),
     ("maxss", Sse::F3, 0x5f),
@@ -504,6 +509,12 @@ const SSE_RM: &[(&str, Sse, u8)] = &[
     ("paddq", Sse::P66, 0xd4),
     ("psubd", Sse::P66, 0xfa),
     ("punpcklqdq", Sse::P66, 0x6c),
+    ("psubq", Sse::P66, 0xfb),
+    ("pxor", Sse::P66, 0xef),
+    ("pcmpeqd", Sse::P66, 0x76),
+    // reg,reg only in the dialect; the mem form of 0F 12 is movlps,
+    // which the backend never emits (guarded in encode_sse).
+    ("movhlps", Sse::None, 0x12),
     ("pand", Sse::P66, 0xdb),
     ("pandn", Sse::P66, 0xdf),
     ("por", Sse::P66, 0xeb),
@@ -579,17 +590,28 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
         return p.finish().map(Some);
     }
 
-    // pshufd/shufps/cmpps carry a trailing imm8: `op $imm, src, dst`.
-    if matches!(mnemonic, "pshufd" | "shufps" | "cmpps") {
+    // movhlps only has the reg,reg form — 0F 12 with a memory operand
+    // is a different instruction (movlps). Reject rather than encode
+    // the wrong one.
+    if mnemonic == "movhlps" && !matches!(ops, [Operand::Reg(_), Operand::Reg(_)]) {
+        return Err("movhlps expects xmm, xmm".into());
+    }
+
+    // pshufd/shufps/cmpps/cmppd carry a trailing imm8: `op $imm, src, dst`.
+    if matches!(mnemonic, "pshufd" | "shufps" | "cmpps" | "cmppd") {
         let (imm, src_op, dst_op) = match ops {
             [Operand::Imm(i), s, d] => (*i, s, d),
             _ => return Err(format!("{} expects $imm8, src, dst", mnemonic)),
         };
-        let prefix = if mnemonic == "pshufd" { Sse::P66 } else { Sse::None };
+        let prefix = if matches!(mnemonic, "pshufd" | "cmppd") {
+            Sse::P66
+        } else {
+            Sse::None
+        };
         let opcode = match mnemonic {
             "pshufd" => 0x70,
             "shufps" => 0xc6,
-            _ => 0xc2, // cmpps
+            _ => 0xc2, // cmpps / cmppd
         };
         let mut enc = rm_form(prefix, &[0x0f, opcode], &[src_op.clone(), dst_op.clone()])?;
         enc.bytes.push(imm as u8);
@@ -1027,7 +1049,8 @@ fn encode_test(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
     p.finish()
 }
 
-fn encode_imul(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
+/// Shared 0F-xx RM shape: imul (AF), bsr (BD), bsf (BC) — rm -> reg.
+fn encode_rm_0f(op2: u8, w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
     let mut p = Parts::new();
     width_setup(w, &mut p.rex, &mut p.prefix);
     match ops {
@@ -1036,16 +1059,16 @@ fn encode_imul(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
             check_width(*dst, w, mnemonic)?;
             p.rex.merge_reg(*dst, RexSlot::R);
             p.rex.merge_reg(*src, RexSlot::B);
-            p.opcode.extend_from_slice(&[0x0f, 0xaf]);
+            p.opcode.extend_from_slice(&[0x0f, op2]);
             p.tail.push(0b11 << 6 | dst.low3() << 3 | src.low3());
         }
         [Operand::Mem(m), Operand::Reg(dst)] => {
             check_width(*dst, w, mnemonic)?;
             p.rex.merge_reg(*dst, RexSlot::R);
-            p.opcode.extend_from_slice(&[0x0f, 0xaf]);
+            p.opcode.extend_from_slice(&[0x0f, op2]);
             p.mem(dst.low3(), m)?;
         }
-        _ => return Err(format!("unsupported imul operands for '{}'", mnemonic)),
+        _ => return Err(format!("unsupported operands for '{}'", mnemonic)),
     }
     p.finish()
 }

@@ -108,6 +108,11 @@ const CASES: &[&str] = &[
     "imulq %rbx, %rax",
     "imulq -8(%rbp), %rcx",
     "imull %edx, %eax",
+    "bsrl %eax, %edx",
+    "bsrq %r9, %rax",
+    "bsrl -4(%rbp), %ecx",
+    "bsfl %ebx, %eax",
+    "bsfq %rcx, %r11",
     "idivq %rcx",
     "idivl %esi",
     "divq %r8",
@@ -201,6 +206,12 @@ const CASES: &[&str] = &[
     "punpcklqdq %xmm8, %xmm3",
     "paddq %xmm1, %xmm0",
     "paddq (%rax), %xmm6",
+    "psubq %xmm2, %xmm3",
+    "pxor %xmm4, %xmm4",
+    "pcmpeqd %xmm5, %xmm6",
+    "divps %xmm1, %xmm2",
+    "divpd %xmm3, %xmm4",
+    "movhlps %xmm1, %xmm3",
     // shuffles with imm8
     "pshufd $245, %xmm3, %xmm5",
     "pshufd $0, %xmm0, %xmm1",
@@ -208,6 +219,8 @@ const CASES: &[&str] = &[
     "shufps $136, %xmm2, %xmm4",
     "cmpps $1, %xmm5, %xmm7",
     "cmpps $2, %xmm8, %xmm10",
+    "cmppd $1, %xmm2, %xmm9",
+    "cmppd $6, %xmm0, %xmm1",
 ];
 
 fn our_bytes(line: &str) -> (Vec<u8>, Option<afs_as::x86::encode::InsnReloc>) {
