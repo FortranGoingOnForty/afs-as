@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 const USAGE: &str = "\
-afs-as: ARM64 assembler for macOS
+afs-as: assembler (ARM64 Mach-O, x86_64 ELF)
 
 usage: afs-as <input.s> [-o <output.o>]
+       afs-as --64 <input.s> [-o <output.o>]
        afs-as - -o <output.o>
        afs-as - -o -
        afs-as --help
@@ -15,6 +16,7 @@ usage: afs-as <input.s> [-o <output.o>]
 
 options:
   -o <path>    write object to path, or '-' for stdout
+  --64         assemble x86_64 AT&T source to an ELF64 object
   --           stop option parsing
 
 exit status:
@@ -25,9 +27,19 @@ exit status:
 Only a single input file is supported.
 Input '-' requires an explicit -o <output.o> or -o -.";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Arm64Macho,
+    X8664Elf,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
-    Assemble { input: PathBuf, output: PathBuf },
+    Assemble {
+        input: PathBuf,
+        output: PathBuf,
+        target: Target,
+    },
     Help,
     Version,
 }
@@ -54,9 +66,16 @@ fn run() -> Result<(), (i32, String)> {
             println!("afs-as {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        Ok(Command::Assemble { input, output }) => {
-            assemble_cli(&input, &output).map_err(|err| (1, err.to_string()))
-        }
+        Ok(Command::Assemble {
+            input,
+            output,
+            target,
+        }) => match target {
+            Target::Arm64Macho => {
+                assemble_cli(&input, &output).map_err(|err| (1, err.to_string()))
+            }
+            Target::X8664Elf => assemble_cli_x86(&input, &output).map_err(|err| (1, err)),
+        },
         Err(message) => Err((2, format!("afs-as: {}\n\n{}", message, USAGE))),
     }
 }
@@ -64,6 +83,7 @@ fn run() -> Result<(), (i32, String)> {
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
     let mut input: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
+    let mut target = Target::Arm64Macho;
     let mut parsing_options = true;
 
     let mut args = args.peekable();
@@ -74,6 +94,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
             }
             "--help" | "-h" if parsing_options => return Ok(Command::Help),
             "--version" | "-V" if parsing_options => return Ok(Command::Version),
+            "--64" if parsing_options => target = Target::X8664Elf,
             "-o" if parsing_options => {
                 let Some(path) = args.next() else {
                     return Err("option '-o' requires an output path".into());
@@ -112,7 +133,11 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
         }
         None => default_output_path(&input),
     };
-    Ok(Command::Assemble { input, output })
+    Ok(Command::Assemble {
+        input,
+        output,
+        target,
+    })
 }
 
 fn default_output_path(input: &Path) -> PathBuf {
@@ -121,6 +146,39 @@ fn default_output_path(input: &Path) -> PathBuf {
 
 fn is_stdio_path(path: &Path) -> bool {
     path == Path::new("-")
+}
+
+/// The `--64` path: x86_64 AT&T source to an ELF64 relocatable
+/// object. Matches the driver's `<as> --64 -o obj.o asm.s` contract.
+fn assemble_cli_x86(input: &Path, output: &Path) -> Result<(), String> {
+    let read_err = |e: io::Error| format!("{}: {}", input.display(), e);
+    let src = if is_stdio_path(input) {
+        let mut src = String::new();
+        io::stdin().read_to_string(&mut src).map_err(read_err)?;
+        src
+    } else {
+        fs::read_to_string(input).map_err(read_err)?
+    };
+
+    let osabi = if cfg!(target_os = "freebsd") {
+        afs_as::elf::ELFOSABI_FREEBSD
+    } else {
+        afs_as::elf::ELFOSABI_NONE
+    };
+    let obj = afs_as::x86::assemble::assemble_x86(&src, osabi)
+        .map_err(|e| format!("{}: {}", input.display(), e))?;
+    let bytes = afs_as::elf::write_elf(&obj).map_err(|e| format!("{}: {}", input.display(), e))?;
+
+    let write_err = |e: io::Error| format!("{}: {}", output.display(), e);
+    if is_stdio_path(output) {
+        let stdout = io::stdout();
+        let mut w = stdout.lock();
+        w.write_all(&bytes).map_err(write_err)?;
+        w.flush().map_err(write_err)?;
+    } else {
+        fs::write(output, &bytes).map_err(write_err)?;
+    }
+    Ok(())
 }
 
 fn assemble_cli(input: &Path, output: &Path) -> Result<(), afs_as::assemble::AsmError> {
@@ -174,7 +232,7 @@ fn assemble_cli(input: &Path, output: &Path) -> Result<(), afs_as::assemble::Asm
 
 #[cfg(test)]
 mod tests {
-    use super::{default_output_path, parse_args, Command};
+    use super::{default_output_path, parse_args, Command, Target};
     use std::path::PathBuf;
 
     fn parse<I, S>(args: I) -> Result<Command, String>
@@ -204,6 +262,7 @@ mod tests {
             Ok(Command::Assemble {
                 input: PathBuf::from("input.s"),
                 output: PathBuf::from("output.o"),
+                target: Target::Arm64Macho,
             })
         );
     }
@@ -215,6 +274,7 @@ mod tests {
             Ok(Command::Assemble {
                 input: PathBuf::from("src/hello.s"),
                 output: PathBuf::from("src/hello.o"),
+                target: Target::Arm64Macho,
             })
         );
     }
@@ -258,6 +318,7 @@ mod tests {
             Ok(Command::Assemble {
                 input: PathBuf::from("-"),
                 output: PathBuf::from("-"),
+                target: Target::Arm64Macho,
             })
         );
     }
@@ -269,6 +330,7 @@ mod tests {
             Ok(Command::Assemble {
                 input: PathBuf::from("--version.s"),
                 output: PathBuf::from("--version.o"),
+                target: Target::Arm64Macho,
             })
         );
     }
@@ -276,6 +338,27 @@ mod tests {
     #[test]
     fn parse_rejects_unknown_option() {
         assert_eq!(parse(["--wat"]), Err("unrecognized option '--wat'".into()));
+    }
+
+    #[test]
+    fn parse_64_flag_selects_elf_target() {
+        assert_eq!(
+            parse(["--64", "-o", "out.o", "in.s"]),
+            Ok(Command::Assemble {
+                input: PathBuf::from("in.s"),
+                output: PathBuf::from("out.o"),
+                target: Target::X8664Elf,
+            })
+        );
+        // Flag order must not matter (the driver puts it first).
+        assert_eq!(
+            parse(["in.s", "--64"]),
+            Ok(Command::Assemble {
+                input: PathBuf::from("in.s"),
+                output: PathBuf::from("in.o"),
+                target: Target::X8664Elf,
+            })
+        );
     }
 
     #[test]
