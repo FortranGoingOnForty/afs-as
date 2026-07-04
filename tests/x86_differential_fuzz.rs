@@ -68,8 +68,12 @@ fn seeded_cases_match_gas() {
                 continue;
             }
         };
-        let gas_text = gas_obj.section_by_name(".text").map(|s| s.data.clone());
-        let our_text = ours.section_by_name(".text").map(|s| s.data.clone());
+        let gas_text = gas_obj
+            .section_by_name(".text")
+            .map(|s| celf::canonicalize_nop_fill(&s.data));
+        let our_text = ours
+            .section_by_name(".text")
+            .map(|s| celf::canonicalize_nop_fill(&s.data));
         if gas_text != our_text {
             let (g, o) = (gas_text.unwrap_or_default(), our_text.unwrap_or_default());
             let first = g

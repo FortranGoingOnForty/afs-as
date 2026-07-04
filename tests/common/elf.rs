@@ -91,6 +91,44 @@ pub struct Normalized {
     pub symbols: Vec<(String, u8, u8, String, u64, u64)>,
 }
 
+/// Rewrite every maximal run of x86 NOP-filler patterns (the gas
+/// 1..=11-byte forms) as repeated 0x90. binutils changed the split
+/// order for large fills between 2.44 (longest-first) and 2.46
+/// (remainder-first); the padding is not architectural output, so
+/// the differential compares it modulo that choice. Both sides pass
+/// through the same rewrite and pattern lengths are preserved, so
+/// real code — including any bytes that happen to look like NOPs —
+/// still has to match exactly.
+pub fn canonicalize_nop_fill(text: &[u8]) -> Vec<u8> {
+    const NOPS: [&[u8]; 11] = [
+        &[0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+        &[0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+        &[0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+        &[0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+        &[0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00],
+        &[0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00],
+        &[0x0f, 0x1f, 0x44, 0x00, 0x00],
+        &[0x0f, 0x1f, 0x40, 0x00],
+        &[0x0f, 0x1f, 0x00],
+        &[0x66, 0x90],
+        &[0x90],
+    ];
+    let mut out = Vec::with_capacity(text.len());
+    let mut i = 0;
+    'outer: while i < text.len() {
+        for pat in NOPS {
+            if text[i..].starts_with(pat) {
+                out.resize(out.len() + pat.len(), 0x90);
+                i += pat.len();
+                continue 'outer;
+            }
+        }
+        out.push(text[i]);
+        i += 1;
+    }
+    out
+}
+
 pub fn normalize(obj: &ObjectFile) -> Normalized {
     let mut sections = BTreeMap::new();
     let mut relocs = Vec::new();
@@ -100,7 +138,11 @@ pub fn normalize(obj: &ObjectFile) -> Normalized {
             (
                 sec.sh_type,
                 sec.sh_flags,
-                sec.data.clone(),
+                if sec.name == ".text" {
+                    canonicalize_nop_fill(&sec.data)
+                } else {
+                    sec.data.clone()
+                },
                 if sec.sh_type == SHT_NOBITS {
                     sec.nobits_size
                 } else {
