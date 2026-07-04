@@ -8,6 +8,7 @@
 //! suites. Unsupported forms fail loudly with file/line diagnostics —
 //! never assemble silently.
 
+pub mod assemble;
 pub mod encode;
 pub mod parse;
 pub mod reg;

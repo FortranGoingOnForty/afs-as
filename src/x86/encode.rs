@@ -332,6 +332,12 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
                 ..Default::default()
             })
         }
+        "nop" => {
+            return Ok(Encoded {
+                bytes: vec![0x90],
+                ..Default::default()
+            })
+        }
         "syscall" => {
             return Ok(Encoded {
                 bytes: vec![0x0f, 0x05],
@@ -679,6 +685,11 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
     }
 
     Ok(None)
+}
+
+/// Public: the assembler needs condition codes for relaxable jcc.
+pub fn cond_code_pub(cc: &str) -> Option<u8> {
+    cond_code(cc)
 }
 
 fn cond_code(cc: &str) -> Option<u8> {
