@@ -395,7 +395,7 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
         match stem {
             "mov" if !touches_xmm => return encode_mov(w, ops, mnemonic),
             "lea" => return encode_lea(w, ops, mnemonic),
-            "add" | "or" | "and" | "sub" | "xor" | "cmp" => {
+            "add" | "or" | "adc" | "sbb" | "and" | "sub" | "xor" | "cmp" => {
                 return encode_arith(stem, w, ops, mnemonic)
             }
             "test" => return encode_test(w, ops, mnemonic),
@@ -474,6 +474,8 @@ const SSE_RM: &[(&str, Sse, u8)] = &[
     ("maxsd", Sse::F2, 0x5f),
     ("sqrtss", Sse::F3, 0x51),
     ("sqrtsd", Sse::F2, 0x51),
+    ("sqrtps", Sse::None, 0x51),
+    ("sqrtpd", Sse::P66, 0x51),
     ("ucomiss", Sse::None, 0x2e),
     ("ucomisd", Sse::P66, 0x2e),
     ("cvtss2sd", Sse::F3, 0x5a),
@@ -495,9 +497,13 @@ const SSE_RM: &[(&str, Sse, u8)] = &[
     ("orpd", Sse::P66, 0x56),
     ("xorps", Sse::None, 0x57),
     ("xorpd", Sse::P66, 0x57),
+    ("unpcklps", Sse::None, 0x14),
+    ("unpcklpd", Sse::P66, 0x14),
     // packed integer
     ("paddd", Sse::P66, 0xfe),
+    ("paddq", Sse::P66, 0xd4),
     ("psubd", Sse::P66, 0xfa),
+    ("punpcklqdq", Sse::P66, 0x6c),
     ("pand", Sse::P66, 0xdb),
     ("pandn", Sse::P66, 0xdf),
     ("por", Sse::P66, 0xeb),
@@ -573,14 +579,18 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
         return p.finish().map(Some);
     }
 
-    // pshufd/shufps carry a trailing imm8: `op $imm, src, dst`.
-    if mnemonic == "pshufd" || mnemonic == "shufps" {
+    // pshufd/shufps/cmpps carry a trailing imm8: `op $imm, src, dst`.
+    if matches!(mnemonic, "pshufd" | "shufps" | "cmpps") {
         let (imm, src_op, dst_op) = match ops {
             [Operand::Imm(i), s, d] => (*i, s, d),
             _ => return Err(format!("{} expects $imm8, src, dst", mnemonic)),
         };
         let prefix = if mnemonic == "pshufd" { Sse::P66 } else { Sse::None };
-        let opcode = if mnemonic == "pshufd" { 0x70 } else { 0xc6 };
+        let opcode = match mnemonic {
+            "pshufd" => 0x70,
+            "shufps" => 0xc6,
+            _ => 0xc2, // cmpps
+        };
         let mut enc = rm_form(prefix, &[0x0f, opcode], &[src_op.clone(), dst_op.clone()])?;
         enc.bytes.push(imm as u8);
         return Ok(Some(enc));
@@ -828,15 +838,18 @@ fn encode_mov(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
                     p.tail.extend_from_slice(&(*imm as i16).to_le_bytes());
                 }
                 Width::Q => {
-                    // C7 /0 imm32 sign-extended (gas uses this when the
-                    // immediate fits i32; movabsq covers the rest).
-                    if i32::try_from(*imm).is_err() {
-                        return Err("movq immediate does not fit i32; use movabsq".into());
-                    }
                     p.rex.merge_reg(*dst, RexSlot::B);
-                    p.opcode.push(0xc7);
-                    p.tail.push(0b11 << 6 | dst.low3());
-                    p.tail.extend_from_slice(&(*imm as i32).to_le_bytes());
+                    if i32::try_from(*imm).is_ok() {
+                        // C7 /0 imm32 sign-extended.
+                        p.opcode.push(0xc7);
+                        p.tail.push(0b11 << 6 | dst.low3());
+                        p.tail.extend_from_slice(&(*imm as i32).to_le_bytes());
+                    } else {
+                        // gas widens movq to the movabs B8+r imm64
+                        // form when the immediate needs 64 bits.
+                        p.opcode.push(0xb8 + dst.low3());
+                        p.tail.extend_from_slice(&imm.to_le_bytes());
+                    }
                 }
                 Width::X => unreachable!(),
             }
@@ -883,6 +896,8 @@ fn arith_idx(stem: &str) -> u8 {
     match stem {
         "add" => 0,
         "or" => 1,
+        "adc" => 2,
+        "sbb" => 3,
         "and" => 4,
         "sub" => 5,
         "xor" => 6,

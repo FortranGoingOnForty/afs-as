@@ -35,6 +35,12 @@ const CASES: &[&str] = &[
     "movq $0, (%rax)",
     "movabsq $-9223372036854775808, %rax",
     "movabsq $81985529216486895, %rdx",
+    // gas widens movq to the movabs form past i32
+    "movq $789750225429331968, %rsi",
+    "movq $9223372036854775807, %rdx",
+    "movq $-9223372036854775808, %r9",
+    "movq $2147483648, %rax",
+    "movq $-2147483649, %rcx",
     // lea
     "leaq -24(%rbp), %rdi",
     "leaq (%rax,%rbx,8), %rcx",
@@ -59,6 +65,13 @@ const CASES: &[&str] = &[
     "xorl %eax, %eax",
     "xorq %rax, %rax",
     "andb $1, %cl",
+    // carry chain (i128 lowering)
+    "sbbq $0, %rdx",
+    "sbbq -80(%rbp), %rdx",
+    "sbbq %rax, %rax",
+    "adcq $0, %rcx",
+    "adcq %r8, %r9",
+    "adcl %eax, %edx",
     // test
     "testl %eax, %eax",
     "testq %rdi, %rdi",
@@ -163,6 +176,11 @@ const CASES: &[&str] = &[
     "andpd %xmm10, %xmm11",
     "xorps %xmm0, %xmm0",
     "xorpd %xmm1, %xmm1",
+    "sqrtps %xmm2, %xmm3",
+    "sqrtpd %xmm4, %xmm5",
+    "unpcklps %xmm1, %xmm0",
+    "unpcklpd %xmm9, %xmm0",
+    "unpcklpd %xmm3, %xmm7",
     // packed integer
     "movdqa %xmm0, %xmm1",
     "movdqa (%rax), %xmm2",
@@ -173,11 +191,17 @@ const CASES: &[&str] = &[
     "por %xmm6, %xmm7",
     "pcmpgtd %xmm8, %xmm9",
     "pmuludq %xmm4, %xmm7",
+    "punpcklqdq %xmm0, %xmm1",
+    "punpcklqdq %xmm8, %xmm3",
+    "paddq %xmm1, %xmm0",
+    "paddq (%rax), %xmm6",
     // shuffles with imm8
     "pshufd $245, %xmm3, %xmm5",
     "pshufd $0, %xmm0, %xmm1",
     "pshufd $216, %xmm9, %xmm10",
     "shufps $136, %xmm2, %xmm4",
+    "cmpps $1, %xmm5, %xmm7",
+    "cmpps $2, %xmm8, %xmm10",
 ];
 
 fn our_bytes(line: &str) -> (Vec<u8>, Option<afs_as::x86::encode::InsnReloc>) {
