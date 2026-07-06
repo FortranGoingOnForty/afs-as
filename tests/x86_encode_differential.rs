@@ -216,6 +216,10 @@ const CASES: &[&str] = &[
     "pshufd $245, %xmm3, %xmm5",
     "pshufd $0, %xmm0, %xmm1",
     "pshufd $216, %xmm9, %xmm10",
+    // RIP-relative source + trailing imm8: the PC32 addend must count the
+    // imm8 byte (gas emits sym-5 / sym+off-5, not sym-4).
+    "pshufd $3, tbl(%rip), %xmm0",
+    "pshufd $216, lut+16(%rip), %xmm9",
     "shufps $136, %xmm2, %xmm4",
     "cmpps $1, %xmm5, %xmm7",
     "cmpps $2, %xmm8, %xmm10",

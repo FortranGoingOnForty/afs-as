@@ -150,6 +150,11 @@ fn encode_mem(reg_field: u8, mem: &MemOperand, rex: &mut Rex) -> Result<MemEnc, 
     };
 
     let disp = mem.disp;
+    // Base/index displacements are 32-bit signed; a wider value (the RIP
+    // path already returned above) would otherwise truncate silently.
+    if i32::try_from(disp).is_err() {
+        return Err(format!("displacement {} out of range for 32-bit disp", disp));
+    }
     let disp8 = i8::try_from(disp).is_ok();
 
     match (base, index) {
@@ -536,7 +541,7 @@ const SSE_MOV: &[(&str, Sse, u8, u8)] = &[
 
 fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String> {
     // Shared emitters ------------------------------------------------
-    let rm_form = |prefix: Sse, opcode: &[u8], ops: &[Operand]| -> Result<Encoded, String> {
+    let rm_form = |prefix: Sse, opcode: &[u8], ops: &[Operand], imm: &[u8]| -> Result<Encoded, String> {
         let mut p = Parts::new();
         prefix.emit(&mut p.prefix);
         match ops {
@@ -555,11 +560,23 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
             }
             _ => return Err("expected xmm/mem source, xmm destination".into()),
         }
+        // A trailing immediate (pshufd/shufps/cmpps/cmppd) must join the
+        // tail before finish() so a RIP-relative disp32 addend counts it —
+        // gas emits sym-5 for an imm8 form, not sym-4.
+        p.tail.extend_from_slice(imm);
         p.finish()
     };
 
+    // movhlps (0F 12) has only the reg,reg form; with a memory operand the
+    // same opcode is movlps, a different instruction. It lives in SSE_RM
+    // for its reg,reg encoding, so reject the mem form here — before the
+    // lookup would silently emit movlps.
+    if mnemonic == "movhlps" && !matches!(ops, [Operand::Reg(_), Operand::Reg(_)]) {
+        return Err("movhlps expects xmm, xmm".into());
+    }
+
     if let Some((_, prefix, opcode)) = SSE_RM.iter().find(|(m, _, _)| *m == mnemonic) {
-        return rm_form(*prefix, &[0x0f, *opcode], ops).map(Some);
+        return rm_form(*prefix, &[0x0f, *opcode], ops, &[]).map(Some);
     }
 
     if let Some((_, prefix, load, store)) = SSE_MOV.iter().find(|(m, _, _, _)| *m == mnemonic) {
@@ -590,13 +607,6 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
         return p.finish().map(Some);
     }
 
-    // movhlps only has the reg,reg form — 0F 12 with a memory operand
-    // is a different instruction (movlps). Reject rather than encode
-    // the wrong one.
-    if mnemonic == "movhlps" && !matches!(ops, [Operand::Reg(_), Operand::Reg(_)]) {
-        return Err("movhlps expects xmm, xmm".into());
-    }
-
     // pshufd/shufps/cmpps/cmppd carry a trailing imm8: `op $imm, src, dst`.
     if matches!(mnemonic, "pshufd" | "shufps" | "cmpps" | "cmppd") {
         let (imm, src_op, dst_op) = match ops {
@@ -613,9 +623,13 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
             "shufps" => 0xc6,
             _ => 0xc2, // cmpps / cmppd
         };
-        let mut enc = rm_form(prefix, &[0x0f, opcode], &[src_op.clone(), dst_op.clone()])?;
-        enc.bytes.push(imm as u8);
-        return Ok(Some(enc));
+        return rm_form(
+            prefix,
+            &[0x0f, opcode],
+            &[src_op.clone(), dst_op.clone()],
+            &[imm as u8],
+        )
+        .map(Some);
     }
 
     // movd / movq between GP and xmm: 66 (REX.W) 0F 6E (gp->xmm),
@@ -1121,7 +1135,9 @@ fn encode_shift(stem: &str, w: Width, ops: &[Operand], mnemonic: &str) -> Encode
             p.tail.push(0b11 << 6 | ext << 3 | r.low3());
             p.tail.push(*imm as u8);
         }
-        [Operand::Reg(cl), Operand::Reg(r)] if cl.num == 1 && cl.width == Width::B => {
+        [Operand::Reg(cl), Operand::Reg(r)]
+            if cl.num == 1 && cl.width == Width::B && cl.class == RegClass::Gp =>
+        {
             check_width(*r, w, mnemonic)?;
             p.opcode.push(if w == Width::B { 0xd2 } else { 0xd3 });
             p.rex.merge_reg(*r, RexSlot::B);
