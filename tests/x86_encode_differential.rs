@@ -83,6 +83,12 @@ const CASES: &[&str] = &[
     "testq %rdi, %rdi",
     "testb %al, %al",
     "testl $4, %edx",
+    // accumulator short forms A8/A9 (audit A6): gas uses these for
+    // al/ax/eax/rax, not the F6/F7 group the non-accumulator forms take.
+    "testb $5, %al",
+    "testw $5, %ax",
+    "testl $5, %eax",
+    "testq $5, %rax",
     // push/pop/ret
     "pushq %rbp",
     "pushq %r15",

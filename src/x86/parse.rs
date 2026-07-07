@@ -562,7 +562,7 @@ fn parse_string_lit(s: &str) -> Result<Vec<u8>, String> {
         .and_then(|t| t.strip_suffix('"'))
         .ok_or_else(|| format!("expected string literal, got '{}'", s))?;
     let mut out = Vec::with_capacity(inner.len());
-    let mut chars = inner.chars();
+    let mut chars = inner.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\\' {
             let mut buf = [0u8; 4];
@@ -573,9 +573,43 @@ fn parse_string_lit(s: &str) -> Result<Vec<u8>, String> {
             Some('n') => out.push(b'\n'),
             Some('t') => out.push(b'\t'),
             Some('r') => out.push(b'\r'),
-            Some('0') => out.push(0),
+            Some('f') => out.push(0x0c),
+            Some('b') => out.push(0x08),
+            Some('a') => out.push(0x07),
+            Some('v') => out.push(0x0b),
             Some('\\') => out.push(b'\\'),
             Some('"') => out.push(b'"'),
+            Some('\'') => out.push(b'\''),
+            // Octal: 1-3 octal digits (gas), low byte. `\0` is just the
+            // one-digit case.
+            Some(d @ '0'..='7') => {
+                let mut val = d.to_digit(8).unwrap();
+                for _ in 0..2 {
+                    match chars.peek() {
+                        Some(&n) if ('0'..='7').contains(&n) => {
+                            val = val * 8 + n.to_digit(8).unwrap();
+                            chars.next();
+                        }
+                        _ => break,
+                    }
+                }
+                out.push((val & 0xff) as u8);
+            }
+            // Hex: `\x` then one or more hex digits (gas), low byte.
+            Some('x') | Some('X') => {
+                let mut val: u32 = 0;
+                let mut any = false;
+                while let Some(&n) = chars.peek() {
+                    let Some(h) = n.to_digit(16) else { break };
+                    val = val.wrapping_mul(16).wrapping_add(h);
+                    any = true;
+                    chars.next();
+                }
+                if !any {
+                    return Err("\\x used with no following hex digits".into());
+                }
+                out.push((val & 0xff) as u8);
+            }
             Some(other) => return Err(format!("unsupported escape '\\{}'", other)),
             None => return Err("dangling backslash".into()),
         }
