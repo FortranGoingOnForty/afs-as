@@ -182,7 +182,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         _ => 8,
                     };
                     if current == usize::MAX {
-                        return Err(err(line, "data directive before any section".into()));
+                        current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
                     let mut bytes = Vec::new();
                     let mut relocs = Vec::new();
@@ -211,20 +211,51 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             }
                         }
                     }
+                    if secs[current].0 == ".bss"
+                        && (bytes.iter().any(|&b| b != 0) || !relocs.is_empty())
+                    {
+                        return Err(err(
+                            line,
+                            "attempt to store non-zero value in section `.bss'".into(),
+                        ));
+                    }
                     secs[current].1.items.push(Item::Bytes(bytes, relocs));
                 }
                 Directive::Ascii(b) => {
+                    if current == usize::MAX {
+                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    }
+                    if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
+                        return Err(err(
+                            line,
+                            "attempt to store non-empty string in section `.bss'".into(),
+                        ));
+                    }
                     secs[current].1.items.push(Item::Bytes(b.clone(), vec![]))
                 }
                 Directive::Asciz(b) => {
+                    if current == usize::MAX {
+                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    }
+                    if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
+                        return Err(err(
+                            line,
+                            "attempt to store non-empty string in section `.bss'".into(),
+                        ));
+                    }
                     let mut v = b.clone();
                     v.push(0);
                     secs[current].1.items.push(Item::Bytes(v, vec![]));
                 }
-                Directive::Zero(n) => secs[current]
-                    .1
-                    .items
-                    .push(Item::Bytes(vec![0u8; *n as usize], vec![])),
+                Directive::Zero(n) => {
+                    if current == usize::MAX {
+                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    }
+                    secs[current]
+                        .1
+                        .items
+                        .push(Item::Bytes(vec![0u8; *n as usize], vec![]));
+                }
             },
             Stmt::Insn { mnemonic, operands } => {
                 if current == usize::MAX {
@@ -624,6 +655,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             err(0, format!("displacement to '{}' overflows i32", r.sym))
                         })?;
                         let start = r.offset as usize;
+                        if start + 4 > obj.sections[sec_idx].data.len() {
+                            return Err(err(
+                                0,
+                                format!(
+                                    "cannot resolve PC-relative reference to '{}' inside NOBITS section '{}'",
+                                    r.sym, obj.sections[sec_idx].name
+                                ),
+                            ));
+                        }
                         obj.sections[sec_idx].data[start..start + 4]
                             .copy_from_slice(&d.to_le_bytes());
                         continue;
