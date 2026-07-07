@@ -106,7 +106,11 @@ pub enum Directive {
         sym: String,
         arg: SizeArg,
     },
-    P2Align(u32),
+    P2Align {
+        pow: u32,
+        /// `.p2align N,,M`: skip the alignment when padding would exceed M.
+        max_skip: Option<u64>,
+    },
     Byte(Vec<DataItem>),
     Short(Vec<DataItem>),
     Long(Vec<DataItem>),
@@ -488,9 +492,20 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
             Directive::Size { sym, arg }
         }
         "p2align" => {
-            let v = args.split(',').next().and_then(parse_int_opt);
-            match v {
-                Some(v) if (0..=16).contains(&v) => Directive::P2Align(v as u32),
+            // `.p2align pow[,fill[,max_skip]]`. The fill byte is not modeled
+            // (text pads with NOPs, data with zeros); max_skip suppresses the
+            // alignment when the padding would exceed it (gcc emits this).
+            let mut parts = args.split(',');
+            let pow = parts.next().and_then(parse_int_opt);
+            let _fill = parts.next();
+            let max_skip = parts
+                .next()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .and_then(parse_int_opt)
+                .and_then(|m| u64::try_from(m).ok());
+            match pow {
+                Some(v) if (0..=16).contains(&v) => Directive::P2Align { pow: v as u32, max_skip },
                 _ => return Err(err(format!("bad .p2align '{}'", args))),
             }
         }
