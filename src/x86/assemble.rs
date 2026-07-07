@@ -51,9 +51,10 @@ enum Item {
     Bytes(Vec<u8>, Vec<InsnReloc>),
     /// Relaxable branch to a section-local label.
     Branch { kind: BranchKind, label: String },
-    /// .p2align: pad to 1<<p2. Text sections fill with NOPs, data
-    /// with zeros.
-    Align(u32),
+    /// .p2align: pad to 1<<p2, but skip the alignment entirely when the
+    /// padding would exceed the optional max-skip (`.p2align N,,M`). Text
+    /// sections fill with NOPs, data with zeros.
+    Align(u32, Option<u64>),
     /// `.size sym, .-base`: records the dot position at the
     /// directive so the size is exact even with padding or local
     /// labels after the body. Zero width.
@@ -163,13 +164,13 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     commons.push((sym.clone(), *size, *align, line))
                 }
                 Directive::File(_) => {}
-                Directive::P2Align(p2) => {
+                Directive::P2Align { pow, max_skip } => {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
                     let sb = &mut secs[current].1;
-                    sb.max_align = sb.max_align.max(1u64 << p2);
-                    sb.items.push(Item::Align(*p2));
+                    sb.max_align = sb.max_align.max(1u64 << pow);
+                    sb.items.push(Item::Align(*pow, *max_skip));
                 }
                 Directive::Byte(items)
                 | Directive::Short(items)
@@ -182,7 +183,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         _ => 8,
                     };
                     if current == usize::MAX {
-                        return Err(err(line, "data directive before any section".into()));
+                        current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
                     let mut bytes = Vec::new();
                     let mut relocs = Vec::new();
@@ -211,20 +212,51 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             }
                         }
                     }
+                    if secs[current].0 == ".bss"
+                        && (bytes.iter().any(|&b| b != 0) || !relocs.is_empty())
+                    {
+                        return Err(err(
+                            line,
+                            "attempt to store non-zero value in section `.bss'".into(),
+                        ));
+                    }
                     secs[current].1.items.push(Item::Bytes(bytes, relocs));
                 }
                 Directive::Ascii(b) => {
+                    if current == usize::MAX {
+                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    }
+                    if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
+                        return Err(err(
+                            line,
+                            "attempt to store non-empty string in section `.bss'".into(),
+                        ));
+                    }
                     secs[current].1.items.push(Item::Bytes(b.clone(), vec![]))
                 }
                 Directive::Asciz(b) => {
+                    if current == usize::MAX {
+                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    }
+                    if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
+                        return Err(err(
+                            line,
+                            "attempt to store non-empty string in section `.bss'".into(),
+                        ));
+                    }
                     let mut v = b.clone();
                     v.push(0);
                     secs[current].1.items.push(Item::Bytes(v, vec![]));
                 }
-                Directive::Zero(n) => secs[current]
-                    .1
-                    .items
-                    .push(Item::Bytes(vec![0u8; *n as usize], vec![])),
+                Directive::Zero(n) => {
+                    if current == usize::MAX {
+                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    }
+                    secs[current]
+                        .1
+                        .items
+                        .push(Item::Bytes(vec![0u8; *n as usize], vec![]));
+                }
             },
             Stmt::Insn { mnemonic, operands } => {
                 if current == usize::MAX {
@@ -302,10 +334,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             branch_len(*kind, long[i])
                         }
                     }
-                    Item::Align(p2) => {
-                        let a = 1u64 << p2;
-                        pos.next_multiple_of(a) - pos
-                    }
+                    Item::Align(p2, max_skip) => align_pad(pos, *p2, *max_skip),
                     Item::SizeDot(_) => 0,
                 };
             }
@@ -350,10 +379,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             5
                         }
                     }
-                    Item::Align(p2) => {
-                        let a = 1u64 << p2;
-                        pos.next_multiple_of(a) - pos
-                    }
+                    Item::Align(p2, max_skip) => align_pad(pos, *p2, *max_skip),
                     Item::SizeDot(_) => 0,
                 };
             }
@@ -418,10 +444,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         }
                     }
                 }
-                Item::Align(p2) => {
-                    let a = 1usize << p2;
+                Item::Align(p2, max_skip) => {
+                    let pad = align_pad(bytes.len() as u64, *p2, *max_skip) as usize;
                     let here = bytes.len();
-                    let pad = here.next_multiple_of(a) - here;
                     if is_text {
                         fill_nops(&mut bytes, pad);
                     } else {
@@ -624,6 +649,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             err(0, format!("displacement to '{}' overflows i32", r.sym))
                         })?;
                         let start = r.offset as usize;
+                        if start + 4 > obj.sections[sec_idx].data.len() {
+                            return Err(err(
+                                0,
+                                format!(
+                                    "cannot resolve PC-relative reference to '{}' inside NOBITS section '{}'",
+                                    r.sym, obj.sections[sec_idx].name
+                                ),
+                            ));
+                        }
                         obj.sections[sec_idx].data[start..start + 4]
                             .copy_from_slice(&d.to_le_bytes());
                         continue;
@@ -690,6 +724,17 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
 /// up to 11 bytes (66/2e-prefixed nopw forms), longer fills go
 /// longest-first. Table measured from gas 2.44 output for every fill
 /// size 1..=15.
+/// Padding a `.p2align pow` inserts at `pos`, honoring a `.p2align N,,M`
+/// max-skip: gas emits no padding at all when it would exceed `max_skip`.
+fn align_pad(pos: u64, pow: u32, max_skip: Option<u64>) -> u64 {
+    let pad = pos.next_multiple_of(1u64 << pow) - pos;
+    if max_skip.is_some_and(|m| pad > m) {
+        0
+    } else {
+        pad
+    }
+}
+
 fn fill_nops(out: &mut Vec<u8>, mut n: usize) {
     const NOPS: [&[u8]; 11] = [
         &[0x90],

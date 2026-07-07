@@ -1049,9 +1049,16 @@ fn encode_test(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
         }
         [Operand::Imm(imm), Operand::Reg(r)] => {
             check_width(*r, w, mnemonic)?;
-            p.opcode.push(if w == Width::B { 0xf6 } else { 0xf7 });
-            p.rex.merge_reg(*r, RexSlot::B);
-            p.tail.push(0b11 << 6 | r.low3());
+            if r.num == 0 && r.class == RegClass::Gp {
+                // gas uses the accumulator short form A8/A9 for al/ax/eax/rax.
+                // TEST has no sign-extended-imm8 form, so it is always full
+                // width (REX.W / 0x66 already applied by width_setup).
+                p.opcode.push(if w == Width::B { 0xA8 } else { 0xA9 });
+            } else {
+                p.opcode.push(if w == Width::B { 0xf6 } else { 0xf7 });
+                p.rex.merge_reg(*r, RexSlot::B);
+                p.tail.push(0b11 << 6 | r.low3());
+            }
             match w {
                 Width::B => p.tail.push(*imm as u8),
                 Width::W => p.tail.extend_from_slice(&(*imm as i16).to_le_bytes()),
