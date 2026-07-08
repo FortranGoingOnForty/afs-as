@@ -12,6 +12,7 @@
 //! A6 (silent-wrong): non-zero `.byte`/`.ascii` in `.bss` was silently
 //! dropped; gas errors ("attempt to store non-zero value/string").
 
+use afs_as::elf::{SymbolPlace, SHT_NOBITS};
 use afs_as::x86::assemble::assemble_x86;
 
 fn asm(src: &str) -> Result<(), String> {
@@ -22,8 +23,17 @@ fn asm(src: &str) -> Result<(), String> {
 fn leading_data_directives_default_to_text_not_panic() {
     // gas puts each of these in .text with no error. The old code panicked
     // on `usize::MAX` for .ascii/.asciz/.zero and hard-errored on .byte.
-    for src in [".ascii \"hi\"\n", ".asciz \"hi\"\n", ".zero 4\n", ".byte 5\n", ".long 7\n"] {
-        assert!(asm(src).is_ok(), "leading {src:?} should assemble into .text");
+    for src in [
+        ".ascii \"hi\"\n",
+        ".asciz \"hi\"\n",
+        ".zero 4\n",
+        ".byte 5\n",
+        ".long 7\n",
+    ] {
+        assert!(
+            asm(src).is_ok(),
+            "leading {src:?} should assemble into .text"
+        );
     }
 }
 
@@ -59,6 +69,33 @@ fn zero_fill_in_bss_is_accepted() {
     for src in [".bss\n.zero 8\n", ".bss\n.byte 0\n", ".bss\n.asciz \"\"\n"] {
         assert!(asm(src).is_ok(), "{src:?} should be accepted in .bss");
     }
+}
+
+#[test]
+fn large_bss_space_tracks_virtual_size_without_materializing() {
+    let size = 4_294_967_299u64;
+    let expected_tail = 4_294_967_312u64;
+    let src = format!(".bss\nscratch:\n.space {size}\n.p2align 4\ntail:\n.byte 0\n");
+    let obj = assemble_x86(&src, 0).expect("large .bss .space should assemble");
+    let bss = obj.section_by_name(".bss").expect("bss section");
+
+    assert_eq!(bss.sh_type, SHT_NOBITS);
+    assert!(
+        bss.data.is_empty(),
+        "NOBITS section must not materialize bytes"
+    );
+    assert_eq!(bss.nobits_size, expected_tail + 1);
+
+    let scratch = obj
+        .symbols
+        .iter()
+        .find(|sym| sym.name == "scratch")
+        .unwrap();
+    let tail = obj.symbols.iter().find(|sym| sym.name == "tail").unwrap();
+    assert!(matches!(scratch.place, SymbolPlace::Section(_)));
+    assert!(matches!(tail.place, SymbolPlace::Section(_)));
+    assert_eq!(scratch.value, 0);
+    assert_eq!(tail.value, expected_tail);
 }
 
 #[test]

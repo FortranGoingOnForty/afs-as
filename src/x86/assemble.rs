@@ -19,9 +19,9 @@
 use std::collections::HashMap;
 
 use super::super::elf::{
-    self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, SHF_ALLOC,
-    SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK,
-    STT_FUNC, STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT, EM_X86_64,
+    self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, EM_X86_64, SHF_ALLOC,
+    SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK, STT_FUNC,
+    STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
 };
 use super::encode::{encode, InsnReloc};
 use super::parse::{parse, DataItem, Directive, SizeArg, Stmt, SymKind};
@@ -49,6 +49,9 @@ enum BranchKind {
 enum Item {
     /// Encoded bytes with item-relative relocations.
     Bytes(Vec<u8>, Vec<InsnReloc>),
+    /// Zero-filled storage that advances the section size. In NOBITS
+    /// sections this must not materialize bytes in memory.
+    Zero(u64),
     /// Relaxable branch to a section-local label.
     Branch { kind: BranchKind, label: String },
     /// .p2align: pad to 1<<p2, but skip the alignment entirely when the
@@ -96,8 +99,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let mut label_section: HashMap<String, usize> = HashMap::new();
 
     let ensure_sec = |name: &str,
-                          secs: &mut Vec<(String, SecBuild)>,
-                          sec_index: &mut HashMap<String, usize>|
+                      secs: &mut Vec<(String, SecBuild)>,
+                      sec_index: &mut HashMap<String, usize>|
      -> usize {
         if let Some(&i) = sec_index.get(name) {
             return i;
@@ -189,9 +192,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     let mut relocs = Vec::new();
                     for it in items {
                         match it {
-                            DataItem::Num(v) => {
-                                bytes.extend_from_slice(&v.to_le_bytes()[..width])
-                            }
+                            DataItem::Num(v) => bytes.extend_from_slice(&v.to_le_bytes()[..width]),
                             DataItem::Sym { name, addend } => {
                                 if width != 8 {
                                     return Err(err(
@@ -220,7 +221,11 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             "attempt to store non-zero value in section `.bss'".into(),
                         ));
                     }
-                    secs[current].1.items.push(Item::Bytes(bytes, relocs));
+                    if secs[current].0 == ".bss" {
+                        secs[current].1.items.push(Item::Zero(bytes.len() as u64));
+                    } else {
+                        secs[current].1.items.push(Item::Bytes(bytes, relocs));
+                    }
                 }
                 Directive::Ascii(b) => {
                     if current == usize::MAX {
@@ -232,7 +237,11 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
-                    secs[current].1.items.push(Item::Bytes(b.clone(), vec![]))
+                    if secs[current].0 == ".bss" {
+                        secs[current].1.items.push(Item::Zero(b.len() as u64));
+                    } else {
+                        secs[current].1.items.push(Item::Bytes(b.clone(), vec![]));
+                    }
                 }
                 Directive::Asciz(b) => {
                     if current == usize::MAX {
@@ -244,18 +253,26 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
-                    let mut v = b.clone();
-                    v.push(0);
-                    secs[current].1.items.push(Item::Bytes(v, vec![]));
+                    if secs[current].0 == ".bss" {
+                        secs[current].1.items.push(Item::Zero(b.len() as u64 + 1));
+                    } else {
+                        let mut v = b.clone();
+                        v.push(0);
+                        secs[current].1.items.push(Item::Bytes(v, vec![]));
+                    }
                 }
                 Directive::Zero(n) => {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
-                    secs[current]
-                        .1
-                        .items
-                        .push(Item::Bytes(vec![0u8; *n as usize], vec![]));
+                    if secs[current].0 == ".bss" {
+                        secs[current].1.items.push(Item::Zero(*n));
+                    } else {
+                        secs[current]
+                            .1
+                            .items
+                            .push(Item::Bytes(vec![0u8; *n as usize], vec![]));
+                    }
                 }
             },
             Stmt::Insn { mnemonic, operands } => {
@@ -284,7 +301,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 if enc.label_fix.is_some() {
                     return Err(err(line, format!("unexpected label fix for {}", mnemonic)));
                 }
-                secs[current].1.items.push(Item::Bytes(enc.bytes, enc.reloc.into_iter().collect()));
+                secs[current]
+                    .1
+                    .items
+                    .push(Item::Bytes(enc.bytes, enc.reloc.into_iter().collect()));
             }
         }
     }
@@ -292,6 +312,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     // ---- Relaxation + layout per section ---------------------------
     struct Laid {
         name: String,
+        size: u64,
         bytes: Vec<u8>,
         relocs: Vec<InsnReloc>, // section-relative offsets
         labels: HashMap<String, u64>,
@@ -304,11 +325,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     for (name, sb) in &secs {
         let is_text = name == ".text";
         // Branch sizing state: index into items -> long?
-        let mut long: Vec<bool> = sb
-            .items
-            .iter()
-            .map(|_| false)
-            .collect();
+        let mut long: Vec<bool> = sb.items.iter().map(|_| false).collect();
         let branch_len = |kind: BranchKind, is_long: bool| -> u64 {
             match (kind, is_long) {
                 (BranchKind::Jmp, false) => 2,
@@ -326,6 +343,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 offsets.push(pos);
                 pos += match item {
                     Item::Bytes(b, _) => b.len() as u64,
+                    Item::Zero(n) => *n,
                     Item::Branch { kind, label } => {
                         let external = !sb.labels.contains_key(label);
                         if external {
@@ -372,6 +390,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 item_offsets.push(pos);
                 pos += match item {
                     Item::Bytes(b, _) => b.len() as u64,
+                    Item::Zero(n) => *n,
                     Item::Branch { kind, label } => {
                         if sb.labels.contains_key(label) {
                             branch_len(*kind, long[i])
@@ -383,92 +402,127 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     Item::SizeDot(_) => 0,
                 };
             }
+            item_offsets.push(pos);
         }
         let mut size_dot: HashMap<String, u64> = HashMap::new();
+        let is_bss = name == ".bss";
+        let mut pos = 0u64;
+        let reloc_offset = |offset: u64| -> Result<u32, AsmX86Error> {
+            u32::try_from(offset)
+                .map_err(|_| err(0, format!("relocation offset {} exceeds u32", offset)))
+        };
         for (i, item) in sb.items.iter().enumerate() {
             match item {
                 Item::Bytes(b, rs) => {
-                    let base = bytes.len() as u32;
+                    let base = reloc_offset(pos)?;
                     for r in rs {
+                        let offset = base.checked_add(r.offset).ok_or_else(|| {
+                            err(
+                                0,
+                                format!("relocation offset {} + {} overflows u32", base, r.offset),
+                            )
+                        })?;
                         relocs.push(InsnReloc {
-                            offset: base + r.offset,
+                            offset,
                             ..r.clone()
                         });
                     }
-                    bytes.extend_from_slice(b);
+                    if !is_bss {
+                        bytes.extend_from_slice(b);
+                    }
+                    pos += b.len() as u64;
+                }
+                Item::Zero(n) => {
+                    if !is_bss {
+                        let len = usize::try_from(*n)
+                            .map_err(|_| err(0, format!("zero fill too large: {}", n)))?;
+                        let new_len = bytes
+                            .len()
+                            .checked_add(len)
+                            .ok_or_else(|| err(0, format!("zero fill too large: {}", n)))?;
+                        bytes.resize(new_len, 0);
+                    }
+                    pos += *n;
                 }
                 Item::Branch { kind, label } => {
                     if let Some(&target_item) = sb.labels.get(label) {
-                        let target = item_offsets.get(target_item).copied().unwrap_or_else(|| {
-                            // label at end of section
-                            *item_offsets.last().unwrap_or(&0)
-                        });
-                        let here = bytes.len() as u64;
+                        let target = item_offsets.get(target_item).copied().unwrap_or(pos);
+                        let here = pos;
                         if long[i] {
                             let (len, mut head) = match kind {
                                 BranchKind::Jmp => (5u64, vec![0xe9]),
                                 BranchKind::Jcc(cc) => (6u64, vec![0x0f, 0x80 + cc]),
                             };
                             let disp = target as i64 - (here + len) as i64;
-                            bytes.append(&mut head);
-                            bytes.extend_from_slice(&(disp as i32).to_le_bytes());
+                            if !is_bss {
+                                bytes.append(&mut head);
+                                bytes.extend_from_slice(&(disp as i32).to_le_bytes());
+                            }
+                            pos += len;
                         } else {
                             let disp = target as i64 - (here + 2) as i64;
                             let d8 = i8::try_from(disp).expect("relaxation fixed-point violated");
-                            match kind {
-                                BranchKind::Jmp => bytes.extend_from_slice(&[0xeb, d8 as u8]),
-                                BranchKind::Jcc(cc) => {
-                                    bytes.extend_from_slice(&[0x70 + cc, d8 as u8])
+                            if !is_bss {
+                                match kind {
+                                    BranchKind::Jmp => bytes.extend_from_slice(&[0xeb, d8 as u8]),
+                                    BranchKind::Jcc(cc) => {
+                                        bytes.extend_from_slice(&[0x70 + cc, d8 as u8])
+                                    }
                                 }
                             }
+                            pos += 2;
                         }
                     } else {
                         // External target: jmp only (tail call shape).
                         match kind {
                             BranchKind::Jmp => {
                                 relocs.push(InsnReloc {
-                                    offset: bytes.len() as u32 + 1,
+                                    offset: reloc_offset(pos + 1)?,
                                     sym: label.clone(),
                                     r_type: R_X86_64_PLT32,
                                     addend: -4,
                                 });
-                                bytes.push(0xe9);
-                                bytes.extend_from_slice(&0i32.to_le_bytes());
+                                if !is_bss {
+                                    bytes.push(0xe9);
+                                    bytes.extend_from_slice(&0i32.to_le_bytes());
+                                }
+                                pos += 5;
                             }
                             BranchKind::Jcc(_) => {
-                                return Err(err(
-                                    0,
-                                    format!("jcc to undefined label '{}'", label),
-                                ))
+                                return Err(err(0, format!("jcc to undefined label '{}'", label)))
                             }
                         }
                     }
                 }
                 Item::Align(p2, max_skip) => {
-                    let pad = align_pad(bytes.len() as u64, *p2, *max_skip) as usize;
-                    let here = bytes.len();
-                    if is_text {
-                        fill_nops(&mut bytes, pad);
-                    } else {
-                        bytes.resize(here + pad, 0);
+                    let pad = align_pad(pos, *p2, *max_skip);
+                    if !is_bss {
+                        let len = usize::try_from(pad)
+                            .map_err(|_| err(0, format!("alignment fill too large: {}", pad)))?;
+                        let here = bytes.len();
+                        if is_text {
+                            fill_nops(&mut bytes, len);
+                        } else {
+                            bytes.resize(here + len, 0);
+                        }
                     }
+                    pos += pad;
                 }
                 Item::SizeDot(sym) => {
-                    size_dot.insert(sym.clone(), bytes.len() as u64);
+                    size_dot.insert(sym.clone(), pos);
                 }
             }
         }
+        let section_size = pos;
         // Label -> final offset map.
         let mut labels = HashMap::new();
         for (l, &item_idx) in &sb.labels {
-            let off = item_offsets
-                .get(item_idx)
-                .copied()
-                .unwrap_or(bytes.len() as u64);
+            let off = item_offsets.get(item_idx).copied().unwrap_or(section_size);
             labels.insert(l.clone(), off);
         }
         laid.push(Laid {
             name: name.clone(),
+            size: section_size,
             size_dot,
             bytes,
             relocs,
@@ -490,14 +544,22 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 return Err(err(0, format!("unsupported section '{}'", other)));
             }
         };
-        let sh_type = if l.name == ".bss" { SHT_NOBITS } else { SHT_PROGBITS };
+        let sh_type = if l.name == ".bss" {
+            SHT_NOBITS
+        } else {
+            SHT_PROGBITS
+        };
         obj.sections.push(Section {
             name: l.name.clone(),
             sh_type,
             sh_flags,
             sh_addralign: l.max_align.max(align_default),
-            nobits_size: if sh_type == SHT_NOBITS { l.bytes.len() as u64 } else { 0 },
-            data: if sh_type == SHT_NOBITS { Vec::new() } else { l.bytes.clone() },
+            nobits_size: if sh_type == SHT_NOBITS { l.size } else { 0 },
+            data: if sh_type == SHT_NOBITS {
+                Vec::new()
+            } else {
+                l.bytes.clone()
+            },
             relas: Vec::new(),
         });
         model_sec_index.insert(l.name.clone(), obj.sections.len() - 1);
@@ -565,7 +627,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     let start = l.labels.get(base).copied().ok_or_else(|| {
                         err(
                             info.size_line,
-                            format!(".size {}: base '{}' not defined in this section", label, base),
+                            format!(
+                                ".size {}: base '{}' not defined in this section",
+                                label, base
+                            ),
                         )
                     })?;
                     dot.saturating_sub(start)
@@ -629,9 +694,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             let target = if let Some(&tsec) = label_section.get(&r.sym) {
                 let tmodel = model_sec_index[&secs[tsec].0];
                 let off = laid[tsec].labels[&r.sym];
-                let local = !syminfo
-                    .get(&r.sym)
-                    .is_some_and(|i| i.globl || i.weak);
+                let local = !syminfo.get(&r.sym).is_some_and(|i| i.globl || i.weak);
                 Some((tmodel, off, local))
             } else {
                 local_bss
@@ -640,8 +703,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             };
             let (sym_idx, r_type, addend) = match target {
                 Some((tmodel, off, true)) => {
-                    let pc_rel =
-                        r.r_type == R_X86_64_PC32 || r.r_type == R_X86_64_PLT32;
+                    let pc_rel = r.r_type == R_X86_64_PC32 || r.r_type == R_X86_64_PLT32;
                     if pc_rel && tmodel == sec_idx {
                         // Same-section local PC-rel: patch in place.
                         let disp = off as i64 + r.addend - r.offset as i64;
@@ -690,19 +752,18 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     } else {
                         // Undefined external.
                         let info = syminfo.get(&r.sym).cloned().unwrap_or_default();
-                        let idx =
-                            *model_sym_index.entry(r.sym.clone()).or_insert_with(|| {
-                                obj.symbols.push(Symbol {
-                                    name: r.sym.clone(),
-                                    bind: if info.weak { STB_WEAK } else { STB_GLOBAL },
-                                    typ: STT_NOTYPE,
-                                    vis: STV_DEFAULT,
-                                    place: SymbolPlace::Undef,
-                                    value: 0,
-                                    size: 0,
-                                });
-                                obj.symbols.len() - 1
+                        let idx = *model_sym_index.entry(r.sym.clone()).or_insert_with(|| {
+                            obj.symbols.push(Symbol {
+                                name: r.sym.clone(),
+                                bind: if info.weak { STB_WEAK } else { STB_GLOBAL },
+                                typ: STT_NOTYPE,
+                                vis: STV_DEFAULT,
+                                place: SymbolPlace::Undef,
+                                value: 0,
+                                size: 0,
                             });
+                            obj.symbols.len() - 1
+                        });
                         (idx, r.r_type, r.addend)
                     }
                 }
@@ -747,7 +808,9 @@ fn fill_nops(out: &mut Vec<u8>, mut n: usize) {
         &[0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
         &[0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
         &[0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
-        &[0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+        &[
+            0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
     ];
     while n > 0 {
         let take = n.min(11);
