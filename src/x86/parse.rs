@@ -614,7 +614,9 @@ fn parse_string_lit(s: &str) -> Result<Vec<u8>, String> {
             Some('r') => out.push(b'\r'),
             Some('f') => out.push(0x0c),
             Some('b') => out.push(0x08),
-            Some('a') => out.push(0x07),
+            // GNU as does not treat `\a` as BEL in x86 string directives;
+            // it drops the backslash and emits the literal `a`.
+            Some('a') => out.push(b'a'),
             Some('v') => out.push(0x0b),
             Some('\\') => out.push(b'\\'),
             Some('"') => out.push(b'"'),
