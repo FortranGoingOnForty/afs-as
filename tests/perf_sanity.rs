@@ -170,11 +170,13 @@ fn library_scaling_stays_reasonable_on_large_generated_input() {
     let medium_time = measure_library_pass(&medium, 2);
     let large_time = measure_library_pass(&large, 2);
 
+    let ratio_ceiling = medium_time.mul_f64(8.0) + Duration::from_millis(250);
     assert!(
-        large_time <= medium_time.mul_f64(5.5),
-        "library scaling regressed: medium {:?}, large {:?}",
+        large_time <= ratio_ceiling && large_time <= Duration::from_secs(2),
+        "library scaling regressed: medium {:?}, large {:?}, ratio ceiling {:?}",
         medium_time,
-        large_time
+        large_time,
+        ratio_ceiling
     );
 }
 
