@@ -38,7 +38,10 @@ impl X86ParseError {
     pub fn render_with_source(&self, src: &str) -> String {
         let text = src.lines().nth(self.line as usize - 1).unwrap_or("");
         let caret = " ".repeat(self.col.saturating_sub(1) as usize) + "^";
-        format!("{}:{}: {}\n{}\n{}", self.line, self.col, self.msg, text, caret)
+        format!(
+            "{}:{}: {}\n{}\n{}",
+            self.line, self.col, self.msg, text, caret
+        )
     }
 }
 
@@ -117,6 +120,10 @@ pub enum Directive {
     Quad(Vec<DataItem>),
     Ascii(Vec<u8>),
     Asciz(Vec<u8>),
+    Space {
+        size: u64,
+        fill: u8,
+    },
     Zero(u64),
     Comm {
         sym: String,
@@ -338,7 +345,11 @@ fn parse_mem(s: &str, line: u32, col: u32) -> Result<MemOperand, X86ParseError> 
     };
 
     let base = reg_of(parts[0])?;
-    let index = if parts.len() >= 2 { reg_of(parts[1])? } else { None };
+    let index = if parts.len() >= 2 {
+        reg_of(parts[1])?
+    } else {
+        None
+    };
     let scale = if parts.len() == 3 {
         match parts[2] {
             "1" => 1,
@@ -354,7 +365,10 @@ fn parse_mem(s: &str, line: u32, col: u32) -> Result<MemOperand, X86ParseError> 
         return Err(err(format!("bad index in '{}'", s)));
     }
     if base.is_none() && index.is_none() {
-        return Err(err(format!("memory operand '{}' has neither base nor index", s)));
+        return Err(err(format!(
+            "memory operand '{}' has neither base nor index",
+            s
+        )));
     }
     Ok(MemOperand {
         disp,
@@ -505,7 +519,10 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                 .and_then(parse_int_opt)
                 .and_then(|m| u64::try_from(m).ok());
             match pow {
-                Some(v) if (0..=16).contains(&v) => Directive::P2Align { pow: v as u32, max_skip },
+                Some(v) if (0..=16).contains(&v) => Directive::P2Align {
+                    pow: v as u32,
+                    max_skip,
+                },
                 _ => return Err(err(format!("bad .p2align '{}'", args))),
             }
         }
@@ -515,7 +532,28 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         "quad" => Directive::Quad(data_items(args)?),
         "ascii" => Directive::Ascii(parse_string_lit(args).map_err(&err)?),
         "asciz" | "string" => Directive::Asciz(parse_string_lit(args).map_err(&err)?),
-        "zero" | "skip" | "space" => {
+        "space" | "skip" => {
+            let mut parts = args.split(',').map(str::trim);
+            let v = parse_int(parts.next().unwrap_or(""))
+                .ok_or_else(|| err(format!("bad {} size '{}'", name, args)))?;
+            if v < 0 {
+                return Err(err(format!("negative {} size", name)));
+            }
+            let fill = match parts.next().filter(|s| !s.is_empty()) {
+                Some(fill) => parse_int(fill)
+                    .ok_or_else(|| err(format!("bad {} fill '{}'", name, args)))?
+                    as u8,
+                None => 0,
+            };
+            if parts.any(|s| !s.is_empty()) {
+                return Err(err(format!("bad {} operands '{}'", name, args)));
+            }
+            Directive::Space {
+                size: v as u64,
+                fill,
+            }
+        }
+        "zero" => {
             let v = parse_int(args.split(',').next().unwrap_or(""))
                 .ok_or_else(|| err(format!("bad {} size '{}'", name, args)))?;
             if v < 0 {
@@ -528,7 +566,8 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
             let sym = one_sym(it.next().unwrap_or(""))?;
             let size = parse_int(it.next().unwrap_or(""))
                 .filter(|v| *v >= 0)
-                .ok_or_else(|| err(format!("bad .comm size in '{}'", args)))? as u64;
+                .ok_or_else(|| err(format!("bad .comm size in '{}'", args)))?
+                as u64;
             let align = match it.next() {
                 None => 8,
                 Some(a) => parse_int(a)
@@ -656,10 +695,7 @@ mod tests {
         }
         // rip with addend
         let (_, ops) = one_insn("leaq tbl+16(%rip), %rdx\n");
-        assert_eq!(
-            ops[0],
-            Operand::Mem(MemOperand::rip("tbl", 16))
-        );
+        assert_eq!(ops[0], Operand::Mem(MemOperand::rip("tbl", 16)));
         // indirect branch forms
         let (_, ops) = one_insn("callq *%r11\n");
         assert!(matches!(ops[0], Operand::IndirectReg(_)));
@@ -684,10 +720,9 @@ mod tests {
 
     #[test]
     fn directive_forms() {
-        let stmts = parse(
-            ".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8\n.asciz \"hi\\n\"\n.p2align 4\n",
-        )
-        .unwrap();
+        let stmts =
+            parse(".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8\n.asciz \"hi\\n\"\n.p2align 4\n")
+                .unwrap();
         assert_eq!(
             stmts[0].stmt,
             Stmt::Directive(Directive::Comm {
@@ -714,6 +749,26 @@ mod tests {
             stmts[3].stmt,
             Stmt::Directive(Directive::Asciz(b"hi\n".to_vec()))
         );
+    }
+
+    #[test]
+    fn space_and_skip_directives_preserve_fill_byte() {
+        let stmts = parse(".space 4, 0x90\n.skip 3, 0xab\n.zero 2\n").unwrap();
+        assert_eq!(
+            stmts[0].stmt,
+            Stmt::Directive(Directive::Space {
+                size: 4,
+                fill: 0x90
+            })
+        );
+        assert_eq!(
+            stmts[1].stmt,
+            Stmt::Directive(Directive::Space {
+                size: 3,
+                fill: 0xab
+            })
+        );
+        assert_eq!(stmts[2].stmt, Stmt::Directive(Directive::Zero(2)));
     }
 
     #[test]

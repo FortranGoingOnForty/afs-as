@@ -52,6 +52,8 @@ enum Item {
     /// Zero-filled storage that advances the section size. In NOBITS
     /// sections this must not materialize bytes in memory.
     Zero(u64),
+    /// Repeated-byte storage for `.space N,F` / `.skip N,F`.
+    Fill { size: u64, byte: u8 },
     /// Relaxable branch to a section-local label.
     Branch { kind: BranchKind, label: String },
     /// .p2align: pad to 1<<p2, but skip the alignment entirely when the
@@ -94,7 +96,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let mut sec_index: HashMap<String, usize> = HashMap::new();
     let mut current: usize = usize::MAX;
     let mut syminfo: HashMap<String, SymInfo> = HashMap::new();
-    let mut commons: Vec<(String, u64, u64, u32)> = Vec::new(); // (sym, size, align, line)
+    // (sym, size, align, line)
+    let mut commons: Vec<(String, u64, u64, u32)> = Vec::new();
     // label -> section index (for cross-section checks + reloc targets)
     let mut label_section: HashMap<String, usize> = HashMap::new();
 
@@ -261,6 +264,21 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         secs[current].1.items.push(Item::Bytes(v, vec![]));
                     }
                 }
+                Directive::Space { size, fill } => {
+                    if current == usize::MAX {
+                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    }
+                    if secs[current].0 == ".bss" && *fill != 0 {
+                        return Err(err(
+                            line,
+                            "attempt to store non-zero value in section `.bss'".into(),
+                        ));
+                    }
+                    secs[current].1.items.push(Item::Fill {
+                        size: *size,
+                        byte: *fill,
+                    });
+                }
                 Directive::Zero(n) => {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
@@ -344,6 +362,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 pos += match item {
                     Item::Bytes(b, _) => b.len() as u64,
                     Item::Zero(n) => *n,
+                    Item::Fill { size, .. } => *size,
                     Item::Branch { kind, label } => {
                         let external = !sb.labels.contains_key(label);
                         if external {
@@ -391,6 +410,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 pos += match item {
                     Item::Bytes(b, _) => b.len() as u64,
                     Item::Zero(n) => *n,
+                    Item::Fill { size, .. } => *size,
                     Item::Branch { kind, label } => {
                         if sb.labels.contains_key(label) {
                             branch_len(*kind, long[i])
@@ -443,6 +463,18 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         bytes.resize(new_len, 0);
                     }
                     pos += *n;
+                }
+                Item::Fill { size, byte } => {
+                    if !is_bss {
+                        let len = usize::try_from(*size)
+                            .map_err(|_| err(0, format!("space fill too large: {}", size)))?;
+                        let new_len = bytes
+                            .len()
+                            .checked_add(len)
+                            .ok_or_else(|| err(0, format!("space fill too large: {}", size)))?;
+                        bytes.resize(new_len, *byte);
+                    }
+                    pos += *size;
                 }
                 Item::Branch { kind, label } => {
                     if let Some(&target_item) = sb.labels.get(label) {
