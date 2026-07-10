@@ -63,7 +63,6 @@ fn assemble_link_run(asm: &str) -> (i32, String) {
     (code, stdout)
 }
 
-
 /// Same policy as tests/common/corpus.rs::native_macho_host: this
 /// suite drives the macOS arm64 system toolchain; skip loudly on any
 /// other host.

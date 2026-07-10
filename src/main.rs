@@ -71,9 +71,7 @@ fn run() -> Result<(), (i32, String)> {
             output,
             target,
         }) => match target {
-            Target::Arm64Macho => {
-                assemble_cli(&input, &output).map_err(|err| (1, err.to_string()))
-            }
+            Target::Arm64Macho => assemble_cli(&input, &output).map_err(|err| (1, err.to_string())),
             Target::X8664Elf => assemble_cli_x86(&input, &output).map_err(|err| (1, err)),
         },
         Err(message) => Err((2, format!("afs-as: {}\n\n{}", message, USAGE))),

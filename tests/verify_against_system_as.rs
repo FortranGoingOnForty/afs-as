@@ -70,7 +70,6 @@ fn verify(asm: &str, inst: Inst) {
 
 // ---- Data processing ----
 
-
 /// Same policy as tests/common/corpus.rs::native_macho_host: this
 /// suite drives the macOS arm64 system toolchain; skip loudly on any
 /// other host.

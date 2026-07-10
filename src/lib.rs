@@ -8,10 +8,10 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 pub mod assemble;
+pub mod elf;
 pub mod encode;
 pub mod expr;
 pub mod lex;
-pub mod elf;
 pub mod macho;
 pub mod parse;
 

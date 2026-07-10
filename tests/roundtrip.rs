@@ -89,7 +89,6 @@ fn roundtrip(asm: &str) {
 
 // ---- Single instruction round-trips ----
 
-
 /// Same policy as tests/common/corpus.rs::native_macho_host: this
 /// suite drives the macOS arm64 system toolchain; skip loudly on any
 /// other host.

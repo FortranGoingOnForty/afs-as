@@ -231,7 +231,10 @@ fn system_as_rejects(path: &Path) {
 
 #[test]
 fn structured_mutations_fail_with_source_context() {
-    if !common::native_macho_host("malformed_mutation", "structured_mutations_fail_with_source_context") {
+    if !common::native_macho_host(
+        "malformed_mutation",
+        "structured_mutations_fail_with_source_context",
+    ) {
         return;
     }
     for case in mutation_cases() {

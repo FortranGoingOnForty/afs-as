@@ -81,8 +81,13 @@ pub mod reloc {
             match r_type {
                 R_X86_64_NONE => Some(0),
                 R_X86_64_64 => Some(8),
-                R_X86_64_PC32 | R_X86_64_PLT32 | R_X86_64_GOTPCREL | R_X86_64_32
-                | R_X86_64_32S | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX => Some(4),
+                R_X86_64_PC32
+                | R_X86_64_PLT32
+                | R_X86_64_GOTPCREL
+                | R_X86_64_32
+                | R_X86_64_32S
+                | R_X86_64_GOTPCRELX
+                | R_X86_64_REX_GOTPCRELX => Some(4),
                 _ => None,
             }
         }
@@ -886,7 +891,10 @@ pub fn write_elf_to(obj: &ObjectFile, w: &mut impl Write) -> Result<(), ElfError
 pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
     let ehdr = Elf64Ehdr::parse(bytes)?;
     if ehdr.e_type != ET_REL {
-        return Err(ElfError::at(16, format!("not ET_REL (e_type {})", ehdr.e_type)));
+        return Err(ElfError::at(
+            16,
+            format!("not ET_REL (e_type {})", ehdr.e_type),
+        ));
     }
     if ehdr.e_shentsize as usize != SHDR_SIZE {
         return Err(ElfError::at(
@@ -959,7 +967,11 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
             sh_type: sh.sh_type,
             sh_flags: sh.sh_flags,
             sh_addralign: sh.sh_addralign,
-            nobits_size: if sh.sh_type == SHT_NOBITS { sh.sh_size } else { 0 },
+            nobits_size: if sh.sh_type == SHT_NOBITS {
+                sh.sh_size
+            } else {
+                0
+            },
             data,
             relas: Vec::new(),
         });
@@ -992,12 +1004,15 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
             SHN_ABS => SymbolPlace::Abs,
             SHN_COMMON => SymbolPlace::Common,
             shndx => {
-                let model = file_to_model.get(&(shndx as usize)).copied().ok_or_else(|| {
-                    ElfError::new(format!(
-                        "symbol '{}' references untracked section {}",
-                        name, shndx
-                    ))
-                })?;
+                let model = file_to_model
+                    .get(&(shndx as usize))
+                    .copied()
+                    .ok_or_else(|| {
+                        ElfError::new(format!(
+                            "symbol '{}' references untracked section {}",
+                            name, shndx
+                        ))
+                    })?;
                 SymbolPlace::Section(model)
             }
         };
@@ -1051,7 +1066,9 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
                         bind: STB_LOCAL,
                         typ: STT_SECTION,
                         vis: STV_DEFAULT,
-                        place: target.map(SymbolPlace::Section).unwrap_or(SymbolPlace::Undef),
+                        place: target
+                            .map(SymbolPlace::Section)
+                            .unwrap_or(SymbolPlace::Undef),
                         value: 0,
                         size: 0,
                     });

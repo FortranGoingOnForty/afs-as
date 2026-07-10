@@ -24,7 +24,10 @@ fn normalize_tool_output(text: &str) -> String {
 
 #[test]
 fn section_inventory_extended_matches_load_commands_and_symbols() {
-    if !common::native_macho_host("section_inventory_corpus", "section_inventory_extended_matches_load_commands_and_symbols") {
+    if !common::native_macho_host(
+        "section_inventory_corpus",
+        "section_inventory_extended_matches_load_commands_and_symbols",
+    ) {
         return;
     }
     let paths = assemble_fixture("section_inventory_extended.s");

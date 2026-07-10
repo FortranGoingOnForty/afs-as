@@ -24,7 +24,10 @@ fn normalize_tool_output(text: &str) -> String {
 
 #[test]
 fn symbol_attr_inventory_matches_system_as() {
-    if !common::native_macho_host("symbol_attr_inventory_corpus", "symbol_attr_inventory_matches_system_as") {
+    if !common::native_macho_host(
+        "symbol_attr_inventory_corpus",
+        "symbol_attr_inventory_matches_system_as",
+    ) {
         return;
     }
     let paths = assemble_fixture("symbol_attr_inventory.s");

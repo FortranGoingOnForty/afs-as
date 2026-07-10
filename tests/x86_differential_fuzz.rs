@@ -64,7 +64,10 @@ fn seeded_cases_match_gas() {
         let ours = match assemble_x86(&src, host_osabi()) {
             Ok(o) => o,
             Err(e) => {
-                failures.push(format!("seed {}: our assembler failed: {}\n{}", seed, e, src));
+                failures.push(format!(
+                    "seed {}: our assembler failed: {}\n{}",
+                    seed, e, src
+                ));
                 continue;
             }
         };

@@ -21,7 +21,12 @@ fn host_osabi() -> u8 {
     }
 }
 
-fn diff_one(name: &str, src: &str, gas: &std::path::Path, tmp: &celf::TempArtifacts) -> Option<String> {
+fn diff_one(
+    name: &str,
+    src: &str,
+    gas: &std::path::Path,
+    tmp: &celf::TempArtifacts,
+) -> Option<String> {
     let src_path = tmp.path(&format!("_{}.s", name));
     let obj_path = tmp.path(&format!("_{}.o", name));
     std::fs::write(&src_path, src).unwrap();
@@ -183,4 +188,38 @@ fn branch_relaxation_matches_gas() {
         failures.len(),
         failures.join("\n\n")
     );
+}
+
+#[test]
+fn large_bss_space_matches_gas_without_materializing() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "large_bss_space_matches_gas_without_materializing",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_bss_virtual");
+    let src = ".bss\nscratch:\n.space 4294967299\n.p2align 4\ntail:\n.byte 0\n";
+    if let Some(f) = diff_one("large_bss_space", src, &gas, &tmp) {
+        panic!("{f}");
+    }
+}
+
+#[test]
+fn space_and_skip_fill_bytes_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "space_and_skip_fill_bytes_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_space_fill");
+    let src = ".text\n.globl f\nf:\n.space 4,0x90\n.skip 3,0xab\nret\n.data\nd:\n.space 4,0x7f\n";
+    if let Some(f) = diff_one("space_skip_fill", src, &gas, &tmp) {
+        panic!("{f}");
+    }
 }

@@ -22,7 +22,10 @@ fn harness_can_compare_text_bytes() {
 
 #[test]
 fn harness_can_inspect_object_metadata() {
-    if !common::native_macho_host("differential_harness", "harness_can_inspect_object_metadata") {
+    if !common::native_macho_host(
+        "differential_harness",
+        "harness_can_inspect_object_metadata",
+    ) {
         return;
     }
     let paths = common::TempPaths::new("afs_harness_meta");

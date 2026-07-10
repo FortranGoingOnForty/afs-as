@@ -363,7 +363,10 @@ fn generate_garbage_case(seed: u64) -> String {
 
 #[test]
 fn differential_seeded_surface_matches_system_as() {
-    if !common::native_macho_host("differential_fuzz", "differential_seeded_surface_matches_system_as") {
+    if !common::native_macho_host(
+        "differential_fuzz",
+        "differential_seeded_surface_matches_system_as",
+    ) {
         return;
     }
     for seed in 1..=128u64 {
@@ -384,7 +387,10 @@ fn differential_seeded_surface_matches_system_as() {
 
 #[test]
 fn differential_garbage_cases_do_not_panic() {
-    if !common::native_macho_host("differential_fuzz", "differential_garbage_cases_do_not_panic") {
+    if !common::native_macho_host(
+        "differential_fuzz",
+        "differential_garbage_cases_do_not_panic",
+    ) {
         return;
     }
     for seed in 1..=256u64 {

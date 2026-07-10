@@ -1,7 +1,5 @@
-//! Audit A6: string-literal escapes must decode like gas. The old parser
-//! read only a single octal digit (so `\012` became `\0` then the literal
-//! characters `12`) and had no `\x` hex escape at all. Values verified
-//! against `/usr/local/bin/as` on the x86_64 hosts.
+//! String-literal escapes must decode like gas. Earlier parser bugs
+//! included one-digit octal decoding and missing `\x` hex support.
 
 use afs_as::x86::assemble::assemble_x86;
 
@@ -34,8 +32,13 @@ fn hex_escapes_are_supported() {
 }
 
 #[test]
-fn named_escapes_match_c() {
+fn named_escapes_match_gas() {
     assert_eq!(data_of("\\n\\t\\r"), vec![0x0a, 0x09, 0x0d]);
-    assert_eq!(data_of("\\f\\b\\a\\v"), vec![0x0c, 0x08, 0x07, 0x0b]);
+    assert_eq!(data_of("\\f\\b\\v"), vec![0x0c, 0x08, 0x0b]);
     assert_eq!(data_of("\\\\\\\""), vec![b'\\', b'"']);
+}
+
+#[test]
+fn alert_escape_matches_gas_literal_a() {
+    assert_eq!(data_of("x\\ay"), b"xay");
 }

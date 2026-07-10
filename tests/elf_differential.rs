@@ -49,7 +49,8 @@ fn corpus_lift_reemit_matches_gas_under_policy() {
         let a = celf::normalize(&lifted);
         let b = celf::normalize(&reparsed);
         assert_eq!(
-            a, b,
+            a,
+            b,
             "{}: normalized objects diverge between gas and re-emission",
             src.display()
         );
@@ -157,7 +158,11 @@ fn freestanding_program_links_and_runs_identically() {
 
     for ld in &links {
         for (label, obj) in [("gas", &gas_obj), ("ours", &ours_obj)] {
-            let bin = tmp.path(&format!("_{}_{}", label, ld.file_name().unwrap().to_string_lossy()));
+            let bin = tmp.path(&format!(
+                "_{}_{}",
+                label,
+                ld.file_name().unwrap().to_string_lossy()
+            ));
             let out = Command::new(ld)
                 .arg("-o")
                 .arg(&bin)

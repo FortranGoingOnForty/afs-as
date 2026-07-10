@@ -112,16 +112,16 @@ fn readelf_parses_writer_output() {
         "R_X86_64_64",
         ".note.GNU-stack",
     ] {
-        assert!(text.contains(needle), "missing {:?} in readelf -a:\n{}", needle, text);
+        assert!(
+            text.contains(needle),
+            "missing {:?} in readelf -a:\n{}",
+            needle,
+            text
+        );
     }
     // No complaints about malformed structures.
     for bad in ["Error", "corrupt", "Warning"] {
-        assert!(
-            !text.contains(bad),
-            "readelf flagged {:?}:\n{}",
-            bad,
-            text
-        );
+        assert!(!text.contains(bad), "readelf flagged {:?}:\n{}", bad, text);
     }
     let _ = std::fs::remove_file(&obj_path);
 }
