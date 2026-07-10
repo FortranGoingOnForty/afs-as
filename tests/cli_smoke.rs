@@ -149,7 +149,7 @@ fn stdin_can_write_object_to_stdout() {
     assert!(
         output.stdout.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]),
         "stdout bytes: {:?}",
-        &output.stdout.get(..8).unwrap_or(&output.stdout)
+        output.stdout.get(..8).unwrap_or(&output.stdout)
     );
 }
 
