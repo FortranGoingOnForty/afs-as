@@ -141,7 +141,6 @@ where
     best_duration(samples)
 }
 
-
 /// Same policy as tests/common/corpus.rs::native_macho_host: this
 /// suite drives the macOS arm64 system toolchain; skip loudly on any
 /// other host.
@@ -158,7 +157,10 @@ fn native_macho_host(suite: &str, test: &str) -> bool {
 
 #[test]
 fn library_scaling_stays_reasonable_on_large_generated_input() {
-    if !native_macho_host("perf_sanity", "library_scaling_stays_reasonable_on_large_generated_input") {
+    if !native_macho_host(
+        "perf_sanity",
+        "library_scaling_stays_reasonable_on_large_generated_input",
+    ) {
         return;
     }
     let medium = perf_source(96);
@@ -182,7 +184,10 @@ fn library_scaling_stays_reasonable_on_large_generated_input() {
 
 #[test]
 fn cli_throughput_stays_under_generous_absolute_cap() {
-    if !native_macho_host("perf_sanity", "cli_throughput_stays_under_generous_absolute_cap") {
+    if !native_macho_host(
+        "perf_sanity",
+        "cli_throughput_stays_under_generous_absolute_cap",
+    ) {
         return;
     }
     let src = perf_source(192);

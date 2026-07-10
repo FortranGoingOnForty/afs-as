@@ -24,7 +24,10 @@ fn normalize_tool_output(text: &str) -> String {
 
 #[test]
 fn directive_inventory_extended_matches_system_as() {
-    if !common::native_macho_host("directive_inventory_corpus", "directive_inventory_extended_matches_system_as") {
+    if !common::native_macho_host(
+        "directive_inventory_corpus",
+        "directive_inventory_extended_matches_system_as",
+    ) {
         return;
     }
     let paths = assemble_fixture("directive_inventory_extended.s");

@@ -63,7 +63,12 @@ fn every_gas_record_roundtrips_bytewise() {
             let body_start = sh.sh_offset as usize;
             match sh.sh_type {
                 SHT_SYMTAB => {
-                    assert_eq!(sh.sh_size as usize % SYM_SIZE, 0, "{}: symtab size", src.display());
+                    assert_eq!(
+                        sh.sh_size as usize % SYM_SIZE,
+                        0,
+                        "{}: symtab size",
+                        src.display()
+                    );
                     for k in 0..sh.sh_size as usize / SYM_SIZE {
                         let so = body_start + k * SYM_SIZE;
                         let sym = Elf64Sym::parse(&bytes, so).expect("parse sym");
@@ -79,7 +84,12 @@ fn every_gas_record_roundtrips_bytewise() {
                     }
                 }
                 SHT_RELA => {
-                    assert_eq!(sh.sh_size as usize % RELA_SIZE, 0, "{}: rela size", src.display());
+                    assert_eq!(
+                        sh.sh_size as usize % RELA_SIZE,
+                        0,
+                        "{}: rela size",
+                        src.display()
+                    );
                     for k in 0..sh.sh_size as usize / RELA_SIZE {
                         let ro = body_start + k * RELA_SIZE;
                         let rela = Elf64Rela::parse(&bytes, ro).expect("parse rela");
@@ -125,10 +135,8 @@ fn gas_brands_osabi_as_expected() {
     let bytes = std::fs::read(&obj_path).expect("read");
     let ehdr = Elf64Ehdr::parse(&bytes).expect("ehdr");
     assert_eq!(
-        ehdr.osabi,
-        expected,
+        ehdr.osabi, expected,
         "gas EI_OSABI {} != expected {} on this OS — update the writer's per-target branding",
-        ehdr.osabi,
-        expected
+        ehdr.osabi, expected
     );
 }

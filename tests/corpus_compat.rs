@@ -14,7 +14,10 @@ fn assemble_fixture(name: &str) -> common::TempPaths {
 
 #[test]
 fn corpus_hello_world_matches_text_bytes_and_runs() {
-    if !common::native_macho_host("corpus_compat", "corpus_hello_world_matches_text_bytes_and_runs") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_hello_world_matches_text_bytes_and_runs",
+    ) {
         return;
     }
     let paths = assemble_fixture("hello_world.s");
@@ -52,7 +55,10 @@ fn corpus_local_branches_match_text_bytes() {
 
 #[test]
 fn corpus_numeric_local_labels_match_text_bytes() {
-    if !common::native_macho_host("corpus_compat", "corpus_numeric_local_labels_match_text_bytes") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_numeric_local_labels_match_text_bytes",
+    ) {
         return;
     }
     let paths = assemble_fixture("numeric_local_labels.s");
@@ -64,7 +70,10 @@ fn corpus_numeric_local_labels_match_text_bytes() {
 
 #[test]
 fn corpus_addressing_surface_matches_text_bytes() {
-    if !common::native_macho_host("corpus_compat", "corpus_addressing_surface_matches_text_bytes") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_addressing_surface_matches_text_bytes",
+    ) {
         return;
     }
     let paths = assemble_fixture("addressing_surface.s");
@@ -76,7 +85,10 @@ fn corpus_addressing_surface_matches_text_bytes() {
 
 #[test]
 fn corpus_fp_load_store_surface_matches_text_bytes() {
-    if !common::native_macho_host("corpus_compat", "corpus_fp_load_store_surface_matches_text_bytes") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_fp_load_store_surface_matches_text_bytes",
+    ) {
         return;
     }
     let paths = assemble_fixture("fp_load_store_surface.s");
@@ -112,7 +124,10 @@ fn corpus_system_hints_matches_text_bytes() {
 
 #[test]
 fn corpus_branch_address_surface_matches_text_bytes() {
-    if !common::native_macho_host("corpus_compat", "corpus_branch_address_surface_matches_text_bytes") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_branch_address_surface_matches_text_bytes",
+    ) {
         return;
     }
     let paths = assemble_fixture("branch_address_surface.s");
@@ -124,7 +139,10 @@ fn corpus_branch_address_surface_matches_text_bytes() {
 
 #[test]
 fn corpus_numeric_local_labels_match_raw_object() {
-    if !common::native_macho_host("corpus_compat", "corpus_numeric_local_labels_match_raw_object") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_numeric_local_labels_match_raw_object",
+    ) {
         return;
     }
     let paths = assemble_fixture("numeric_local_labels.s");
@@ -140,7 +158,10 @@ fn corpus_numeric_local_labels_match_raw_object() {
 
 #[test]
 fn corpus_branch_address_surface_matches_raw_object() {
-    if !common::native_macho_host("corpus_compat", "corpus_branch_address_surface_matches_raw_object") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_branch_address_surface_matches_raw_object",
+    ) {
         return;
     }
     let paths = assemble_fixture("branch_address_surface.s");
@@ -156,7 +177,10 @@ fn corpus_branch_address_surface_matches_raw_object() {
 
 #[test]
 fn corpus_fp_load_store_surface_matches_raw_object() {
-    if !common::native_macho_host("corpus_compat", "corpus_fp_load_store_surface_matches_raw_object") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_fp_load_store_surface_matches_raw_object",
+    ) {
         return;
     }
     let paths = assemble_fixture("fp_load_store_surface.s");
@@ -172,7 +196,10 @@ fn corpus_fp_load_store_surface_matches_raw_object() {
 
 #[test]
 fn corpus_clang_literal_addr_matches_raw_object() {
-    if !common::native_macho_host("corpus_compat", "corpus_clang_literal_addr_matches_raw_object") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_clang_literal_addr_matches_raw_object",
+    ) {
         return;
     }
     let paths = assemble_fixture("clang_literal_addr.s");
@@ -208,7 +235,10 @@ fn corpus_clang_fp_spill_matches_raw_object() {
 
 #[test]
 fn corpus_clang_extern_call_matches_raw_object() {
-    if !common::native_macho_host("corpus_compat", "corpus_clang_extern_call_matches_raw_object") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_clang_extern_call_matches_raw_object",
+    ) {
         return;
     }
     let paths = assemble_fixture("clang_extern_call.s");
@@ -228,7 +258,10 @@ fn corpus_clang_extern_call_matches_raw_object() {
 
 #[test]
 fn corpus_clang_local_branch_matches_raw_object() {
-    if !common::native_macho_host("corpus_compat", "corpus_clang_local_branch_matches_raw_object") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_clang_local_branch_matches_raw_object",
+    ) {
         return;
     }
     let paths = assemble_fixture("clang_local_branch.s");
@@ -296,7 +329,10 @@ fn corpus_clang_tlvp_load_matches_raw_object() {
 
 #[test]
 fn corpus_got_pointer_data_matches_raw_object() {
-    if !common::native_macho_host("corpus_compat", "corpus_got_pointer_data_matches_raw_object") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_got_pointer_data_matches_raw_object",
+    ) {
         return;
     }
     let paths = assemble_fixture("got_pointer_data.s");
@@ -316,7 +352,10 @@ fn corpus_got_pointer_data_matches_raw_object() {
 
 #[test]
 fn corpus_got_pointer_data_links_relocatable_with_support() {
-    if !common::native_macho_host("corpus_compat", "corpus_got_pointer_data_links_relocatable_with_support") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_got_pointer_data_links_relocatable_with_support",
+    ) {
         return;
     }
     let paths = assemble_fixture("got_pointer_data.s");
@@ -381,7 +420,10 @@ fn corpus_extended_addsub_matches_text_bytes() {
 
 #[test]
 fn corpus_conditional_select_surface_matches_raw_object() {
-    if !common::native_macho_host("corpus_compat", "corpus_conditional_select_surface_matches_raw_object") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_conditional_select_surface_matches_raw_object",
+    ) {
         return;
     }
     let paths = assemble_fixture("conditional_select_surface.s");
@@ -397,7 +439,10 @@ fn corpus_conditional_select_surface_matches_raw_object() {
 
 #[test]
 fn corpus_external_call_matches_relocations_and_symbols() {
-    if !common::native_macho_host("corpus_compat", "corpus_external_call_matches_relocations_and_symbols") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_external_call_matches_relocations_and_symbols",
+    ) {
         return;
     }
     let paths = assemble_fixture("external_call.s");
@@ -435,7 +480,10 @@ fn corpus_external_call_matches_relocations_and_symbols() {
 
 #[test]
 fn corpus_external_branches_match_relocations_and_symbols() {
-    if !common::native_macho_host("corpus_compat", "corpus_external_branches_match_relocations_and_symbols") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_external_branches_match_relocations_and_symbols",
+    ) {
         return;
     }
     let paths = assemble_fixture("external_branches.s");
@@ -473,7 +521,10 @@ fn corpus_external_branches_match_relocations_and_symbols() {
 
 #[test]
 fn corpus_external_branches_link_relocatable_with_support() {
-    if !common::native_macho_host("corpus_compat", "corpus_external_branches_link_relocatable_with_support") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_external_branches_link_relocatable_with_support",
+    ) {
         return;
     }
     let paths = assemble_fixture("external_branches.s");
@@ -494,7 +545,10 @@ fn corpus_external_branches_link_relocatable_with_support() {
 
 #[test]
 fn fixture_paths_are_resolved_from_corpus_directory() {
-    if !common::native_macho_host("corpus_compat", "fixture_paths_are_resolved_from_corpus_directory") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "fixture_paths_are_resolved_from_corpus_directory",
+    ) {
         return;
     }
     let path = common::fixture_path("hello_world.s");
@@ -503,7 +557,10 @@ fn fixture_paths_are_resolved_from_corpus_directory() {
 
 #[test]
 fn corpus_cstring_section_matches_load_commands_and_symbols() {
-    if !common::native_macho_host("corpus_compat", "corpus_cstring_section_matches_load_commands_and_symbols") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_cstring_section_matches_load_commands_and_symbols",
+    ) {
         return;
     }
     let paths = assemble_fixture("cstring_data.s");
@@ -536,7 +593,10 @@ fn corpus_cstring_section_matches_load_commands_and_symbols() {
 
 #[test]
 fn corpus_section_inventory_matches_load_commands_and_symbols() {
-    if !common::native_macho_host("corpus_compat", "corpus_section_inventory_matches_load_commands_and_symbols") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_section_inventory_matches_load_commands_and_symbols",
+    ) {
         return;
     }
     let paths = assemble_fixture("section_inventory.s");
@@ -616,7 +676,10 @@ fn corpus_symbol_attributes_match_nm_output() {
 
 #[test]
 fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
-    if !common::native_macho_host("corpus_compat", "corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols",
+    ) {
         return;
     }
     let paths = assemble_fixture("macho_writer_mix.s");
@@ -717,7 +780,10 @@ fn corpus_macho_writer_mix_matches_load_commands_relocations_and_symbols() {
 
 #[test]
 fn corpus_macho_writer_mix_links_relocatable_with_support() {
-    if !common::native_macho_host("corpus_compat", "corpus_macho_writer_mix_links_relocatable_with_support") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_macho_writer_mix_links_relocatable_with_support",
+    ) {
         return;
     }
     let paths = assemble_fixture("macho_writer_mix.s");
@@ -738,7 +804,10 @@ fn corpus_macho_writer_mix_links_relocatable_with_support() {
 
 #[test]
 fn corpus_string_suffixes_matches_string_table_layout() {
-    if !common::native_macho_host("corpus_compat", "corpus_string_suffixes_matches_string_table_layout") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_string_suffixes_matches_string_table_layout",
+    ) {
         return;
     }
     let paths = assemble_fixture("string_suffixes.s");
@@ -763,7 +832,10 @@ fn corpus_string_suffixes_matches_string_table_layout() {
 
 #[test]
 fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
-    if !common::native_macho_host("corpus_compat", "corpus_expression_symbols_match_bytes_relocations_and_symbols") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_expression_symbols_match_bytes_relocations_and_symbols",
+    ) {
         return;
     }
     let paths = assemble_fixture("expression_symbols.s");
@@ -791,7 +863,10 @@ fn corpus_expression_symbols_match_bytes_relocations_and_symbols() {
 
 #[test]
 fn corpus_expression_symbols_link_relocatable_with_support() {
-    if !common::native_macho_host("corpus_compat", "corpus_expression_symbols_link_relocatable_with_support") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_expression_symbols_link_relocatable_with_support",
+    ) {
         return;
     }
     let paths = assemble_fixture("expression_symbols.s");
@@ -812,7 +887,10 @@ fn corpus_expression_symbols_link_relocatable_with_support() {
 
 #[test]
 fn corpus_storage_directives_match_bytes_sections_and_symbols() {
-    if !common::native_macho_host("corpus_compat", "corpus_storage_directives_match_bytes_sections_and_symbols") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_storage_directives_match_bytes_sections_and_symbols",
+    ) {
         return;
     }
     let paths = assemble_fixture("storage_directives.s");
@@ -856,7 +934,10 @@ fn corpus_storage_directives_match_bytes_sections_and_symbols() {
 
 #[test]
 fn corpus_alignment_directives_match_text_data_and_section_alignment() {
-    if !common::native_macho_host("corpus_compat", "corpus_alignment_directives_match_text_data_and_section_alignment") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_alignment_directives_match_text_data_and_section_alignment",
+    ) {
         return;
     }
     let paths = assemble_fixture("alignment_directives.s");
@@ -889,7 +970,10 @@ fn corpus_alignment_directives_match_text_data_and_section_alignment() {
 
 #[test]
 fn corpus_metadata_directives_match_header_and_load_commands() {
-    if !common::native_macho_host("corpus_compat", "corpus_metadata_directives_match_header_and_load_commands") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_metadata_directives_match_header_and_load_commands",
+    ) {
         return;
     }
     let paths = assemble_fixture("metadata_directives.s");
@@ -927,7 +1011,10 @@ fn corpus_metadata_directives_match_header_and_load_commands() {
 
 #[test]
 fn corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations() {
-    if !common::native_macho_host("corpus_compat", "corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations",
+    ) {
         return;
     }
     let paths = assemble_fixture("cfi_surface.s");
@@ -963,7 +1050,10 @@ fn corpus_cfi_surface_matches_text_bytes_load_commands_and_relocations() {
 
 #[test]
 fn corpus_cfi_nostack_matches_load_commands_and_relocations() {
-    if !common::native_macho_host("corpus_compat", "corpus_cfi_nostack_matches_load_commands_and_relocations") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_cfi_nostack_matches_load_commands_and_relocations",
+    ) {
         return;
     }
     let paths = assemble_fixture("cfi_nostack.s");
@@ -988,7 +1078,10 @@ fn corpus_cfi_nostack_matches_load_commands_and_relocations() {
 
 #[test]
 fn corpus_cfi_saved_pairs_matches_load_commands_and_relocations() {
-    if !common::native_macho_host("corpus_compat", "corpus_cfi_saved_pairs_matches_load_commands_and_relocations") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_cfi_saved_pairs_matches_load_commands_and_relocations",
+    ) {
         return;
     }
     let paths = assemble_fixture("cfi_saved_pairs.s");
@@ -1013,7 +1106,10 @@ fn corpus_cfi_saved_pairs_matches_load_commands_and_relocations() {
 
 #[test]
 fn corpus_cfi_dwarf_fallback_matches_load_commands_relocations_and_eh_frame() {
-    if !common::native_macho_host("corpus_compat", "corpus_cfi_dwarf_fallback_matches_load_commands_relocations_and_eh_frame") {
+    if !common::native_macho_host(
+        "corpus_compat",
+        "corpus_cfi_dwarf_fallback_matches_load_commands_relocations_and_eh_frame",
+    ) {
         return;
     }
     let paths = assemble_fixture("cfi_dwarf_fallback.s");

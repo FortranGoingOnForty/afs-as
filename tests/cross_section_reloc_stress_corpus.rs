@@ -24,7 +24,10 @@ fn normalize_tool_output(text: &str) -> String {
 
 #[test]
 fn cross_section_reloc_stress_matches_system_as() {
-    if !common::native_macho_host("cross_section_reloc_stress_corpus", "cross_section_reloc_stress_matches_system_as") {
+    if !common::native_macho_host(
+        "cross_section_reloc_stress_corpus",
+        "cross_section_reloc_stress_matches_system_as",
+    ) {
         return;
     }
     let paths = assemble_fixture("cross_section_reloc_stress.s");
@@ -143,7 +146,10 @@ fn cross_section_reloc_stress_matches_system_as() {
 
 #[test]
 fn cross_section_reloc_stress_links_relocatable_with_support() {
-    if !common::native_macho_host("cross_section_reloc_stress_corpus", "cross_section_reloc_stress_links_relocatable_with_support") {
+    if !common::native_macho_host(
+        "cross_section_reloc_stress_corpus",
+        "cross_section_reloc_stress_links_relocatable_with_support",
+    ) {
         return;
     }
     let paths = assemble_fixture("cross_section_reloc_stress.s");

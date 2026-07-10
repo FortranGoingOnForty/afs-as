@@ -149,7 +149,10 @@ fn system_as_rejects(path: &Path) {
 
 #[test]
 fn grouped_mutations_fail_with_source_context_and_no_panics() {
-    if !common::native_macho_host("grouped_negative_stress", "grouped_mutations_fail_with_source_context_and_no_panics") {
+    if !common::native_macho_host(
+        "grouped_negative_stress",
+        "grouped_mutations_fail_with_source_context_and_no_panics",
+    ) {
         return;
     }
     for case in mutation_cases() {
@@ -195,7 +198,10 @@ fn grouped_mutations_fail_with_source_context_and_no_panics() {
 
 #[test]
 fn duplicate_build_version_uses_last_directive_like_system_as() {
-    if !common::native_macho_host("grouped_negative_stress", "duplicate_build_version_uses_last_directive_like_system_as") {
+    if !common::native_macho_host(
+        "grouped_negative_stress",
+        "duplicate_build_version_uses_last_directive_like_system_as",
+    ) {
         return;
     }
     let src = "\

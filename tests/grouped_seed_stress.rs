@@ -313,7 +313,10 @@ fn assert_relocatable_parity(paths: &StressPaths, src: &str) {
 
 #[test]
 fn grouped_metadata_heavy_cases_match_system_as_and_link_relocatable() {
-    if !common::native_macho_host("grouped_seed_stress", "grouped_metadata_heavy_cases_match_system_as_and_link_relocatable") {
+    if !common::native_macho_host(
+        "grouped_seed_stress",
+        "grouped_metadata_heavy_cases_match_system_as_and_link_relocatable",
+    ) {
         return;
     }
     for seed in 1..=4u64 {
@@ -325,7 +328,10 @@ fn grouped_metadata_heavy_cases_match_system_as_and_link_relocatable() {
 
 #[test]
 fn grouped_section_switch_cases_match_system_as() {
-    if !common::native_macho_host("grouped_seed_stress", "grouped_section_switch_cases_match_system_as") {
+    if !common::native_macho_host(
+        "grouped_seed_stress",
+        "grouped_section_switch_cases_match_system_as",
+    ) {
         return;
     }
     for seed in 1..=6u64 {

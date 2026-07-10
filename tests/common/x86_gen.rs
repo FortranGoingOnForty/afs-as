@@ -49,7 +49,9 @@ const GP32: &[&str] = &[
 const GP16: &[&str] = &["%ax", "%bx", "%cx", "%dx", "%si", "%di", "%r8w", "%r13w"];
 // No high-8 registers: they cannot pair with REX operands and the
 // generator does not track that constraint.
-const GP8: &[&str] = &["%al", "%bl", "%cl", "%dl", "%sil", "%dil", "%spl", "%r9b", "%r14b"];
+const GP8: &[&str] = &[
+    "%al", "%bl", "%cl", "%dl", "%sil", "%dil", "%spl", "%r9b", "%r14b",
+];
 const XMM: &[&str] = &[
     "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7", "%xmm8", "%xmm9",
     "%xmm10", "%xmm11", "%xmm12", "%xmm13", "%xmm14", "%xmm15",
@@ -109,7 +111,10 @@ fn int_op(src: &mut String, rng: &mut Rng, seed: u64) {
     };
     let stem = *rng.pick(&["mov", "add", "sub", "cmp", "and", "or", "xor", "adc", "sbb"]);
     match rng.bounded(5) {
-        0 => line(src, &format!("{}{} {}, {}", stem, sfx, rng.pick(regs), rng.pick(regs))),
+        0 => line(
+            src,
+            &format!("{}{} {}, {}", stem, sfx, rng.pick(regs), rng.pick(regs)),
+        ),
         1 => {
             // Immediate, clamped to the width so gas doesn't warn.
             // Only mov has a 64-bit immediate form; arith stems are
@@ -124,17 +129,29 @@ fn int_op(src: &mut String, rng: &mut Rng, seed: u64) {
             };
             // mov to memory can't take a 64-bit immediate.
             if rng.chance(70) {
-                line(src, &format!("{}{} ${}, {}", stem, sfx, imm, rng.pick(regs)));
+                line(
+                    src,
+                    &format!("{}{} ${}, {}", stem, sfx, imm, rng.pick(regs)),
+                );
             } else {
                 let imm32 = imm as i32;
                 line(src, &format!("{}{} ${}, {}", stem, sfx, imm32, mem(rng)));
             }
         }
-        2 => line(src, &format!("{}{} {}, {}", stem, sfx, rng.pick(regs), mem(rng))),
-        3 => line(src, &format!("{}{} {}, {}", stem, sfx, mem(rng), rng.pick(regs))),
+        2 => line(
+            src,
+            &format!("{}{} {}, {}", stem, sfx, rng.pick(regs), mem(rng)),
+        ),
+        3 => line(
+            src,
+            &format!("{}{} {}, {}", stem, sfx, mem(rng), rng.pick(regs)),
+        ),
         _ => match rng.bounded(6) {
             0 => {
-                line(src, &format!("test{} {}, {}", sfx, rng.pick(regs), rng.pick(regs)));
+                line(
+                    src,
+                    &format!("test{} {}, {}", sfx, rng.pick(regs), rng.pick(regs)),
+                );
                 line(src, &format!("set{} {}", rng.pick(CONDS), rng.pick(GP8)));
             }
             1 => {
@@ -150,8 +167,14 @@ fn int_op(src: &mut String, rng: &mut Rng, seed: u64) {
                 }
             }
             2 => {
-                line(src, &format!("movzbl {}, {}", rng.pick(GP8), rng.pick(GP32)));
-                line(src, &format!("movslq {}, {}", rng.pick(GP32), rng.pick(GP64)));
+                line(
+                    src,
+                    &format!("movzbl {}, {}", rng.pick(GP8), rng.pick(GP32)),
+                );
+                line(
+                    src,
+                    &format!("movslq {}, {}", rng.pick(GP32), rng.pick(GP64)),
+                );
             }
             3 => {
                 line(src, "cqto");
@@ -161,14 +184,14 @@ fn int_op(src: &mut String, rng: &mut Rng, seed: u64) {
                 src,
                 &format!("imulq {}, {}", rng.pick(GP64), rng.pick(GP64)),
             ),
-            _ => line(
-                src,
-                &format!("leaq {}, {}", mem(rng), rng.pick(GP64)),
-            ),
+            _ => line(src, &format!("leaq {}, {}", mem(rng), rng.pick(GP64))),
         },
     }
     if rng.chance(10) {
-        line(src, &format!("movabsq ${}, {}", rng.pick(IMM_BOUNDARY), rng.pick(GP64)));
+        line(
+            src,
+            &format!("movabsq ${}, {}", rng.pick(IMM_BOUNDARY), rng.pick(GP64)),
+        );
     }
     if rng.chance(8) {
         line(src, &format!("leaq lit_{}(%rip), {}", seed, rng.pick(GP64)));
@@ -204,7 +227,14 @@ fn sse_op(src: &mut String, rng: &mut Rng, seed: u64) {
         }
         3 => {
             let op = *rng.pick(&[
-                "paddd", "paddq", "psubd", "pand", "pandn", "por", "pcmpgtd", "pmuludq",
+                "paddd",
+                "paddq",
+                "psubd",
+                "pand",
+                "pandn",
+                "por",
+                "pcmpgtd",
+                "pmuludq",
                 "punpcklqdq",
             ]);
             line(src, &format!("{} {}, {}", op, rng.pick(XMM), rng.pick(XMM)));
@@ -212,15 +242,30 @@ fn sse_op(src: &mut String, rng: &mut Rng, seed: u64) {
         4 => match rng.bounded(4) {
             0 => line(
                 src,
-                &format!("pshufd ${}, {}, {}", rng.bounded(256), rng.pick(XMM), rng.pick(XMM)),
+                &format!(
+                    "pshufd ${}, {}, {}",
+                    rng.bounded(256),
+                    rng.pick(XMM),
+                    rng.pick(XMM)
+                ),
             ),
             1 => line(
                 src,
-                &format!("shufps ${}, {}, {}", rng.bounded(256), rng.pick(XMM), rng.pick(XMM)),
+                &format!(
+                    "shufps ${}, {}, {}",
+                    rng.bounded(256),
+                    rng.pick(XMM),
+                    rng.pick(XMM)
+                ),
             ),
             2 => line(
                 src,
-                &format!("cmpps ${}, {}, {}", rng.bounded(8), rng.pick(XMM), rng.pick(XMM)),
+                &format!(
+                    "cmpps ${}, {}, {}",
+                    rng.bounded(8),
+                    rng.pick(XMM),
+                    rng.pick(XMM)
+                ),
             ),
             _ => {
                 line(src, &format!("movd {}, {}", rng.pick(GP32), rng.pick(XMM)));
@@ -228,9 +273,18 @@ fn sse_op(src: &mut String, rng: &mut Rng, seed: u64) {
             }
         },
         _ => match rng.bounded(4) {
-            0 => line(src, &format!("cvtsi2sdq {}, {}", rng.pick(GP64), rng.pick(XMM))),
-            1 => line(src, &format!("cvtsi2ssl {}, {}", rng.pick(GP32), rng.pick(XMM))),
-            2 => line(src, &format!("cvttsd2siq {}, {}", rng.pick(XMM), rng.pick(GP64))),
+            0 => line(
+                src,
+                &format!("cvtsi2sdq {}, {}", rng.pick(GP64), rng.pick(XMM)),
+            ),
+            1 => line(
+                src,
+                &format!("cvtsi2ssl {}, {}", rng.pick(GP32), rng.pick(XMM)),
+            ),
+            2 => line(
+                src,
+                &format!("cvttsd2siq {}, {}", rng.pick(XMM), rng.pick(GP64)),
+            ),
             _ => line(src, &format!("movsd lit_{}(%rip), {}", seed, rng.pick(XMM))),
         },
     }
@@ -318,10 +372,39 @@ pub fn generate_supported_case(seed: u64) -> String {
 pub fn generate_garbage_case(seed: u64) -> String {
     let mut rng = Rng::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
     const FRAGS: &[&str] = &[
-        "movq", "%rax", "%zmm9", "$$", "(((", ")))", ".quad", ".globl", "0x", "-", ",", ",,",
-        "%rip", "(%rip", "jmp", "call *", ".byte 300", ".ascii \"unterminated", "lbl:", ":",
-        "$0x10000000000000000", "%r16", "mov q", ".p2align 99", ".comm", "@plt", "#comment",
-        ".size f", "je", "leaq (%rax,%rsp,3)", "\u{7f}", "\t\t", "%%",
+        "movq",
+        "%rax",
+        "%zmm9",
+        "$$",
+        "(((",
+        ")))",
+        ".quad",
+        ".globl",
+        "0x",
+        "-",
+        ",",
+        ",,",
+        "%rip",
+        "(%rip",
+        "jmp",
+        "call *",
+        ".byte 300",
+        ".ascii \"unterminated",
+        "lbl:",
+        ":",
+        "$0x10000000000000000",
+        "%r16",
+        "mov q",
+        ".p2align 99",
+        ".comm",
+        "@plt",
+        "#comment",
+        ".size f",
+        "je",
+        "leaq (%rax,%rsp,3)",
+        "\u{7f}",
+        "\t\t",
+        "%%",
     ];
     let mut src = String::new();
     let n = 1 + rng.bounded(20);

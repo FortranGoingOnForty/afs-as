@@ -80,7 +80,9 @@ impl Rex {
     fn emit(&self, out: &mut Vec<u8>) -> Result<(), String> {
         let any = self.w || self.r || self.x || self.b || self.forced;
         if any && self.forbidden {
-            return Err("high-8 register (%ah/%ch/%dh/%bh) cannot appear in a REX instruction".into());
+            return Err(
+                "high-8 register (%ah/%ch/%dh/%bh) cannot appear in a REX instruction".into(),
+            );
         }
         if any {
             out.push(
@@ -153,14 +155,17 @@ fn encode_mem(reg_field: u8, mem: &MemOperand, rex: &mut Rex) -> Result<MemEnc, 
     // Base/index displacements are 32-bit signed; a wider value (the RIP
     // path already returned above) would otherwise truncate silently.
     if i32::try_from(disp).is_err() {
-        return Err(format!("displacement {} out of range for 32-bit disp", disp));
+        return Err(format!(
+            "displacement {} out of range for 32-bit disp",
+            disp
+        ));
     }
     let disp8 = i8::try_from(disp).is_ok();
 
     match (base, index) {
         (Some(b), None) => {
             let needs_sib = b.low3() == 0b100; // rsp/r12
-            // rbp/r13 with no disp still need disp8=0.
+                                               // rbp/r13 with no disp still need disp8=0.
             let force_disp8 = disp == 0 && b.low3() == 0b101;
             let (modbits, disp_bytes): (u8, Vec<u8>) = if disp == 0 && !force_disp8 {
                 (0b00, vec![])
@@ -541,31 +546,32 @@ const SSE_MOV: &[(&str, Sse, u8, u8)] = &[
 
 fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String> {
     // Shared emitters ------------------------------------------------
-    let rm_form = |prefix: Sse, opcode: &[u8], ops: &[Operand], imm: &[u8]| -> Result<Encoded, String> {
-        let mut p = Parts::new();
-        prefix.emit(&mut p.prefix);
-        match ops {
-            [Operand::Reg(src), dst_op] if src.class == RegClass::Xmm => {
-                let dst = xmm(dst_op).ok_or("expected xmm destination")?;
-                p.rex.merge_reg(dst, RexSlot::R);
-                p.rex.merge_reg(*src, RexSlot::B);
-                p.opcode.extend_from_slice(opcode);
-                p.tail.push(0b11 << 6 | dst.low3() << 3 | src.low3());
+    let rm_form =
+        |prefix: Sse, opcode: &[u8], ops: &[Operand], imm: &[u8]| -> Result<Encoded, String> {
+            let mut p = Parts::new();
+            prefix.emit(&mut p.prefix);
+            match ops {
+                [Operand::Reg(src), dst_op] if src.class == RegClass::Xmm => {
+                    let dst = xmm(dst_op).ok_or("expected xmm destination")?;
+                    p.rex.merge_reg(dst, RexSlot::R);
+                    p.rex.merge_reg(*src, RexSlot::B);
+                    p.opcode.extend_from_slice(opcode);
+                    p.tail.push(0b11 << 6 | dst.low3() << 3 | src.low3());
+                }
+                [Operand::Mem(m), dst_op] => {
+                    let dst = xmm(dst_op).ok_or("expected xmm destination")?;
+                    p.rex.merge_reg(dst, RexSlot::R);
+                    p.opcode.extend_from_slice(opcode);
+                    p.mem(dst.low3(), m)?;
+                }
+                _ => return Err("expected xmm/mem source, xmm destination".into()),
             }
-            [Operand::Mem(m), dst_op] => {
-                let dst = xmm(dst_op).ok_or("expected xmm destination")?;
-                p.rex.merge_reg(dst, RexSlot::R);
-                p.opcode.extend_from_slice(opcode);
-                p.mem(dst.low3(), m)?;
-            }
-            _ => return Err("expected xmm/mem source, xmm destination".into()),
-        }
-        // A trailing immediate (pshufd/shufps/cmpps/cmppd) must join the
-        // tail before finish() so a RIP-relative disp32 addend counts it —
-        // gas emits sym-5 for an imm8 form, not sym-4.
-        p.tail.extend_from_slice(imm);
-        p.finish()
-    };
+            // A trailing immediate (pshufd/shufps/cmpps/cmppd) must join the
+            // tail before finish() so a RIP-relative disp32 addend counts it —
+            // gas emits sym-5 for an imm8 form, not sym-4.
+            p.tail.extend_from_slice(imm);
+            p.finish()
+        };
 
     // movhlps (0F 12) has only the reg,reg form; with a memory operand the
     // same opcode is movlps, a different instruction. It lives in SSE_RM
