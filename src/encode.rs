@@ -409,7 +409,36 @@ pub enum Inst {
         sf: bool,
     },
 
-    // ---- Shifts (aliases for UBFM/SBFM/EXTR) ----
+    // ---- Shifts ----
+    /// LSLV Xd, Xn, Xm  (variable shift amount from Xm)
+    LslReg {
+        rd: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        sf: bool,
+    },
+    /// LSRV Xd, Xn, Xm  (variable shift amount from Xm)
+    LsrReg {
+        rd: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        sf: bool,
+    },
+    /// ASRV Xd, Xn, Xm  (variable shift amount from Xm)
+    AsrReg {
+        rd: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+        sf: bool,
+    },
+    /// SXTW Xd, Wn  (alias for SBFM Xd, Xn, #0, #31)
+    Sxtw { rd: GpReg, rn: GpReg },
+    /// SXTB Wd, Wn / Xd, Wn  (alias for SBFM with imms = 7)
+    Sxtb { rd: GpReg, rn: GpReg, sf: bool },
+    /// SXTH Wd, Wn / Xd, Wn  (alias for SBFM with imms = 15)
+    Sxth { rd: GpReg, rn: GpReg, sf: bool },
+    /// UXTW Xd, Wn  (alias for UBFM Xd, Xn, #0, #31)
+    Uxtw { rd: GpReg, rn: GpReg },
     /// LSL Xd, Xn, #amount  (alias for UBFM)
     LslImm {
         rd: GpReg,
@@ -1594,6 +1623,10 @@ pub enum Inst {
     // ---- FP / integer conversion ----
     /// FCVTZS Xd, Dn  (double -> signed 64-bit int, truncate toward zero)
     FcvtzsD { rd: GpReg, rn: FpReg },
+    /// FCVT Dd, Sn  (single -> double)
+    FcvtDFromS { rd: FpReg, rn: FpReg },
+    /// FCVT Sd, Dn  (double -> single)
+    FcvtSFromD { rd: FpReg, rn: FpReg },
     /// SCVTF Dd, Xn  (signed 64-bit int -> double)
     ScvtfD { rd: FpReg, rn: GpReg },
     /// FMOV Dd, Xn  (move bits GP -> FP, no conversion)
@@ -1851,7 +1884,20 @@ impl Inst {
                 sf,
             } => mov_wide(*sf, 0b00, *imm16, *shift, *rd),
 
-            // ---- Shifts (bitfield aliases) ----
+            // ---- Shifts ----
+            Inst::LslReg { rd, rn, rm, sf } => {
+                variable_shift(0x1AC02000, 0x9AC02000, *sf, *rm, *rn, *rd)
+            }
+            Inst::LsrReg { rd, rn, rm, sf } => {
+                variable_shift(0x1AC02400, 0x9AC02400, *sf, *rm, *rn, *rd)
+            }
+            Inst::AsrReg { rd, rn, rm, sf } => {
+                variable_shift(0x1AC02800, 0x9AC02800, *sf, *rm, *rn, *rd)
+            }
+            Inst::Sxtw { rd, rn } => bitfield(true, 0b00, 0, 31, *rn, *rd),
+            Inst::Sxtb { rd, rn, sf } => bitfield(*sf, 0b00, 0, 7, *rn, *rd),
+            Inst::Sxth { rd, rn, sf } => bitfield(*sf, 0b00, 0, 15, *rn, *rd),
+            Inst::Uxtw { rd, rn } => bitfield(true, 0b10, 0, 31, *rn, *rd),
             Inst::LslImm { rd, rn, amount, sf } => {
                 let bits = if *sf { 64u8 } else { 32u8 };
                 let immr = bits.wrapping_sub(*amount) & (bits - 1);
@@ -2853,6 +2899,8 @@ impl Inst {
             Inst::FcvtzsD { rd, rn } => {
                 (0b1_00_11110_01_1 << 21) | (0b11_000 << 16) | (rn.enc() << 5) | rd.enc()
             }
+            Inst::FcvtDFromS { rd, rn } => 0x1E22C000 | (rn.enc() << 5) | rd.enc(),
+            Inst::FcvtSFromD { rd, rn } => 0x1E624000 | (rn.enc() << 5) | rd.enc(),
             Inst::ScvtfD { rd, rn } => {
                 (0b1_00_11110_01_1 << 21) | (0b00_010 << 16) | (rn.enc() << 5) | rd.enc()
             }
@@ -2912,6 +2960,11 @@ fn logic_reg(sf: bool, opc: u32, n: bool, rm: GpReg, rn: GpReg, rd: GpReg) -> u3
         | (rm.enc() << 16)
         | (rn.enc() << 5)
         | rd.enc()
+}
+
+fn variable_shift(base32: u32, base64: u32, sf: bool, rm: GpReg, rn: GpReg, rd: GpReg) -> u32 {
+    let base = if sf { base64 } else { base32 };
+    base | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
 fn logical_imm(sf: bool, opc: u32, imm: u64, rn: GpReg, rd: GpReg) -> u32 {
@@ -3862,6 +3915,116 @@ mod tests {
     }
 
     // ---- Shifts ----
+
+    #[test]
+    fn register_shifts_x() {
+        assert_eq!(
+            Inst::LslReg {
+                rd: X0,
+                rn: X1,
+                rm: X2,
+                sf: true
+            }
+            .encode(),
+            0x9AC22020
+        );
+        assert_eq!(
+            Inst::LsrReg {
+                rd: X0,
+                rn: X1,
+                rm: X2,
+                sf: true
+            }
+            .encode(),
+            0x9AC22420
+        );
+        assert_eq!(
+            Inst::AsrReg {
+                rd: X0,
+                rn: X1,
+                rm: X2,
+                sf: true
+            }
+            .encode(),
+            0x9AC22820
+        );
+    }
+
+    #[test]
+    fn register_shifts_w() {
+        assert_eq!(
+            Inst::LslReg {
+                rd: W3,
+                rn: W4,
+                rm: W5,
+                sf: false
+            }
+            .encode(),
+            0x1AC52083
+        );
+        assert_eq!(
+            Inst::LsrReg {
+                rd: W3,
+                rn: W4,
+                rm: W5,
+                sf: false
+            }
+            .encode(),
+            0x1AC52483
+        );
+        assert_eq!(
+            Inst::AsrReg {
+                rd: W3,
+                rn: W4,
+                rm: W5,
+                sf: false
+            }
+            .encode(),
+            0x1AC52883
+        );
+    }
+
+    #[test]
+    fn integer_extend_aliases() {
+        assert_eq!(Inst::Sxtw { rd: X0, rn: W1 }.encode(), 0x93407C20);
+        assert_eq!(
+            Inst::Sxtb {
+                rd: W2,
+                rn: W3,
+                sf: false
+            }
+            .encode(),
+            0x13001C62
+        );
+        assert_eq!(
+            Inst::Sxtb {
+                rd: X4,
+                rn: W5,
+                sf: true
+            }
+            .encode(),
+            0x93401CA4
+        );
+        assert_eq!(
+            Inst::Sxth {
+                rd: W2,
+                rn: W3,
+                sf: false
+            }
+            .encode(),
+            0x13003C62
+        );
+        assert_eq!(
+            Inst::Sxth {
+                rd: X2,
+                rn: W3,
+                sf: true
+            }
+            .encode(),
+            0x93403C62
+        );
+        assert_eq!(Inst::Uxtw { rd: X6, rn: W7 }.encode(), 0xD3407CE6);
+    }
 
     #[test]
     fn lsl_x0_x1_3() {
@@ -8017,6 +8180,14 @@ mod tests {
     #[test]
     fn fcvtzs_x0_d1() {
         assert_eq!(Inst::FcvtzsD { rd: X0, rn: D1 }.encode(), 0x9E780020);
+    }
+    #[test]
+    fn fcvt_d8_s9() {
+        assert_eq!(Inst::FcvtDFromS { rd: D8, rn: S9 }.encode(), 0x1E22C128);
+    }
+    #[test]
+    fn fcvt_s10_d11() {
+        assert_eq!(Inst::FcvtSFromD { rd: S10, rn: D11 }.encode(), 0x1E62416A);
     }
     #[test]
     fn scvtf_d0_x1() {

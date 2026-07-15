@@ -429,6 +429,15 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn err_at(&self, pos: usize, msg: String) -> ParseError {
+        let t = &self.tokens[pos.min(self.tokens.len() - 1)];
+        ParseError {
+            line: t.line,
+            col: t.col,
+            msg,
+        }
+    }
+
     fn at_end_of_stmt(&self) -> bool {
         matches!(self.peek(), Tok::Newline | Tok::Eof)
     }
@@ -616,7 +625,7 @@ impl<'a> Parser<'a> {
             ".byte" => Directive::Byte(self.parse_expr_list()?),
             ".short" => Directive::Short(self.parse_expr_list()?),
             ".word" | ".long" => Directive::Word(self.parse_expr_list()?),
-            ".quad" => Directive::Quad(self.parse_expr_list()?),
+            ".quad" => Directive::Quad(self.parse_quad_expr_list()?),
             ".ascii" => {
                 if let Tok::StringLit(s) = self.peek().clone() {
                     self.advance();
@@ -813,6 +822,14 @@ impl<'a> Parser<'a> {
         Ok(vals)
     }
 
+    fn parse_quad_expr_list(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let mut vals = vec![self.parse_quad_expr()?];
+        while self.eat(&Tok::Comma) {
+            vals.push(self.parse_quad_expr()?);
+        }
+        Ok(vals)
+    }
+
     fn parse_alignment_directive_args(
         &mut self,
     ) -> Result<(u32, Option<u8>, Option<u64>), ParseError> {
@@ -889,7 +906,10 @@ impl<'a> Parser<'a> {
         if self.numeric_label_ref_at(self.pos).is_some() {
             return false;
         }
-        matches!(self.peek(), Tok::Integer(_) | Tok::Minus | Tok::LParen)
+        matches!(
+            self.peek(),
+            Tok::Integer(_) | Tok::UnsignedInteger(_) | Tok::Minus | Tok::LParen
+        )
     }
 
     fn starts_immediate_expr(&self) -> bool {
@@ -915,17 +935,32 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_add_sub_expr()
+        self.parse_add_sub_expr(false)
     }
 
-    fn parse_add_sub_expr(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.parse_unary_expr()?;
+    fn parse_quad_expr(&mut self) -> Result<Expr, ParseError> {
+        let start = self.pos;
+        let expr = self.parse_add_sub_expr(true)?;
+        if contains_wide_unsigned_literal(&expr) && !matches!(expr, Expr::Unsigned(_)) {
+            let wide_literal = (start..self.pos)
+                .find(|&pos| matches!(&self.tokens[pos].kind, Tok::UnsignedInteger(_)))
+                .unwrap_or(start);
+            return Err(self.err_at(
+                wide_literal,
+                "unsigned integer literals above i64::MAX must be standalone .quad values".into(),
+            ));
+        }
+        Ok(expr)
+    }
+
+    fn parse_add_sub_expr(&mut self, allow_wide_unsigned: bool) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_unary_expr(allow_wide_unsigned)?;
         loop {
             if self.eat(&Tok::Plus) {
-                let rhs = self.parse_unary_expr()?;
+                let rhs = self.parse_unary_expr(allow_wide_unsigned)?;
                 expr = Expr::Add(Box::new(expr), Box::new(rhs));
             } else if self.eat(&Tok::Minus) {
-                let rhs = self.parse_unary_expr()?;
+                let rhs = self.parse_unary_expr(allow_wide_unsigned)?;
                 expr = Expr::Sub(Box::new(expr), Box::new(rhs));
             } else {
                 break;
@@ -934,15 +969,17 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn parse_unary_expr(&mut self) -> Result<Expr, ParseError> {
+    fn parse_unary_expr(&mut self, allow_wide_unsigned: bool) -> Result<Expr, ParseError> {
         if self.eat(&Tok::Minus) {
-            Ok(Expr::UnaryMinus(Box::new(self.parse_unary_expr()?)))
+            Ok(Expr::UnaryMinus(Box::new(
+                self.parse_unary_expr(allow_wide_unsigned)?,
+            )))
         } else {
-            self.parse_primary_expr()
+            self.parse_primary_expr(allow_wide_unsigned)
         }
     }
 
-    fn parse_primary_expr(&mut self) -> Result<Expr, ParseError> {
+    fn parse_primary_expr(&mut self, allow_wide_unsigned: bool) -> Result<Expr, ParseError> {
         if let Some(symbol) = self.parse_numeric_label_ref()? {
             return Ok(Expr::Symbol(symbol));
         }
@@ -951,6 +988,14 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Expr::Int(value))
             }
+            Tok::UnsignedInteger(value) if allow_wide_unsigned => {
+                self.advance();
+                Ok(Expr::Unsigned(value))
+            }
+            Tok::UnsignedInteger(value) => Err(self.err(format!(
+                "unsigned integer {} exceeds the i64 range for this context",
+                value
+            ))),
             Tok::Ident(symbol) => {
                 self.advance();
                 if self.eat(&Tok::At) {
@@ -976,7 +1021,7 @@ impl<'a> Parser<'a> {
             }
             Tok::LParen => {
                 self.advance();
-                let expr = self.parse_expr()?;
+                let expr = self.parse_add_sub_expr(allow_wide_unsigned)?;
                 self.expect(&Tok::RParen)?;
                 Ok(expr)
             }
@@ -1341,6 +1386,10 @@ impl<'a> Parser<'a> {
             "lsl" => self.parse_shift("lsl"),
             "lsr" => self.parse_shift("lsr"),
             "asr" => self.parse_shift("asr"),
+            "sxtw" => self.parse_extend_alias("sxtw"),
+            "sxtb" => self.parse_extend_alias("sxtb"),
+            "sxth" => self.parse_extend_alias("sxth"),
+            "uxtw" => self.parse_extend_alias("uxtw"),
             "ubfiz" => self.parse_bitfield_alias("ubfiz"),
             "bfi" => self.parse_bitfield_alias("bfi"),
             "bfxil" => self.parse_bitfield_alias("bfxil"),
@@ -1427,6 +1476,7 @@ impl<'a> Parser<'a> {
             "fmadd" => self.parse_fmadd(),
 
             // FP conversion
+            "fcvt" => self.parse_fcvt(),
             "fcvtzs" => self.parse_fcvtzs(),
             "scvtf" => self.parse_scvtf(),
             "fmov" => self.parse_fmov(),
@@ -2653,17 +2703,82 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_shift(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let (rn, rn_sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        let amount = self.parse_immediate_const_expr("shift amount")? as u8;
+
+        if rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp {
+            return Err(self.err(format!("{} does not allow SP", mnemonic)));
+        }
+        if sf != rn_sf {
+            return Err(self.err(format!(
+                "{} requires source and destination registers of the same width",
+                mnemonic
+            )));
+        }
+
+        if self.peek_is_gp_reg() {
+            let (rm, rm_sf, rm_kind) = self.parse_gp_reg_with_size_kind()?;
+            if rm_kind == GpRegKind::Sp {
+                return Err(self.err(format!("{} register form does not allow SP", mnemonic)));
+            }
+            if sf != rm_sf {
+                return Err(self.err(format!(
+                    "{} register form requires registers of the same width",
+                    mnemonic
+                )));
+            }
+            return Ok(match mnemonic {
+                "lsl" => Inst::LslReg { rd, rn, rm, sf },
+                "lsr" => Inst::LsrReg { rd, rn, rm, sf },
+                "asr" => Inst::AsrReg { rd, rn, rm, sf },
+                _ => unreachable!(),
+            });
+        }
+
+        let amount = self.parse_immediate_const_expr("shift amount")?;
+        let max_amount = if sf { 63 } else { 31 };
+        if !(0..=max_amount).contains(&amount) {
+            return Err(self.err(format!(
+                "{} shift amount {} is out of range for a {}-bit register (expected 0..={})",
+                mnemonic,
+                amount,
+                if sf { 64 } else { 32 },
+                max_amount
+            )));
+        }
+        let amount = u8::try_from(amount)
+            .map_err(|_| self.err(format!("{} shift amount is out of range", mnemonic)))?;
         Ok(match mnemonic {
             "lsl" => Inst::LslImm { rd, rn, amount, sf },
             "lsr" => Inst::LsrImm { rd, rn, amount, sf },
             "asr" => Inst::AsrImm { rd, rn, amount, sf },
             _ => unreachable!(),
         })
+    }
+
+    fn parse_extend_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let (rd, rd_sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, rn_sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
+
+        if rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp {
+            return Err(self.err(format!("{} does not allow SP", mnemonic)));
+        }
+        if rn_sf {
+            return Err(self.err(format!("{} requires a w-register source", mnemonic)));
+        }
+
+        match mnemonic {
+            "sxtw" if rd_sf => Ok(Inst::Sxtw { rd, rn }),
+            "sxtw" => Err(self.err("sxtw requires an x-register destination".into())),
+            "sxtb" => Ok(Inst::Sxtb { rd, rn, sf: rd_sf }),
+            "sxth" => Ok(Inst::Sxth { rd, rn, sf: rd_sf }),
+            "uxtw" if rd_sf => Ok(Inst::Uxtw { rd, rn }),
+            "uxtw" => Err(self.err("uxtw requires an x-register destination".into())),
+            _ => unreachable!(),
+        }
     }
 
     fn parse_bitfield_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -4373,7 +4488,10 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let rn = self.parse_simd_reg()?;
         self.expect(&Tok::Comma)?;
-        if matches!(self.peek(), Tok::Hash | Tok::Integer(_) | Tok::Float(_)) {
+        if matches!(
+            self.peek(),
+            Tok::Hash | Tok::Integer(_) | Tok::UnsignedInteger(_) | Tok::Float(_)
+        ) {
             self.parse_fp_zero_immediate("vector FP compare immediate")?;
             return Ok(match mnemonic {
                 "fcmge.2d" => Inst::FcmgeZeroV2D { rd, rn },
@@ -4642,6 +4760,17 @@ impl<'a> Parser<'a> {
         Ok(Inst::FcvtzsD { rd, rn })
     }
 
+    fn parse_fcvt(&mut self) -> Result<Inst, ParseError> {
+        let (rd, rd_is_double) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, rn_is_double) = self.parse_fp_reg_with_size()?;
+        match (rd_is_double, rn_is_double) {
+            (true, false) => Ok(Inst::FcvtDFromS { rd, rn }),
+            (false, true) => Ok(Inst::FcvtSFromD { rd, rn }),
+            _ => Err(self.err("fcvt requires one s-register and one d-register".into())),
+        }
+    }
+
     fn parse_scvtf(&mut self) -> Result<Inst, ParseError> {
         let (rd, _) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
@@ -4659,7 +4788,7 @@ impl<'a> Parser<'a> {
                 .ok_or_else(|| self.err(format!("bad FP reg '{}'", name)))?;
             let is_double = lower.starts_with('d');
             match self.peek() {
-                Tok::Integer(_) | Tok::Float(_) => {
+                Tok::Integer(_) | Tok::UnsignedInteger(_) | Tok::Float(_) => {
                     let imm8 = self.parse_fp_modified_immediate(is_double)?;
                     if is_double {
                         Ok(Inst::FmovImmD { rd, imm8 })
@@ -4758,6 +4887,12 @@ impl<'a> Parser<'a> {
                 self.advance();
                 value
             }
+            Tok::UnsignedInteger(value) => {
+                return Err(self.err(format!(
+                    "unsigned integer {} exceeds the i64 range for a floating-point immediate",
+                    value
+                )))
+            }
             other => {
                 return Err(self.err(format!("expected floating-point immediate, got {}", other)))
             }
@@ -4794,6 +4929,10 @@ impl<'a> Parser<'a> {
                 }
                 _ => Err(self.err(format!("{} must be #0.0", context))),
             },
+            Tok::UnsignedInteger(value) => Err(self.err(format!(
+                "unsigned integer {} exceeds the i64 range for {}",
+                value, context
+            ))),
             other => Err(self.err(format!("{} must be #0.0, got {}", context, other))),
         }
     }
@@ -5079,6 +5218,19 @@ impl<'a> Parser<'a> {
     }
 }
 
+fn contains_wide_unsigned_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Unsigned(_) => true,
+        Expr::UnaryMinus(inner) => contains_wide_unsigned_literal(inner),
+        Expr::Add(lhs, rhs) | Expr::Sub(lhs, rhs) => {
+            contains_wide_unsigned_literal(lhs) || contains_wide_unsigned_literal(rhs)
+        }
+        Expr::Int(_) | Expr::Symbol(_) | Expr::ModifiedSymbol { .. } | Expr::CurrentLocation => {
+            false
+        }
+    }
+}
+
 // ---- Name resolution helpers ----
 
 fn numeric_label_symbol(number: u32, ordinal: u32) -> String {
@@ -5356,6 +5508,15 @@ mod tests {
 
     fn parse_err(src: &str) -> String {
         parse(src).unwrap_err().to_string()
+    }
+
+    fn immediate_shift_fields(inst: Inst) -> (u8, bool) {
+        match inst {
+            Inst::LslImm { amount, sf, .. }
+            | Inst::LsrImm { amount, sf, .. }
+            | Inst::AsrImm { amount, sf, .. } => (amount, sf),
+            other => panic!("expected immediate shift, got {other:?}"),
+        }
     }
 
     // ---- Data processing ----
@@ -6069,6 +6230,203 @@ mod tests {
                 sf: true
             }
         );
+    }
+
+    #[test]
+    fn parse_immediate_shift_boundaries_for_all_mnemonics() {
+        for mnemonic in ["lsl", "lsr", "asr"] {
+            for (register, amount, sf) in [
+                ("w", 0, false),
+                ("w", 31, false),
+                ("x", 0, true),
+                ("x", 63, true),
+            ] {
+                let source = format!("{mnemonic} {register}0, {register}1, #{amount}");
+                assert_eq!(
+                    immediate_shift_fields(parse_inst(&source)),
+                    (amount, sf),
+                    "{source}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reject_immediate_shift_amounts_outside_register_width() {
+        for mnemonic in ["lsl", "lsr", "asr"] {
+            for (register, amount) in [
+                ("w", -1),
+                ("w", 32),
+                ("w", 255),
+                ("w", 256),
+                ("x", -1),
+                ("x", 64),
+                ("x", 255),
+                ("x", 256),
+            ] {
+                let source = format!("{mnemonic} {register}0, {register}1, #{amount}");
+                let err = parse_err(&source);
+                assert!(err.contains("out of range"), "{source}: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn reject_sp_and_mismatched_widths_in_immediate_shifts() {
+        for mnemonic in ["lsl", "lsr", "asr"] {
+            for source in [
+                format!("{mnemonic} sp, x1, #0"),
+                format!("{mnemonic} x0, sp, #0"),
+            ] {
+                let err = parse_err(&source);
+                assert!(err.contains("does not allow SP"), "{source}: {err}");
+            }
+            for source in [
+                format!("{mnemonic} w0, x1, #0"),
+                format!("{mnemonic} x0, w1, #0"),
+            ] {
+                let err = parse_err(&source);
+                assert!(err.contains("same width"), "{source}: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_register_shifts_x() {
+        assert_eq!(
+            parse_inst("lsl x0, x1, x2"),
+            Inst::LslReg {
+                rd: X0,
+                rn: X1,
+                rm: X2,
+                sf: true
+            }
+        );
+        assert_eq!(
+            parse_inst("lsr x3, x4, x5"),
+            Inst::LsrReg {
+                rd: X3,
+                rn: X4,
+                rm: X5,
+                sf: true
+            }
+        );
+        assert_eq!(
+            parse_inst("asr x6, x7, x8"),
+            Inst::AsrReg {
+                rd: X6,
+                rn: X7,
+                rm: X8,
+                sf: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_register_shifts_w() {
+        assert_eq!(
+            parse_inst("lsl w0, w1, w2"),
+            Inst::LslReg {
+                rd: W0,
+                rn: W1,
+                rm: W2,
+                sf: false
+            }
+        );
+        assert_eq!(
+            parse_inst("lsr w3, w4, w5"),
+            Inst::LsrReg {
+                rd: W3,
+                rn: W4,
+                rm: W5,
+                sf: false
+            }
+        );
+        assert_eq!(
+            parse_inst("asr w6, w7, w8"),
+            Inst::AsrReg {
+                rd: W6,
+                rn: W7,
+                rm: W8,
+                sf: false
+            }
+        );
+    }
+
+    #[test]
+    fn reject_register_shift_width_mismatch() {
+        for source in ["lsl w0, x1, w2", "lsr x0, x1, w2", "asr x0, w1, x2"] {
+            let err = parse_err(source);
+            assert!(err.contains("same width"), "{source}: {err}");
+        }
+    }
+
+    #[test]
+    fn reject_sp_in_register_shifts() {
+        for source in ["lsl sp, x1, x2", "lsr x0, sp, x2", "asr x0, x1, sp"] {
+            let err = parse_err(source);
+            assert!(err.contains("does not allow SP"), "{source}: {err}");
+        }
+    }
+
+    #[test]
+    fn parse_integer_extend_aliases() {
+        assert_eq!(parse_inst("sxtw x0, w1"), Inst::Sxtw { rd: X0, rn: W1 });
+        assert_eq!(
+            parse_inst("sxtb w2, w3"),
+            Inst::Sxtb {
+                rd: W2,
+                rn: W3,
+                sf: false
+            }
+        );
+        assert_eq!(
+            parse_inst("sxtb x4, w5"),
+            Inst::Sxtb {
+                rd: X4,
+                rn: W5,
+                sf: true
+            }
+        );
+        assert_eq!(
+            parse_inst("sxth w2, w3"),
+            Inst::Sxth {
+                rd: W2,
+                rn: W3,
+                sf: false
+            }
+        );
+        assert_eq!(
+            parse_inst("sxth x2, w3"),
+            Inst::Sxth {
+                rd: X2,
+                rn: W3,
+                sf: true
+            }
+        );
+        assert_eq!(parse_inst("uxtw x6, w7"), Inst::Uxtw { rd: X6, rn: W7 });
+    }
+
+    #[test]
+    fn reject_invalid_integer_extend_aliases() {
+        for source in ["sxtw w0, w1", "uxtw w0, w1"] {
+            let err = parse_err(source);
+            assert!(err.contains("x-register destination"), "{source}: {err}");
+        }
+        for source in [
+            "sxtw x0, x1",
+            "sxtb w0, x1",
+            "sxtb x0, x1",
+            "sxth w0, x1",
+            "uxtw x0, x1",
+        ] {
+            let err = parse_err(source);
+            assert!(err.contains("w-register source"), "{source}: {err}");
+        }
+        for source in ["sxtw sp, w1", "sxtb x0, sp", "sxth w0, sp", "uxtw x0, sp"] {
+            let err = parse_err(source);
+            assert!(err.contains("does not allow SP"), "{source}: {err}");
+        }
     }
 
     // ---- Branches ----
@@ -9571,6 +9929,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_fcvt_between_single_and_double() {
+        assert_eq!(
+            parse_inst("fcvt d8, s9"),
+            Inst::FcvtDFromS { rd: D8, rn: S9 }
+        );
+        assert_eq!(
+            parse_inst("fcvt s10, d11"),
+            Inst::FcvtSFromD { rd: S10, rn: D11 }
+        );
+    }
+
+    #[test]
+    fn reject_fcvt_with_matching_widths() {
+        for source in ["fcvt d0, d1", "fcvt s0, s1"] {
+            let err = parse_err(source);
+            assert!(
+                err.contains("one s-register and one d-register"),
+                "{source}: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn parse_scvtf_() {
         assert_eq!(parse_inst("scvtf d0, x1"), Inst::ScvtfD { rd: D0, rn: X1 });
     }
@@ -9951,6 +10332,70 @@ mod tests {
                 Box::new(Expr::Add(Box::new(Expr::Int(1)), Box::new(Expr::Int(2)),))
             )]))]
         );
+    }
+
+    #[test]
+    fn parse_unsigned_quad_values_in_labels_comments_and_lists() {
+        assert_eq!(
+            parse_stmts(
+                "bits: .quad 0xbff0000000000000, 0xffffffffffffffff // bit patterns\n\
+                 .quad 18446744073709551615 ; decimal u64 max\n"
+            ),
+            vec![
+                Stmt::Label("bits".into()),
+                Stmt::Directive(Directive::Quad(vec![
+                    Expr::Unsigned(0xbff0000000000000),
+                    Expr::Unsigned(u64::MAX),
+                ])),
+                Stmt::Directive(Directive::Quad(vec![Expr::Unsigned(u64::MAX)])),
+            ]
+        );
+    }
+
+    #[test]
+    fn wide_unsigned_literals_are_restricted_to_standalone_quad_values() {
+        for source in [
+            ".word 0xbff0000000000000",
+            ".quad 0xbff0000000000000 + 1",
+            ".quad symbol + 0xbff0000000000000",
+            ".quad -0xbff0000000000000",
+            ".quad 0x10000000000000000",
+            ".quad 18446744073709551616",
+        ] {
+            let err = parse(source).unwrap_err();
+            assert!(
+                err.msg.contains("i64 range")
+                    || err.msg.contains("standalone .quad")
+                    || err.msg.contains("invalid hex")
+                    || err.msg.contains("invalid integer"),
+                "{source}: {}",
+                err.msg
+            );
+        }
+    }
+
+    #[test]
+    fn compound_wide_quad_error_points_to_the_wide_literal() {
+        let err = parse(".quad 0xffffffffffffffff + 1").unwrap_err();
+        assert_eq!((err.line, err.col), (1, 7));
+        assert_eq!(
+            err.msg,
+            "unsigned integer literals above i64::MAX must be standalone .quad values"
+        );
+
+        let err = parse(".quad symbol + 0xffffffffffffffff").unwrap_err();
+        assert_eq!((err.line, err.col), (1, 16));
+    }
+
+    #[test]
+    fn wide_fp_immediates_report_integer_range_errors() {
+        for source in [
+            "fmov d0, #0xffffffffffffffff",
+            "fcmeq.2d v0, v1, #0xffffffffffffffff",
+        ] {
+            let err = parse(source).unwrap_err();
+            assert!(err.msg.contains("exceeds the i64 range"), "{source}: {err}");
+        }
     }
 
     #[test]

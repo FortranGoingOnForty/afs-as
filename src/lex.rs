@@ -24,6 +24,11 @@ pub enum Tok {
     /// Stored as i64 to handle negative immediates.
     Integer(i64),
 
+    /// Positive integer literal above `i64::MAX`, through `u64::MAX`.
+    /// Kept distinct so parsers can opt in only for contexts that accept
+    /// unsigned 64-bit bit patterns (currently standalone `.quad` values).
+    UnsignedInteger(u64),
+
     /// Floating-point literal used by instructions like `fmov d0, #3.5`.
     Float(String),
 
@@ -72,6 +77,7 @@ impl fmt::Display for Tok {
         match self {
             Tok::Ident(s) => write!(f, "{}", s),
             Tok::Integer(n) => write!(f, "{}", n),
+            Tok::UnsignedInteger(n) => write!(f, "{}", n),
             Tok::Float(s) => write!(f, "{}", s),
             Tok::StringLit(bytes) => {
                 write!(f, "\"{}\"", String::from_utf8_lossy(bytes).escape_default())
@@ -374,7 +380,7 @@ impl<'a> Lexer<'a> {
                 col,
                 msg: format!("invalid hex: {}", e),
             })?;
-            Ok(Tok::Integer(to_i64(val, negative, line, col)?))
+            integer_token(val, negative, line, col)
         } else {
             // Decimal.
             let digits_start = self.pos;
@@ -396,7 +402,7 @@ impl<'a> Lexer<'a> {
                 col,
                 msg: format!("invalid integer: {}", e),
             })?;
-            Ok(Tok::Integer(to_i64(val, negative, line, col)?))
+            integer_token(val, negative, line, col)
         }
     }
 
@@ -492,8 +498,8 @@ fn is_ident_cont(ch: u8) -> bool {
     ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$' || ch == b'.'
 }
 
-/// Convert a u64 magnitude + sign to i64, with overflow checking.
-fn to_i64(val: u64, negative: bool, line: u32, col: u32) -> Result<i64, LexError> {
+/// Convert a u64 magnitude + sign to the narrowest lossless integer token.
+fn integer_token(val: u64, negative: bool, line: u32, col: u32) -> Result<Tok, LexError> {
     if negative {
         let min_mag = (i64::MAX as u64) + 1; // 2^63
         if val > min_mag {
@@ -504,18 +510,13 @@ fn to_i64(val: u64, negative: bool, line: u32, col: u32) -> Result<i64, LexError
             });
         }
         if val == min_mag {
-            return Ok(i64::MIN); // special case: -(2^63) can't be computed via negation
+            return Ok(Tok::Integer(i64::MIN)); // -(2^63) cannot be computed via negation
         }
-        Ok(-(val as i64))
+        Ok(Tok::Integer(-(val as i64)))
+    } else if val > i64::MAX as u64 {
+        Ok(Tok::UnsignedInteger(val))
     } else {
-        if val > i64::MAX as u64 {
-            return Err(LexError {
-                line,
-                col,
-                msg: format!("integer {} overflows i64", val),
-            });
-        }
-        Ok(val as i64)
+        Ok(Tok::Integer(val as i64))
     }
 }
 
@@ -1026,11 +1027,26 @@ _main:
     }
 
     #[test]
-    fn overflow_positive_integer() {
-        // i64::MAX + 1 should error
-        let result = Lexer::tokenize("#9223372036854775808");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().msg.contains("overflows"));
+    fn positive_integers_through_u64_max_are_lossless() {
+        assert_eq!(
+            tok_kinds("9223372036854775808 0xffffffffffffffff"),
+            vec![
+                Tok::UnsignedInteger(9_223_372_036_854_775_808),
+                Tok::UnsignedInteger(u64::MAX),
+            ]
+        );
+    }
+
+    #[test]
+    fn positive_integer_above_u64_max_is_rejected() {
+        for source in ["18446744073709551616", "0x10000000000000000"] {
+            let err = Lexer::tokenize(source).unwrap_err();
+            assert!(
+                err.msg.contains("invalid integer") || err.msg.contains("invalid hex"),
+                "{source}: {}",
+                err.msg
+            );
+        }
     }
 
     #[test]

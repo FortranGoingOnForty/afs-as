@@ -6,6 +6,10 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Int(i64),
+    /// Positive integer literal above `i64::MAX` whose value is preserved as
+    /// a 64-bit bit pattern. The parser restricts this to standalone `.quad`
+    /// values so relocation addends and general expression math remain i64.
+    Unsigned(u64),
     Symbol(String),
     ModifiedSymbol {
         symbol: String,
@@ -38,6 +42,7 @@ pub enum SymbolValue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClassifiedExpr {
     Absolute(i64),
+    UnsignedAbsolute(u64),
     Relocatable {
         symbol: String,
         addend: i64,
@@ -89,6 +94,7 @@ pub fn eval_pure(expr: &Expr) -> Result<i64, EvalError> {
 pub fn eval_with_symbols(expr: &Expr, symbols: &BTreeMap<String, i64>) -> Result<i64, EvalError> {
     match expr {
         Expr::Int(value) => Ok(*value),
+        Expr::Unsigned(value) => i64::try_from(*value).map_err(|_| EvalError::Overflow),
         Expr::Symbol(symbol) => symbols
             .get(symbol)
             .copied()
@@ -119,6 +125,13 @@ pub fn classify(
     expr: &Expr,
     symbols: &BTreeMap<String, SymbolValue>,
 ) -> Result<ClassifiedExpr, ClassifyError> {
+    if let Expr::Unsigned(value) = expr {
+        return Ok(match i64::try_from(*value) {
+            Ok(value) => ClassifiedExpr::Absolute(value),
+            Err(_) => ClassifiedExpr::UnsignedAbsolute(*value),
+        });
+    }
+
     let mut constant = 0i64;
     let mut terms = Vec::new();
     linearize(expr, 1, &mut constant, &mut terms)?;
@@ -244,7 +257,7 @@ pub fn classify(
 
 fn collect_symbols(expr: &Expr, out: &mut Vec<String>) {
     match expr {
-        Expr::Int(_) => {}
+        Expr::Int(_) | Expr::Unsigned(_) => {}
         Expr::Symbol(symbol) => out.push(symbol.clone()),
         Expr::ModifiedSymbol { symbol, .. } => out.push(symbol.clone()),
         Expr::CurrentLocation => {}
@@ -266,6 +279,16 @@ fn linearize(
         Expr::Int(value) => {
             let signed = if sign == 1 {
                 *value
+            } else {
+                value.checked_neg().ok_or(ClassifyError::Overflow)?
+            };
+            *constant = checked_add(*constant, signed)?;
+            Ok(())
+        }
+        Expr::Unsigned(value) => {
+            let value = i64::try_from(*value).map_err(|_| ClassifyError::Overflow)?;
+            let signed = if sign == 1 {
+                value
             } else {
                 value.checked_neg().ok_or(ClassifyError::Overflow)?
             };
@@ -366,6 +389,22 @@ mod tests {
     fn eval_undefined_symbol_errors() {
         let err = eval_pure(&Expr::Symbol("foo".into())).unwrap_err();
         assert_eq!(err, EvalError::UndefinedSymbol("foo".into()));
+    }
+
+    #[test]
+    fn wide_unsigned_literal_is_preserved_only_as_an_absolute() {
+        let value = u64::MAX;
+        assert_eq!(
+            classify(&Expr::Unsigned(value), &BTreeMap::new()).unwrap(),
+            ClassifiedExpr::UnsignedAbsolute(value)
+        );
+        assert_eq!(eval_pure(&Expr::Unsigned(value)), Err(EvalError::Overflow));
+
+        let expression = Expr::Add(Box::new(Expr::Unsigned(value)), Box::new(Expr::Int(1)));
+        assert_eq!(
+            classify(&expression, &BTreeMap::new()),
+            Err(ClassifyError::Overflow)
+        );
     }
 
     #[test]
