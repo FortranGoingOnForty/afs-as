@@ -862,6 +862,12 @@ impl Assembler {
                         ClassifiedExpr::Absolute(value) => {
                             self.emit_initialized_bytes(&(value as u32).to_le_bytes(), ".word")?;
                         }
+                        ClassifiedExpr::UnsignedAbsolute(value) => {
+                            return Err(AsmError(format!(
+                                ".word unsigned value {} is out of range; use .quad for a 64-bit bit pattern",
+                                value
+                            )));
+                        }
                         ClassifiedExpr::PointerToGot { .. } => {
                             let offset = self.current_offset() as u32;
                             self.emit_initialized_bytes(&0u32.to_le_bytes(), ".word")?;
@@ -1484,6 +1490,14 @@ impl Assembler {
                     ".quad",
                 )?;
             }
+            ClassifiedExpr::UnsignedAbsolute(value) => {
+                self.patch_section_data(
+                    fixup.section,
+                    fixup.offset,
+                    &value.to_le_bytes(),
+                    ".quad",
+                )?;
+            }
             ClassifiedExpr::Relocatable { symbol, addend } => {
                 self.patch_section_data(
                     fixup.section,
@@ -1558,6 +1572,10 @@ impl Assembler {
                 self.patch_section_data(fixup.section, fixup.offset, &(value as u32).to_le_bytes(), ".word")?;
                 Ok(())
             }
+            ClassifiedExpr::UnsignedAbsolute(value) => Err(AsmError(format!(
+                ".word unsigned value {} is out of range; use .quad for a 64-bit bit pattern",
+                value
+            ))),
             ClassifiedExpr::PointerToGot { symbol, addend, pcrel } => {
                 self.patch_section_data(fixup.section, fixup.offset, &(addend as u32).to_le_bytes(), ".word")?;
                 self.record_pending_reloc(
@@ -1586,10 +1604,9 @@ impl Assembler {
     ) -> Result<(String, i64), AsmError> {
         match self.classify_expr(expr)? {
             ClassifiedExpr::Relocatable { symbol, addend } => Ok((symbol, addend)),
-            ClassifiedExpr::Absolute(_) => Err(AsmError(format!(
-                "{} must resolve to a relocatable symbol",
-                context
-            ))),
+            ClassifiedExpr::Absolute(_) | ClassifiedExpr::UnsignedAbsolute(_) => Err(AsmError(
+                format!("{} must resolve to a relocatable symbol", context),
+            )),
             ClassifiedExpr::Difference { .. } | ClassifiedExpr::PointerToGot { .. } => {
                 Err(AsmError(format!(
                     "{} must resolve to a single relocatable symbol",
@@ -1958,6 +1975,10 @@ impl Assembler {
     fn require_absolute_expr(&self, expr: &Expr, context: &str) -> Result<i64, AsmError> {
         match self.classify_expr(expr)? {
             ClassifiedExpr::Absolute(value) => Ok(value),
+            ClassifiedExpr::UnsignedAbsolute(value) => Err(AsmError(format!(
+                "{} unsigned value {} exceeds the i64 range",
+                context, value
+            ))),
             ClassifiedExpr::Relocatable { .. }
             | ClassifiedExpr::Difference { .. }
             | ClassifiedExpr::PointerToGot { .. } => Err(AsmError(format!(
@@ -3014,6 +3035,129 @@ mod tests {
     fn assemble_nop() {
         let obj = assemble_source(".text\nnop\n").unwrap();
         assert_eq!(text_bytes(&obj), vec![0x1F, 0x20, 0x03, 0xD5]);
+    }
+
+    #[test]
+    fn assemble_register_shifts() {
+        let obj = assemble_source(
+            ".text\n\
+             lsl x0, x1, x2\n\
+             lsr x0, x1, x2\n\
+             asr x0, x1, x2\n\
+             lsl w3, w4, w5\n\
+             lsr w3, w4, w5\n\
+             asr w3, w4, w5\n",
+        )
+        .unwrap();
+        assert_eq!(
+            text_bytes(&obj),
+            [
+                0x20, 0x20, 0xC2, 0x9A, 0x20, 0x24, 0xC2, 0x9A, 0x20, 0x28, 0xC2, 0x9A, 0x83, 0x20,
+                0xC5, 0x1A, 0x83, 0x24, 0xC5, 0x1A, 0x83, 0x28, 0xC5, 0x1A,
+            ]
+        );
+    }
+
+    #[test]
+    fn assemble_immediate_shift_boundaries() {
+        let obj = assemble_source(
+            ".text\n\
+             lsl w0, w1, #0\n\
+             lsl w0, w1, #31\n\
+             lsl x0, x1, #0\n\
+             lsl x0, x1, #63\n\
+             lsr w0, w1, #0\n\
+             lsr w0, w1, #31\n\
+             lsr x0, x1, #0\n\
+             lsr x0, x1, #63\n\
+             asr w0, w1, #0\n\
+             asr w0, w1, #31\n\
+             asr x0, x1, #0\n\
+             asr x0, x1, #63\n",
+        )
+        .unwrap();
+        let expected: Vec<u8> = [
+            0x53007C20u32,
+            0x53010020,
+            0xD340FC20,
+            0xD3410020,
+            0x53007C20,
+            0x531F7C20,
+            0xD340FC20,
+            0xD37FFC20,
+            0x13007C20,
+            0x131F7C20,
+            0x9340FC20,
+            0x937FFC20,
+        ]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+        assert_eq!(text_bytes(&obj), expected);
+    }
+
+    #[test]
+    fn reject_invalid_immediate_shifts_before_encoding() {
+        for mnemonic in ["lsl", "lsr", "asr"] {
+            for operands in [
+                "w0, w1, #-1",
+                "w0, w1, #32",
+                "x0, x1, #64",
+                "x0, x1, #255",
+                "x0, x1, #256",
+                "sp, x1, #0",
+                "x0, sp, #0",
+                "w0, x1, #0",
+                "x0, w1, #0",
+            ] {
+                let source = format!(".text\n{mnemonic} {operands}\n");
+                assert!(assemble_source(&source).is_err(), "accepted {source:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn assemble_compiler_emitted_extensions_and_fcvt() {
+        let obj = assemble_source(
+            ".text\n\
+             sxtw x0, w1\n\
+             sxtb w2, w3\n\
+             sxtb x4, w5\n\
+             sxth w2, w3\n\
+             sxth x2, w3\n\
+             uxtw x6, w7\n\
+             fcvt d8, s9\n\
+             fcvt s10, d11\n\
+             .data\n\
+             .quad 0xbff0000000000000\n",
+        )
+        .unwrap();
+        assert_eq!(
+            text_bytes(&obj),
+            [
+                0x20, 0x7C, 0x40, 0x93, 0x62, 0x1C, 0x00, 0x13, 0xA4, 0x1C, 0x40, 0x93, 0x62, 0x3C,
+                0x00, 0x13, 0x62, 0x3C, 0x40, 0x93, 0xE6, 0x7C, 0x40, 0xD3, 0x28, 0xC1, 0x22, 0x1E,
+                0x6A, 0x41, 0x62, 0x1E,
+            ]
+        );
+        assert_eq!(data_bytes(&obj), 0xBFF0000000000000u64.to_le_bytes());
+    }
+
+    #[test]
+    fn assemble_unsigned_quad_bit_patterns_in_context() {
+        let obj = assemble_source(
+            ".data\n\
+             bits: .quad 0x8000000000000000, 0xffffffffffffffff // hexadecimal\n\
+             decimal: .quad 18446744073709551615 ; u64 max\n",
+        )
+        .unwrap();
+        let expected = [
+            0x8000000000000000u64.to_le_bytes(),
+            u64::MAX.to_le_bytes(),
+            u64::MAX.to_le_bytes(),
+        ]
+        .concat();
+        assert_eq!(data_bytes(&obj), expected);
     }
 
     #[test]
