@@ -932,6 +932,48 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_signed_scaled_immediate(
+        &mut self,
+        context: &str,
+        bits: u8,
+        scale: u8,
+    ) -> Result<i64, ParseError> {
+        let start = self.pos;
+        let value = self.parse_immediate_const_expr(context)?;
+        let alignment = 1i64 << scale;
+        if value % alignment != 0 {
+            return Err(self.err_at(
+                start,
+                format!("{} {} is not {}-byte aligned", context, value, alignment),
+            ));
+        }
+
+        let scaled = value / alignment;
+        let min = -(1i64 << (bits - 1));
+        let max = (1i64 << (bits - 1)) - 1;
+        if !(min..=max).contains(&scaled) {
+            return Err(self.err_at(
+                start,
+                format!(
+                    "{} {} is out of range for a signed {}-bit immediate with scale {}",
+                    context, value, bits, alignment
+                ),
+            ));
+        }
+
+        Ok(value)
+    }
+
+    fn parse_i32_signed_scaled_immediate(
+        &mut self,
+        context: &str,
+        bits: u8,
+        scale: u8,
+    ) -> Result<i32, ParseError> {
+        let value = self.parse_signed_scaled_immediate(context, bits, scale)?;
+        Ok(i32::try_from(value).expect("validated PC-relative immediate fits in i32"))
+    }
+
     fn parse_logical_immediate_value(&mut self, sf: bool) -> Result<u64, ParseError> {
         let imm = self.parse_immediate_const_expr("logical immediate")?;
         let raw = if sf { imm as u64 } else { (imm as u32) as u64 };
@@ -2782,7 +2824,7 @@ impl<'a> Parser<'a> {
 
     fn parse_b(&mut self) -> Result<Stmt, ParseError> {
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("branch offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("branch offset", 26, 2)?;
             Ok(Stmt::Instruction(Inst::B { offset }))
         } else {
             let label = self.parse_label_reference()?;
@@ -2800,7 +2842,7 @@ impl<'a> Parser<'a> {
 
     fn parse_bl(&mut self) -> Result<Stmt, ParseError> {
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("branch offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("branch offset", 26, 2)?;
             Ok(Stmt::Instruction(Inst::Bl { offset }))
         } else {
             let label = self.parse_label_reference()?;
@@ -2820,7 +2862,8 @@ impl<'a> Parser<'a> {
         let cond = parse_condition(cond_str)
             .ok_or_else(|| self.err(format!("unknown condition: {}", cond_str)))?;
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("branch offset")? as i32;
+            let offset =
+                self.parse_i32_signed_scaled_immediate("conditional branch offset", 19, 2)?;
             Ok(Stmt::Instruction(Inst::BCond { cond, offset }))
         } else {
             let label = self.parse_label_reference()?;
@@ -2840,7 +2883,7 @@ impl<'a> Parser<'a> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("cbz/cbnz offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("cbz/cbnz offset", 19, 2)?;
             let inst = if is_nz {
                 Inst::Cbnz { rt, offset, sf }
             } else {
@@ -2879,7 +2922,7 @@ impl<'a> Parser<'a> {
         )?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("tbz/tbnz offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("tbz/tbnz offset", 14, 2)?;
             let inst = if is_nz {
                 Inst::Tbnz {
                     rt,
@@ -2938,7 +2981,7 @@ impl<'a> Parser<'a> {
         let rd = self.parse_gp_reg()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            let imm = self.parse_immediate_const_expr("adr immediate")? as i32;
+            let imm = self.parse_i32_signed_scaled_immediate("adr immediate", 21, 0)?;
             Ok(Stmt::Instruction(Inst::Adr { rd, imm }))
         } else {
             let label = self.parse_label_reference()?;
@@ -2958,7 +3001,7 @@ impl<'a> Parser<'a> {
         let rd = self.parse_gp_reg()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            let imm = self.parse_immediate_const_expr("adrp immediate")? as i32;
+            let imm = self.parse_signed_scaled_immediate("adrp immediate", 21, 12)?;
             Ok(Stmt::Instruction(Inst::Adrp { rd, imm }))
         } else {
             let label = self.parse_label_reference()?;
@@ -3130,7 +3173,7 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
 
         if is_load && self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("ldr literal offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("ldr literal offset", 19, 2)?;
             let inst = if sf {
                 Inst::LdrLit64 { rt, offset }
             } else {
@@ -3279,7 +3322,7 @@ impl<'a> Parser<'a> {
             if is_scalar_narrow {
                 return Err(self.err("narrow FP literal loads are not supported".into()));
             }
-            let offset = self.parse_immediate_const_expr("ldr literal offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("ldr literal offset", 19, 2)?;
             let inst = match width {
                 FpMemWidth::B8 | FpMemWidth::H16 => unreachable!(),
                 FpMemWidth::D64 => Inst::LdrFpLit64 { rt, offset },
@@ -3766,7 +3809,7 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
 
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("ldrsw literal offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("ldrsw literal offset", 19, 2)?;
             return Ok(Stmt::Instruction(Inst::LdrswLit { rt, offset }));
         }
 

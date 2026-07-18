@@ -121,3 +121,49 @@ fn system_immediates_validate_u16_boundaries() {
         assert_rejected(source, "immediate");
     }
 }
+
+#[test]
+fn pc_relative_immediates_preserve_signed_boundaries() {
+    for (source, expected) in [
+        ("b #-134217728", 0x1600_0000),
+        ("b #134217724", 0x15FF_FFFF),
+        ("bl #134217724", 0x95FF_FFFF),
+        ("b.eq #1048572", 0x547F_FFE0),
+        ("cbz x0, #-1048576", 0xB480_0000),
+        ("tbz x0, #0, #32764", 0x3603_FFE0),
+        ("ldr x1, #-1048576", 0x5880_0001),
+        ("ldr d2, #1048572", 0x5C7F_FFE2),
+        ("ldrsw x3, #1048572", 0x987F_FFE3),
+        ("adr x0, #-1048576", 0x1080_0000),
+        ("adr x1, #1048575", 0x707F_FFE1),
+        ("adrp x0, #-4294967296", 0x9080_0000),
+        ("adrp x1, #4294963200", 0xF07F_FFE1),
+    ] {
+        assert_encoding(source, expected);
+    }
+}
+
+#[test]
+fn pc_relative_immediates_reject_range_and_alignment_errors() {
+    for (source, expected) in [
+        ("b #-134217732", "branch offset"),
+        ("b #134217728", "branch offset"),
+        ("b #2", "aligned"),
+        ("bl #4294967296", "branch offset"),
+        ("b.eq #-1048580", "conditional branch offset"),
+        ("b.eq #1048576", "conditional branch offset"),
+        ("cbnz x0, #2", "cbz/cbnz offset"),
+        ("tbz x0, #0, #-32772", "tbz/tbnz offset"),
+        ("tbnz x0, #0, #32768", "tbz/tbnz offset"),
+        ("ldr x0, #1048576", "ldr literal offset"),
+        ("ldr s0, #2", "ldr literal offset"),
+        ("ldrsw x0, #-1048580", "ldrsw literal offset"),
+        ("adr x0, #-1048577", "adr immediate"),
+        ("adr x0, #1048576", "adr immediate"),
+        ("adrp x0, #-4294971392", "adrp immediate"),
+        ("adrp x0, #4294967296", "adrp immediate"),
+        ("adrp x0, #1", "aligned"),
+    ] {
+        assert_rejected(source, expected);
+    }
+}

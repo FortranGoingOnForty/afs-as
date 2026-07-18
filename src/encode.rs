@@ -529,7 +529,7 @@ pub enum Inst {
     /// ADR Xd, #imm  (PC-relative, ±1MB range)
     Adr { rd: GpReg, imm: i32 },
     /// ADRP Xd, #imm  (page-relative, 4KB pages, ±4GB range)
-    Adrp { rd: GpReg, imm: i32 },
+    Adrp { rd: GpReg, imm: i64 },
 
     // ---- Load/Store (unsigned offset) ----
     /// LDR Xt, [Xn, #offset]  (64-bit, offset is byte offset, must be 8-byte aligned)
@@ -2047,9 +2047,9 @@ impl Inst {
                 (immlo << 29) | (0b10000 << 24) | (immhi << 5) | rd.enc()
             }
             Inst::Adrp { rd, imm } => {
-                let page = (*imm >> 12) as u32;
-                let immlo = page & 0x3;
-                let immhi = (page >> 2) & 0x7FFFF;
+                let page = (*imm >> 12) as u64;
+                let immlo = (page & 0x3) as u32;
+                let immhi = ((page >> 2) & 0x7FFFF) as u32;
                 (1 << 31) | (immlo << 29) | (0b10000 << 24) | (immhi << 5) | rd.enc()
             }
 
