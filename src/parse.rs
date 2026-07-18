@@ -974,6 +974,99 @@ impl<'a> Parser<'a> {
         Ok(i32::try_from(value).expect("validated PC-relative immediate fits in i32"))
     }
 
+    fn parse_i16_signed_scaled_immediate(
+        &mut self,
+        context: &str,
+        bits: u8,
+        scale: u8,
+    ) -> Result<i16, ParseError> {
+        let start = self.pos;
+        let value = self.parse_immediate_const_expr(context)?;
+        self.validate_i16_signed_scaled_immediate(value, context, bits, scale, start)
+    }
+
+    fn validate_i16_signed_scaled_immediate(
+        &self,
+        value: i64,
+        context: &str,
+        bits: u8,
+        scale: u8,
+        start: usize,
+    ) -> Result<i16, ParseError> {
+        let alignment = 1i64 << scale;
+        if value % alignment != 0 {
+            return Err(self.err_at(
+                start,
+                format!("{} {} is not {}-byte aligned", context, value, alignment),
+            ));
+        }
+
+        let scaled = value / alignment;
+        let min = -(1i64 << (bits - 1));
+        let max = (1i64 << (bits - 1)) - 1;
+        if !(min..=max).contains(&scaled) {
+            return Err(self.err_at(
+                start,
+                format!(
+                    "{} {} is out of range for a signed {}-bit immediate with scale {}",
+                    context, value, bits, alignment
+                ),
+            ));
+        }
+
+        i16::try_from(value).map_err(|_| {
+            self.err_at(
+                start,
+                format!(
+                    "{} {} does not fit the assembler's offset representation",
+                    context, value
+                ),
+            )
+        })
+    }
+
+    fn validate_unsigned_scaled_immediate(
+        &self,
+        value: i64,
+        context: &str,
+        bits: u8,
+        scale: u8,
+        start: usize,
+    ) -> Result<u16, ParseError> {
+        let alignment = 1i64 << scale;
+        let max = ((1i64 << bits) - 1) * alignment;
+        if value < 0 || value > max || value % alignment != 0 {
+            return Err(self.err_at(
+                start,
+                format!(
+                    "{} {} must be aligned to {} bytes and in the range 0..={}",
+                    context, value, alignment, max
+                ),
+            ));
+        }
+
+        u16::try_from(value).map_err(|_| {
+            self.err_at(
+                start,
+                format!(
+                    "{} {} does not fit the assembler's offset representation",
+                    context, value
+                ),
+            )
+        })
+    }
+
+    fn parse_u16_unsigned_scaled_immediate(
+        &mut self,
+        context: &str,
+        bits: u8,
+        scale: u8,
+    ) -> Result<u16, ParseError> {
+        let start = self.pos;
+        let value = self.parse_immediate_const_expr(context)?;
+        self.validate_unsigned_scaled_immediate(value, context, bits, scale, start)
+    }
+
     fn parse_logical_immediate_value(&mut self, sf: bool) -> Result<u64, ParseError> {
         let imm = self.parse_immediate_const_expr("logical immediate")?;
         let raw = if sf { imm as u64 } else { (imm as u32) as u64 };
@@ -3039,39 +3132,53 @@ impl<'a> Parser<'a> {
         sf: bool,
         rt: GpReg,
         rn: GpReg,
+        offset: i64,
+        start: usize,
+    ) -> Result<Inst, ParseError> {
+        let scale = if sf { 3 } else { 2 };
+        let fits_unsigned =
+            offset >= 0 && offset % (1i64 << scale) == 0 && (offset >> scale) <= 0xFFF;
+        if fits_unsigned {
+            let offset = u16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(match (is_load, sf) {
+                (true, true) => Inst::LdrImm64 { rt, rn, offset },
+                (false, true) => Inst::StrImm64 { rt, rn, offset },
+                (true, false) => Inst::LdrImm32 { rt, rn, offset },
+                (false, false) => Inst::StrImm32 { rt, rn, offset },
+            });
+        }
+
+        if (-256..=255).contains(&offset) {
+            let offset = i16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(self.gp_unscaled_mem_inst(is_load, sf, rt, rn, offset));
+        }
+
+        Err(self.err_at(
+            start,
+            format!(
+                "memory offset {} is not encodable as a signed unscaled or unsigned scaled offset",
+                offset
+            ),
+        ))
+    }
+
+    fn gp_unscaled_mem_inst(
+        &self,
+        is_load: bool,
+        sf: bool,
+        rt: GpReg,
+        rn: GpReg,
         offset: i16,
-        force_unscaled: bool,
     ) -> Inst {
-        if force_unscaled || offset < 0 {
-            match (is_load, sf) {
-                (true, true) => Inst::Ldur64 { rt, rn, offset },
-                (false, true) => Inst::Stur64 { rt, rn, offset },
-                (true, false) => Inst::Ldur32 { rt, rn, offset },
-                (false, false) => Inst::Stur32 { rt, rn, offset },
-            }
-        } else {
-            match (is_load, sf) {
-                (true, true) => Inst::LdrImm64 {
-                    rt,
-                    rn,
-                    offset: offset as u16,
-                },
-                (false, true) => Inst::StrImm64 {
-                    rt,
-                    rn,
-                    offset: offset as u16,
-                },
-                (true, false) => Inst::LdrImm32 {
-                    rt,
-                    rn,
-                    offset: offset as u16,
-                },
-                (false, false) => Inst::StrImm32 {
-                    rt,
-                    rn,
-                    offset: offset as u16,
-                },
-            }
+        match (is_load, sf) {
+            (true, true) => Inst::Ldur64 { rt, rn, offset },
+            (false, true) => Inst::Stur64 { rt, rn, offset },
+            (true, false) => Inst::Ldur32 { rt, rn, offset },
+            (false, false) => Inst::Stur32 { rt, rn, offset },
         }
     }
 
@@ -3100,6 +3207,7 @@ impl<'a> Parser<'a> {
         rt: FpReg,
         rn: GpReg,
         offset: i64,
+        start: usize,
     ) -> Result<Inst, ParseError> {
         let scale = 1i64 << width.scale();
         let fits_unsigned =
@@ -3136,10 +3244,13 @@ impl<'a> Parser<'a> {
             });
         }
 
-        Err(self.err(format!(
-            "FP/SIMD memory offset {offset} is out of range for {}",
-            if is_load { "LDR" } else { "STR" }
-        )))
+        Err(self.err_at(
+            start,
+            format!(
+                "FP/SIMD memory offset {offset} is out of range for {}",
+                if is_load { "LDR" } else { "STR" }
+            ),
+        ))
     }
 
     fn parse_ldur_stur(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
@@ -3151,7 +3262,7 @@ impl<'a> Parser<'a> {
             0
         } else {
             self.expect(&Tok::Comma)?;
-            let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+            let offset = self.parse_i16_signed_scaled_immediate("memory offset", 9, 0)?;
             self.expect(&Tok::RBracket)?;
             offset
         };
@@ -3164,7 +3275,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Stmt::Instruction(
-            self.gp_mem_offset_inst(is_load, sf, rt, rn, offset, true),
+            self.gp_unscaled_mem_inst(is_load, sf, rt, rn, offset),
         ))
     }
 
@@ -3210,13 +3321,13 @@ impl<'a> Parser<'a> {
         if self.eat(&Tok::RBracket) {
             // [Xn] or [Xn], #off (post-index)
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
                 return Ok(Stmt::Instruction(
                     self.gp_mem_post_inst(is_load, sf, rt, rn, offset),
                 ));
             }
             return Ok(Stmt::Instruction(
-                self.gp_mem_offset_inst(is_load, sf, rt, rn, 0, false),
+                self.gp_mem_offset_inst(is_load, sf, rt, rn, 0, self.pos)?,
             ));
         }
 
@@ -3299,18 +3410,31 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::Instruction(inst));
         }
 
-        let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+        let offset_start = self.pos;
+        let offset = self.parse_immediate_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
+            let offset = self.validate_i16_signed_scaled_immediate(
+                offset,
+                "memory offset",
+                9,
+                0,
+                offset_start,
+            )?;
             return Ok(Stmt::Instruction(
                 self.gp_mem_pre_inst(is_load, sf, rt, rn, offset),
             ));
         }
 
-        Ok(Stmt::Instruction(
-            self.gp_mem_offset_inst(is_load, sf, rt, rn, offset, false),
-        ))
+        Ok(Stmt::Instruction(self.gp_mem_offset_inst(
+            is_load,
+            sf,
+            rt,
+            rn,
+            offset,
+            offset_start,
+        )?))
     }
 
     fn parse_ldr_str_fp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
@@ -3368,7 +3492,7 @@ impl<'a> Parser<'a> {
                         self.err("post-index narrow FP loads/stores are not supported".into())
                     );
                 }
-                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
                 let inst = match (is_load, width) {
                     (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                     (true, FpMemWidth::D64) => Inst::LdrFpPost64 { rt, rn, offset },
@@ -3483,6 +3607,7 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::Instruction(inst));
         }
 
+        let offset_start = self.pos;
         let offset = self.parse_immediate_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
 
@@ -3490,68 +3615,35 @@ impl<'a> Parser<'a> {
             if is_scalar_narrow {
                 return Err(self.err("pre-index narrow FP loads/stores are not supported".into()));
             }
+            let offset = self.validate_i16_signed_scaled_immediate(
+                offset,
+                "memory offset",
+                9,
+                0,
+                offset_start,
+            )?;
             let inst = match (is_load, width) {
                 (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
-                (true, FpMemWidth::D64) => Inst::LdrFpPre64 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (false, FpMemWidth::D64) => Inst::StrFpPre64 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (true, FpMemWidth::S32) => Inst::LdrFpPre32 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (false, FpMemWidth::S32) => Inst::StrFpPre32 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (true, FpMemWidth::Q128) => Inst::LdrFpPre128 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (false, FpMemWidth::Q128) => Inst::StrFpPre128 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
+                (true, FpMemWidth::D64) => Inst::LdrFpPre64 { rt, rn, offset },
+                (false, FpMemWidth::D64) => Inst::StrFpPre64 { rt, rn, offset },
+                (true, FpMemWidth::S32) => Inst::LdrFpPre32 { rt, rn, offset },
+                (false, FpMemWidth::S32) => Inst::StrFpPre32 { rt, rn, offset },
+                (true, FpMemWidth::Q128) => Inst::LdrFpPre128 { rt, rn, offset },
+                (false, FpMemWidth::Q128) => Inst::StrFpPre128 { rt, rn, offset },
             };
             return Ok(Stmt::Instruction(inst));
         }
 
-        let inst = self.fp_mem_offset_inst(is_load, width, rt, rn, offset)?;
+        let inst = self.fp_mem_offset_inst(is_load, width, rt, rn, offset, offset_start)?;
         Ok(Stmt::Instruction(inst))
     }
 
-    fn parse_ldstb_h_offset_inst(&self, mnemonic: &str, rt: GpReg, rn: GpReg, offset: i16) -> Inst {
+    fn parse_ldstb_h_offset_inst(&self, mnemonic: &str, rt: GpReg, rn: GpReg, offset: u16) -> Inst {
         match mnemonic {
-            "ldrb" => Inst::Ldrb {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            "ldrh" => Inst::Ldrh {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            "strb" => Inst::Strb {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            "strh" => Inst::Strh {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
+            "ldrb" => Inst::Ldrb { rt, rn, offset },
+            "ldrh" => Inst::Ldrh { rt, rn, offset },
+            "strb" => Inst::Strb { rt, rn, offset },
+            "strh" => Inst::Strh { rt, rn, offset },
             _ => unreachable!(),
         }
     }
@@ -3562,29 +3654,13 @@ impl<'a> Parser<'a> {
         rt: GpReg,
         sf: bool,
         rn: GpReg,
-        offset: i16,
+        offset: u16,
     ) -> Inst {
         match (mnemonic, sf) {
-            ("ldrsb", false) => Inst::Ldrsb32 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            ("ldrsb", true) => Inst::Ldrsb64 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            ("ldrsh", false) => Inst::Ldrsh32 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            ("ldrsh", true) => Inst::Ldrsh64 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
+            ("ldrsb", false) => Inst::Ldrsb32 { rt, rn, offset },
+            ("ldrsb", true) => Inst::Ldrsb64 { rt, rn, offset },
+            ("ldrsh", false) => Inst::Ldrsh32 { rt, rn, offset },
+            ("ldrsh", true) => Inst::Ldrsh64 { rt, rn, offset },
             _ => unreachable!(),
         }
     }
@@ -3735,7 +3811,7 @@ impl<'a> Parser<'a> {
         let rn = self.parse_gp_reg()?;
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
                 return Ok(self.parse_ldstb_h_post_inst(mnemonic, rt, rn, offset));
             }
             return Ok(self.parse_ldstb_h_offset_inst(mnemonic, rt, rn, 0));
@@ -3753,11 +3829,31 @@ impl<'a> Parser<'a> {
             return Ok(self.parse_ldstb_h_reg_inst(mnemonic, rt, rn, rm, extend, shift));
         }
 
-        let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+        let scale = match mnemonic {
+            "ldrb" | "strb" => 0,
+            "ldrh" | "strh" => 1,
+            _ => unreachable!(),
+        };
+        let offset_start = self.pos;
+        let offset = self.parse_immediate_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
         if self.eat(&Tok::Bang) {
+            let offset = self.validate_i16_signed_scaled_immediate(
+                offset,
+                "memory offset",
+                9,
+                0,
+                offset_start,
+            )?;
             return Ok(self.parse_ldstb_h_pre_inst(mnemonic, rt, rn, offset));
         }
+        let offset = self.validate_unsigned_scaled_immediate(
+            offset,
+            "memory offset",
+            12,
+            scale,
+            offset_start,
+        )?;
         Ok(self.parse_ldstb_h_offset_inst(mnemonic, rt, rn, offset))
     }
 
@@ -3768,7 +3864,7 @@ impl<'a> Parser<'a> {
         let rn = self.parse_gp_reg()?;
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
                 return Ok(self.parse_ldst_signed_b_h_post_inst(mnemonic, rt, sf, rn, offset));
             }
             return Ok(self.parse_ldst_signed_b_h_offset_inst(mnemonic, rt, sf, rn, 0));
@@ -3793,11 +3889,31 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+        let scale = match mnemonic {
+            "ldrsb" => 0,
+            "ldrsh" => 1,
+            _ => unreachable!(),
+        };
+        let offset_start = self.pos;
+        let offset = self.parse_immediate_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
         if self.eat(&Tok::Bang) {
+            let offset = self.validate_i16_signed_scaled_immediate(
+                offset,
+                "memory offset",
+                9,
+                0,
+                offset_start,
+            )?;
             return Ok(self.parse_ldst_signed_b_h_pre_inst(mnemonic, rt, sf, rn, offset));
         }
+        let offset = self.validate_unsigned_scaled_immediate(
+            offset,
+            "memory offset",
+            12,
+            scale,
+            offset_start,
+        )?;
         Ok(self.parse_ldst_signed_b_h_offset_inst(mnemonic, rt, sf, rn, offset))
     }
 
@@ -3840,16 +3956,12 @@ impl<'a> Parser<'a> {
                     shift,
                 }));
             }
-            self.parse_immediate_const_expr("memory offset")?
+            self.parse_u16_unsigned_scaled_immediate("memory offset", 12, 2)?
         } else {
             0
         };
         self.expect(&Tok::RBracket)?;
-        Ok(Stmt::Instruction(Inst::Ldrsw {
-            rt,
-            rn,
-            offset: offset as u16,
-        }))
+        Ok(Stmt::Instruction(Inst::Ldrsw { rt, rn, offset }))
     }
 
     fn parse_ldp_stp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
@@ -3869,10 +3981,12 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
+        let scale = if sf { 3 } else { 2 };
 
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
+                let offset =
+                    self.parse_i16_signed_scaled_immediate("pair post-index offset", 7, scale)?;
                 return Ok(match (is_load, sf) {
                     (true, true) => Inst::LdpPost64 {
                         rt1,
@@ -3930,7 +4044,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
-        let offset = self.parse_immediate_const_expr("pair offset")? as i16;
+        let offset = self.parse_i16_signed_scaled_immediate("pair offset", 7, scale)?;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
@@ -4007,10 +4121,12 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
+        let scale = width.scale();
 
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
+                let offset =
+                    self.parse_i16_signed_scaled_immediate("pair post-index offset", 7, scale)?;
                 return Ok(match (is_load, width) {
                     (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                     (true, FpMemWidth::D64) => Inst::LdpFpPost64 {
@@ -4094,7 +4210,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
-        let offset = self.parse_immediate_const_expr("pair offset")? as i16;
+        let offset = self.parse_i16_signed_scaled_immediate("pair offset", 7, scale)?;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
@@ -5379,7 +5495,7 @@ impl<'a> Parser<'a> {
             };
 
             let amount = if self.starts_immediate_expr() {
-                self.parse_immediate_const_expr("register offset shift")? as u8
+                self.parse_immediate_const_expr("register offset shift")?
             } else {
                 0
             };
@@ -5558,10 +5674,10 @@ fn expand_fp_modified_immediate(imm8: u8, is_double: bool) -> u64 {
     (sign << (exponent_bits + fraction_bits)) | (exponent << fraction_bits) | fraction
 }
 
-fn parse_index_shift(amount: u8, scale: u8) -> Result<bool, &'static str> {
+fn parse_index_shift(amount: i64, scale: u8) -> Result<bool, &'static str> {
     match amount {
         0 => Ok(false),
-        value if value == scale => Ok(true),
+        value if value == i64::from(scale) => Ok(true),
         _ => Err("register offset shift must be omitted, #0, or the element scale"),
     }
 }

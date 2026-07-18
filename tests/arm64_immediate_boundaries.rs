@@ -167,3 +167,80 @@ fn pc_relative_immediates_reject_range_and_alignment_errors() {
         assert_rejected(source, expected);
     }
 }
+
+#[test]
+fn memory_immediates_preserve_addressing_mode_boundaries() {
+    for (source, expected) in [
+        ("ldur x0, [x1, #-256]", 0xF850_0020),
+        ("ldur w2, [x3, #255]", 0xB84F_F062),
+        ("ldr x4, [x5, #32760]", 0xF97F_FCA4),
+        ("ldr x6, [x7, #255]", 0xF84F_F0E6),
+        ("str w8, [x9, #16380]", 0xB93F_FD28),
+        ("ldr x10, [x11, #-256]!", 0xF850_0D6A),
+        ("str w12, [x13], #255", 0xB80F_F5AC),
+        ("ldr q0, [x1, #65520]", 0x3DFF_FC20),
+        ("str d2, [x3, #255]", 0xFC0F_F062),
+        ("ldr s4, [x5, #-256]!", 0xBC50_0CA4),
+        ("str q6, [x7], #255", 0x3C8F_F4E6),
+        ("ldrb w0, [x1, #4095]", 0x397F_FC20),
+        ("strh w2, [x3, #8190]", 0x793F_FC62),
+        ("ldrsb x4, [x5, #4095]", 0x39BF_FCA4),
+        ("ldrsh w6, [x7, #8190]", 0x79FF_FCE6),
+        ("ldrb w8, [x9, #-256]!", 0x3850_0D28),
+        ("ldrsh x10, [x11], #255", 0x788F_F56A),
+        ("ldrsw x12, [x13, #16380]", 0xB9BF_FDAC),
+    ] {
+        assert_encoding(source, expected);
+    }
+}
+
+#[test]
+fn pair_immediates_preserve_signed_scaled_boundaries() {
+    for (source, expected) in [
+        ("ldp x0, x1, [x2, #-512]", 0xA960_0440),
+        ("stp x3, x4, [x5, #504]", 0xA91F_90A3),
+        ("ldp w6, w7, [x8, #-256]!", 0x29E0_1D06),
+        ("stp w9, w10, [x11], #252", 0x289F_A969),
+        ("ldp s0, s1, [x2, #-256]", 0x2D60_0440),
+        ("stp d2, d3, [x4, #504]!", 0x6D9F_8C82),
+        ("ldp q4, q5, [x6], #1008", 0xACDF_94C4),
+        ("ldr x0, [x1, x2, lsl #3]", 0xF862_7820),
+    ] {
+        assert_encoding(source, expected);
+    }
+}
+
+#[test]
+fn memory_immediates_reject_values_before_narrowing() {
+    for (source, expected) in [
+        ("ldur x0, [x1, #-257]", "memory offset"),
+        ("stur w0, [x1, #256]", "memory offset"),
+        ("ldur x0, [x1, #65536]", "memory offset"),
+        ("ldr x0, [x1, #32768]", "memory offset"),
+        ("ldr x0, [x1, #257]", "memory offset"),
+        ("str w0, [x1, #16384]", "memory offset"),
+        ("ldr x0, [x1, #256]!", "memory offset"),
+        ("str w0, [x1], #-257", "post-index offset"),
+        ("ldr q0, [x1, #65536]", "FP/SIMD memory offset"),
+        ("str d0, [x1, #257]", "FP/SIMD memory offset"),
+        ("ldr s0, [x1, #-257]!", "memory offset"),
+        ("str q0, [x1], #256", "post-index offset"),
+        ("ldrb w0, [x1, #4096]", "memory offset"),
+        ("ldrh w0, [x1, #8192]", "memory offset"),
+        ("ldrsh x0, [x1, #3]", "memory offset"),
+        ("ldrb w0, [x1, #-257]!", "memory offset"),
+        ("ldrsb x0, [x1], #256", "post-index offset"),
+        ("ldrsw x0, [x1, #16384]", "memory offset"),
+        ("ldrsw x0, [x1, #3]", "memory offset"),
+        ("ldp x0, x1, [x2, #-520]", "pair offset"),
+        ("stp x0, x1, [x2, #512]", "pair offset"),
+        ("ldp w0, w1, [x2, #2]!", "pair offset"),
+        ("stp w0, w1, [x2], #256", "pair post-index offset"),
+        ("ldp s0, s1, [x2, #-260]", "pair offset"),
+        ("stp d0, d1, [x2, #512]!", "pair offset"),
+        ("ldp q0, q1, [x2], #1024", "pair post-index offset"),
+        ("ldr x0, [x1, x2, lsl #256]", "register offset shift"),
+    ] {
+        assert_rejected(source, expected);
+    }
+}
