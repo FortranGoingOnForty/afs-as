@@ -1536,6 +1536,18 @@ impl<'a> Parser<'a> {
         self.gp_reg_with_size_kind_from_name(&name, &lower)
     }
 
+    fn parse_add_sub_gp_reg_with_size_kind(
+        &mut self,
+    ) -> Result<(GpReg, bool, GpRegKind), ParseError> {
+        let name = self.expect_ident()?;
+        let lower = name.to_lowercase();
+        if lower == "wsp" {
+            Ok((SP, false, GpRegKind::Sp))
+        } else {
+            self.gp_reg_with_size_kind_from_name(&name, &lower)
+        }
+    }
+
     fn gp_reg_with_size_kind_from_name(
         &self,
         name: &str,
@@ -1812,130 +1824,29 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_add_sub(&mut self, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let rd = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _, rn_kind) = self.parse_gp_reg_with_size_kind()?;
+        let rn = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-
-        if self.starts_immediate_expr() {
-            let imm = self.parse_immediate_const_expr("add/sub immediate")? as u16;
-            let shift = self.parse_optional_lsl12()?;
-            Ok(match (is_sub, sets_flags) {
-                (false, false) => Inst::AddImm {
-                    rd,
-                    rn,
-                    imm12: imm,
-                    shift,
-                    sf,
-                },
-                (true, false) => Inst::SubImm {
-                    rd,
-                    rn,
-                    imm12: imm,
-                    shift,
-                    sf,
-                },
-                (false, true) => Inst::AddsImm {
-                    rd,
-                    rn,
-                    imm12: imm,
-                    shift,
-                    sf,
-                },
-                (true, true) => Inst::SubsImm {
-                    rd,
-                    rn,
-                    imm12: imm,
-                    shift,
-                    sf,
-                },
-            })
-        } else {
-            let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
-            let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
-            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
-            Ok(match (is_sub, sets_flags, modifier) {
-                (false, false, None) => Inst::AddReg { rd, rn, rm, sf },
-                (true, false, None) => Inst::SubReg { rd, rn, rm, sf },
-                (false, true, None) => Inst::AddsReg { rd, rn, rm, sf },
-                (true, true, None) => Inst::SubsReg { rd, rn, rm, sf },
-                (false, false, Some(AddSubModifier::Shift(shift, amount))) => Inst::AddShiftReg {
-                    rd,
-                    rn,
-                    rm,
-                    shift,
-                    amount,
-                    sf,
-                },
-                (true, false, Some(AddSubModifier::Shift(shift, amount))) => Inst::SubShiftReg {
-                    rd,
-                    rn,
-                    rm,
-                    shift,
-                    amount,
-                    sf,
-                },
-                (false, true, Some(AddSubModifier::Shift(shift, amount))) => Inst::AddsShiftReg {
-                    rd,
-                    rn,
-                    rm,
-                    shift,
-                    amount,
-                    sf,
-                },
-                (true, true, Some(AddSubModifier::Shift(shift, amount))) => Inst::SubsShiftReg {
-                    rd,
-                    rn,
-                    rm,
-                    shift,
-                    amount,
-                    sf,
-                },
-                (false, false, Some(AddSubModifier::Extend(extend, amount))) => Inst::AddExtReg {
-                    rd,
-                    rn,
-                    rm,
-                    extend,
-                    amount,
-                    sf,
-                },
-                (true, false, Some(AddSubModifier::Extend(extend, amount))) => Inst::SubExtReg {
-                    rd,
-                    rn,
-                    rm,
-                    extend,
-                    amount,
-                    sf,
-                },
-                (false, true, Some(AddSubModifier::Extend(extend, amount))) => Inst::AddsExtReg {
-                    rd,
-                    rn,
-                    rm,
-                    extend,
-                    amount,
-                    sf,
-                },
-                (true, true, Some(AddSubModifier::Extend(extend, amount))) => Inst::SubsExtReg {
-                    rd,
-                    rn,
-                    rm,
-                    extend,
-                    amount,
-                    sf,
-                },
-            })
-        }
+        self.parse_add_sub_operand(rd, rn, is_sub, sets_flags)
     }
 
     /// ADD that can also handle label@PAGEOFF references (for ADRP+ADD pairs).
     fn parse_add_sub_stmt(&mut self, is_sub: bool, sets_flags: bool) -> Result<Stmt, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let rd_operand = self.parse_add_sub_gp_reg_with_size_kind()?;
+        let (rd, sf, rd_kind) = rd_operand;
         self.expect(&Tok::Comma)?;
-        let (rn, _, rn_kind) = self.parse_gp_reg_with_size_kind()?;
+        let rn_operand = self.parse_add_sub_gp_reg_with_size_kind()?;
+        let (rn, rn_is_64bit, rn_kind) = rn_operand;
         self.expect(&Tok::Comma)?;
 
         // Check for label@PAGEOFF (identifier or numeric local reference followed by @).
         if self.starts_non_register_symbol_reference() {
+            self.validate_add_sub_immediate_registers(
+                (sf, rd_kind),
+                (rn_is_64bit, rn_kind),
+                sets_flags,
+            )?;
             let label = self.parse_label_reference()?;
             let kind = self.parse_symbol_reloc_modifier(
                 Some(RelocKind::PageOff12),
@@ -1961,21 +1872,26 @@ impl<'a> Parser<'a> {
         }
 
         // Normal add/sub (immediate or register).
-        let inst = self.parse_add_sub_operand(rd, rn, rn_kind, sf, is_sub, sets_flags)?;
+        let inst = self.parse_add_sub_operand(rd_operand, rn_operand, is_sub, sets_flags)?;
         Ok(Stmt::Instruction(inst))
     }
 
     /// Parse the third operand of add/sub (immediate or register).
     fn parse_add_sub_operand(
         &mut self,
-        rd: GpReg,
-        rn: GpReg,
-        rn_kind: GpRegKind,
-        sf: bool,
+        rd: (GpReg, bool, GpRegKind),
+        rn: (GpReg, bool, GpRegKind),
         is_sub: bool,
         sets_flags: bool,
     ) -> Result<Inst, ParseError> {
+        let (rd, sf, rd_kind) = rd;
+        let (rn, rn_is_64bit, rn_kind) = rn;
         if self.starts_immediate_expr() {
+            self.validate_add_sub_immediate_registers(
+                (sf, rd_kind),
+                (rn_is_64bit, rn_kind),
+                sets_flags,
+            )?;
             let imm = self.parse_immediate_const_expr("add/sub immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
             Ok(match (is_sub, sets_flags) {
@@ -2009,9 +1925,16 @@ impl<'a> Parser<'a> {
                 },
             })
         } else {
-            let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+            let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
             let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
-            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+            let modifier = self.normalize_add_sub_register_modifier(
+                rd_kind,
+                (rn_is_64bit, rn_kind),
+                (rm_is_64bit, rm_kind),
+                sf,
+                sets_flags,
+                modifier,
+            )?;
             Ok(match (is_sub, sets_flags, modifier) {
                 (false, false, None) => Inst::AddReg { rd, rn, rm, sf },
                 (true, false, None) => Inst::SubReg { rd, rn, rm, sf },
@@ -2086,9 +2009,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cmp(&mut self) -> Result<Inst, ParseError> {
-        let (rn, sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
+        let (rn, sf, rn_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
+            self.validate_add_sub_immediate_registers((sf, GpRegKind::Zr), (sf, rn_kind), true)?;
             let imm = self.parse_immediate_const_expr("cmp immediate")? as u16;
             let shift = self.parse_optional_lsl12()?;
             Ok(Inst::SubsImm {
@@ -2099,9 +2023,16 @@ impl<'a> Parser<'a> {
                 sf,
             })
         } else {
-            let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+            let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
             let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
-            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+            let modifier = self.normalize_add_sub_register_modifier(
+                GpRegKind::Zr,
+                (sf, rn_kind),
+                (rm_is_64bit, rm_kind),
+                sf,
+                true,
+                modifier,
+            )?;
             if let Some(modifier) = modifier {
                 Ok(match modifier {
                     AddSubModifier::Shift(shift, amount) => Inst::SubsShiftReg {
@@ -2133,11 +2064,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cmn(&mut self) -> Result<Inst, ParseError> {
-        let (rn, sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
+        let (rn, sf, rn_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+        let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
-        self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+        let modifier = self.normalize_add_sub_register_modifier(
+            GpRegKind::Zr,
+            (sf, rn_kind),
+            (rm_is_64bit, rm_kind),
+            sf,
+            true,
+            modifier,
+        )?;
         if let Some(modifier) = modifier {
             Ok(match modifier {
                 AddSubModifier::Shift(shift, amount) => Inst::AddsShiftReg {
@@ -2190,9 +2128,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_neg(&mut self) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf, rd_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+        let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
+        if rd_kind == GpRegKind::Sp || rm_kind == GpRegKind::Sp {
+            return Err(self.err("neg does not allow sp operands".into()));
+        }
         let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
         self.validate_add_sub_extended_base_reg(GpRegKind::Zr, modifier)?;
         if let Some(modifier) = modifier {
@@ -5117,6 +5058,115 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn normalize_add_sub_register_modifier(
+        &self,
+        rd_kind: GpRegKind,
+        rn: (bool, GpRegKind),
+        rm: (bool, GpRegKind),
+        sf: bool,
+        sets_flags: bool,
+        modifier: Option<AddSubModifier>,
+    ) -> Result<Option<AddSubModifier>, ParseError> {
+        let (rn_is_64bit, rn_kind) = rn;
+        let (rm_is_64bit, rm_kind) = rm;
+        if rm_kind == GpRegKind::Sp {
+            return Err(
+                self.err("add/sub register forms do not allow sp as the third operand".into())
+            );
+        }
+
+        let uses_sp = rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp;
+        let modifier = if uses_sp {
+            if rn_is_64bit != sf {
+                return Err(self.err(
+                    "add/sub register operands involving sp must have matching widths".into(),
+                ));
+            }
+
+            let default_extend = if sf { RegExtend::Uxtx } else { RegExtend::Uxtw };
+            match modifier {
+                None if rm_is_64bit == sf => Some(AddSubModifier::Extend(default_extend, 0)),
+                None => {
+                    return Err(self.err(
+                        "add/sub register operands involving sp must have matching widths".into(),
+                    ));
+                }
+                Some(AddSubModifier::Shift(RegShift::Lsl, amount)) if rm_is_64bit == sf => {
+                    if amount > 4 {
+                        return Err(
+                            self.err("sp add/sub lsl amount must be in the range 0..=4".into())
+                        );
+                    }
+                    Some(AddSubModifier::Extend(default_extend, amount))
+                }
+                Some(AddSubModifier::Shift(RegShift::Lsl, _)) => {
+                    return Err(self.err(
+                        "add/sub register operands involving sp must have matching widths".into(),
+                    ));
+                }
+                Some(AddSubModifier::Shift(_, _)) => {
+                    return Err(self.err(
+                        "sp add/sub register forms only support lsl or an extend modifier".into(),
+                    ));
+                }
+                Some(AddSubModifier::Extend(..)) if !sf && rm_is_64bit => {
+                    return Err(self.err(
+                        "add/sub register operands involving sp must have matching widths".into(),
+                    ));
+                }
+                Some(modifier @ AddSubModifier::Extend(..)) => Some(modifier),
+            }
+        } else {
+            modifier
+        };
+
+        if matches!(modifier, Some(AddSubModifier::Extend(..))) {
+            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+            match (sets_flags, rd_kind) {
+                (false, GpRegKind::Zr) => {
+                    return Err(self.err(
+                        "extended add/sub forms require a register or sp destination, not xzr/wzr"
+                            .into(),
+                    ));
+                }
+                (true, GpRegKind::Sp) => {
+                    return Err(self.err(
+                        "flag-setting extended add/sub forms do not allow an sp destination".into(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        Ok(modifier)
+    }
+
+    fn validate_add_sub_immediate_registers(
+        &self,
+        rd: (bool, GpRegKind),
+        rn: (bool, GpRegKind),
+        sets_flags: bool,
+    ) -> Result<(), ParseError> {
+        let (rd_is_64bit, rd_kind) = rd;
+        let (rn_is_64bit, rn_kind) = rn;
+        if (rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp) && rd_is_64bit != rn_is_64bit {
+            return Err(self
+                .err("add/sub immediate operands involving sp must have matching widths".into()));
+        }
+        if rn_kind == GpRegKind::Zr {
+            return Err(self
+                .err("add/sub immediate forms require a register or sp base, not xzr/wzr".into()));
+        }
+        match (sets_flags, rd_kind) {
+            (false, GpRegKind::Zr) => Err(self.err(
+                "add/sub immediate forms require a register or sp destination, not xzr/wzr".into(),
+            )),
+            (true, GpRegKind::Sp) => Err(self
+                .err("flag-setting add/sub immediate forms do not allow an sp destination".into())),
+            _ => Ok(()),
+        }
+    }
+
     fn validate_add_sub_extended_base_reg(
         &self,
         rn_kind: GpRegKind,
@@ -5270,6 +5320,7 @@ fn parse_gp_reg_name(name: &str) -> Option<GpReg> {
 fn looks_like_gp_register_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower == "sp"
+        || lower == "wsp"
         || lower == "xzr"
         || lower == "wzr"
         || lower.starts_with('x')
@@ -5545,6 +5596,126 @@ mod tests {
                 sf: false
             }
         );
+    }
+
+    #[test]
+    fn parse_sp_register_arithmetic_uses_extended_forms() {
+        let cases = [
+            ("add x0, sp, x1", 0x8B21_63E0),
+            ("add sp, x1, x2", 0x8B22_603F),
+            ("sub x3, sp, x4", 0xCB24_63E3),
+            ("sub sp, x5, x6", 0xCB26_60BF),
+            ("adds x7, sp, x8", 0xAB28_63E7),
+            ("subs x9, sp, x10", 0xEB2A_63E9),
+            ("cmp sp, x11", 0xEB2B_63FF),
+            ("cmn sp, x12", 0xAB2C_63FF),
+            ("add x13, sp, x14, lsl #4", 0x8B2E_73ED),
+            ("sub sp, x15, x16, lsl #2", 0xCB30_69FF),
+            ("add w0, wsp, w1", 0x0B21_43E0),
+            ("add wsp, w1, w2", 0x0B22_403F),
+            ("sub w3, wsp, w4", 0x4B24_43E3),
+            ("sub wsp, w5, w6", 0x4B26_40BF),
+            ("adds w7, wsp, w8", 0x2B28_43E7),
+            ("subs w9, wsp, w10", 0x6B2A_43E9),
+            ("cmp wsp, w11", 0x6B2B_43FF),
+            ("cmn wsp, w12", 0x2B2C_43FF),
+            ("add w13, wsp, w14, lsl #4", 0x0B2E_53ED),
+            ("sub wsp, w15, w16, lsl #2", 0x4B30_49FF),
+            ("add w17, wsp, w18, uxtw #3", 0x0B32_4FF1),
+            ("sub wsp, w19, w20, sxtw #4", 0x4B34_D27F),
+            ("sub sp, sp, x16", 0xCB30_63FF),
+            ("add sp, sp, x16", 0x8B30_63FF),
+            ("sub wsp, wsp, w16", 0x4B30_43FF),
+            ("add wsp, wsp, w16", 0x0B30_43FF),
+        ];
+
+        for (source, expected_encoding) in cases {
+            assert_eq!(
+                parse_inst(source).encode(),
+                expected_encoding,
+                "source: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_sp_immediate_arithmetic_preserves_register_roles() {
+        let cases = [
+            ("add sp, sp, #16", 0x9100_43FF),
+            ("sub sp, sp, #16", 0xD100_43FF),
+            ("adds xzr, sp, #1", 0xB100_07FF),
+            ("subs xzr, sp, #1", 0xF100_07FF),
+            ("add wsp, wsp, #16", 0x1100_43FF),
+            ("subs wzr, wsp, #1", 0x7100_07FF),
+        ];
+
+        for (source, expected_encoding) in cases {
+            assert_eq!(
+                parse_inst(source).encode(),
+                expected_encoding,
+                "source: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn error_sp_register_arithmetic_rejects_non_encodable_forms() {
+        let cases = [
+            (
+                "add x0, sp, x1, lsl #5",
+                "lsl amount must be in the range 0..=4",
+            ),
+            (
+                "add x0, sp, x1, lsr #1",
+                "only support lsl or an extend modifier",
+            ),
+            ("add x0, x1, sp", "do not allow sp as the third operand"),
+            ("add xzr, sp, x1", "require a register or sp destination"),
+            ("adds sp, x1, x2", "do not allow an sp destination"),
+            ("add sp, w1, x2", "involving sp must have matching widths"),
+            (
+                "add w0, wsp, w1, lsl #5",
+                "lsl amount must be in the range 0..=4",
+            ),
+            (
+                "add w0, wsp, w1, lsr #1",
+                "only support lsl or an extend modifier",
+            ),
+            ("add w0, w1, wsp", "do not allow sp as the third operand"),
+            ("add wzr, wsp, w1", "require a register or sp destination"),
+            ("adds wsp, w1, w2", "do not allow an sp destination"),
+            ("add wsp, x1, w2", "involving sp must have matching widths"),
+            (
+                "add w0, wsp, x1, uxtx",
+                "involving sp must have matching widths",
+            ),
+            (
+                "add wsp, w1, x2, sxtx",
+                "involving sp must have matching widths",
+            ),
+            (
+                "cmp wsp, x1, uxtx",
+                "involving sp must have matching widths",
+            ),
+            ("neg sp, x1", "neg does not allow sp"),
+            ("neg x0, sp", "neg does not allow sp"),
+            ("neg wsp, w1", "neg does not allow sp"),
+            ("neg w0, wsp", "neg does not allow sp"),
+            ("add xzr, x1, #1", "require a register or sp destination"),
+            ("add x0, xzr, #1", "require a register or sp base"),
+            ("adds sp, x1, #1", "do not allow an sp destination"),
+            ("subs sp, x1, #1", "do not allow an sp destination"),
+            (
+                "add xzr, x1, _sym@PAGEOFF",
+                "require a register or sp destination",
+            ),
+            ("add x0, xzr, _sym@PAGEOFF", "require a register or sp base"),
+        ];
+
+        for (source, expected) in cases {
+            let error = parse_err(source);
+            assert!(error.contains(expected), "source: {source}; got: {error}");
+        }
     }
 
     #[test]

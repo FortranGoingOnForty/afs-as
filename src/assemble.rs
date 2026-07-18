@@ -3173,6 +3173,53 @@ mod tests {
     }
 
     #[test]
+    fn assemble_sp_register_arithmetic_preserves_sp() {
+        let obj = assemble_source(
+            ".text\n\
+             add x0, sp, x1\n\
+             add sp, x1, x2\n\
+             sub x3, sp, x4\n\
+             sub sp, x5, x6\n\
+             adds x7, sp, x8\n\
+             subs x9, sp, x10\n\
+             cmp sp, x11\n\
+             cmn sp, x12\n\
+             add x13, sp, x14, lsl #4\n\
+             sub sp, x15, x16, lsl #2\n\
+             add w0, wsp, w1\n\
+             add wsp, w1, w2\n\
+             sub w3, wsp, w4\n\
+             sub wsp, w5, w6\n\
+             adds w7, wsp, w8\n\
+             subs w9, wsp, w10\n\
+             cmp wsp, w11\n\
+             cmn wsp, w12\n\
+             add w13, wsp, w14, lsl #4\n\
+             sub wsp, w15, w16, lsl #2\n\
+             add w17, wsp, w18, uxtw #3\n\
+             sub wsp, w19, w20, sxtw #4\n\
+             sub sp, sp, x16\n\
+             add sp, sp, x16\n\
+             sub wsp, wsp, w16\n\
+             add wsp, wsp, w16\n",
+        )
+        .unwrap();
+        assert_eq!(
+            text_bytes(&obj),
+            [
+                0xE0, 0x63, 0x21, 0x8B, 0x3F, 0x60, 0x22, 0x8B, 0xE3, 0x63, 0x24, 0xCB, 0xBF, 0x60,
+                0x26, 0xCB, 0xE7, 0x63, 0x28, 0xAB, 0xE9, 0x63, 0x2A, 0xEB, 0xFF, 0x63, 0x2B, 0xEB,
+                0xFF, 0x63, 0x2C, 0xAB, 0xED, 0x73, 0x2E, 0x8B, 0xFF, 0x69, 0x30, 0xCB, 0xE0, 0x43,
+                0x21, 0x0B, 0x3F, 0x40, 0x22, 0x0B, 0xE3, 0x43, 0x24, 0x4B, 0xBF, 0x40, 0x26, 0x4B,
+                0xE7, 0x43, 0x28, 0x2B, 0xE9, 0x43, 0x2A, 0x6B, 0xFF, 0x43, 0x2B, 0x6B, 0xFF, 0x43,
+                0x2C, 0x2B, 0xED, 0x53, 0x2E, 0x0B, 0xFF, 0x49, 0x30, 0x4B, 0xF1, 0x4F, 0x32, 0x0B,
+                0x7F, 0xD2, 0x34, 0x4B, 0xFF, 0x63, 0x30, 0xCB, 0xFF, 0x63, 0x30, 0x8B, 0xFF, 0x43,
+                0x30, 0x4B, 0xFF, 0x43, 0x30, 0x0B,
+            ]
+        );
+    }
+
+    #[test]
     fn assemble_with_data() {
         let obj = assemble_source(".text\nnop\n.data\n.asciz \"hi\"\n").unwrap();
         assert_eq!(text_bytes(&obj).len(), 4);
