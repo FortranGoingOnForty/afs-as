@@ -921,6 +921,17 @@ impl<'a> Parser<'a> {
         self.parse_const_expr(context)
     }
 
+    fn parse_u16_immediate(&mut self, context: &str) -> Result<u16, ParseError> {
+        let start = self.pos;
+        let value = self.parse_immediate_const_expr(context)?;
+        u16::try_from(value).map_err(|_| {
+            self.err_at(
+                start,
+                format!("{} must be in the range 0..=65535, got {}", context, value),
+            )
+        })
+    }
+
     fn parse_logical_immediate_value(&mut self, sf: bool) -> Result<u64, ParseError> {
         let imm = self.parse_immediate_const_expr("logical immediate")?;
         let raw = if sf { imm as u64 } else { (imm as u32) as u64 };
@@ -1483,7 +1494,7 @@ impl<'a> Parser<'a> {
 
             // System
             "svc" => {
-                let imm = self.parse_immediate_const_expr("svc immediate")? as u16;
+                let imm = self.parse_u16_immediate("svc immediate")?;
                 Ok(Inst::Svc { imm16: imm })
             }
             "nop" => Ok(Inst::Nop),
@@ -1507,7 +1518,7 @@ impl<'a> Parser<'a> {
                 Ok(Inst::Isb { option })
             }
             "brk" => {
-                let imm = self.parse_immediate_const_expr("brk immediate")? as u16;
+                let imm = self.parse_u16_immediate("brk immediate")?;
                 Ok(Inst::Brk { imm16: imm })
             }
 
@@ -1892,8 +1903,9 @@ impl<'a> Parser<'a> {
                 (rn_is_64bit, rn_kind),
                 sets_flags,
             )?;
-            let imm = self.parse_immediate_const_expr("add/sub immediate")? as u16;
-            let shift = self.parse_optional_lsl12()?;
+            let (imm, shift, negate_operation) =
+                self.parse_add_sub_immediate("add/sub immediate")?;
+            let is_sub = is_sub ^ negate_operation;
             Ok(match (is_sub, sets_flags) {
                 (false, false) => Inst::AddImm {
                     rd,
@@ -2013,15 +2025,24 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             self.validate_add_sub_immediate_registers((sf, GpRegKind::Zr), (sf, rn_kind), true)?;
-            let imm = self.parse_immediate_const_expr("cmp immediate")? as u16;
-            let shift = self.parse_optional_lsl12()?;
-            Ok(Inst::SubsImm {
-                rd: XZR,
-                rn,
-                imm12: imm,
-                shift,
-                sf,
-            })
+            let (imm, shift, negate_operation) = self.parse_add_sub_immediate("cmp immediate")?;
+            if negate_operation {
+                Ok(Inst::AddsImm {
+                    rd: XZR,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                })
+            } else {
+                Ok(Inst::SubsImm {
+                    rd: XZR,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                })
+            }
         } else {
             let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
             let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
@@ -2618,8 +2639,8 @@ impl<'a> Parser<'a> {
     fn parse_mov_wide(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let imm = self.parse_immediate_const_expr("mov wide immediate")? as u16;
-        let shift = self.parse_optional_lsl_amount()?;
+        let imm = self.parse_u16_immediate("mov wide immediate")?;
+        let shift = self.parse_optional_mov_wide_shift(sf)?;
         Ok(match mnemonic {
             "movz" => Inst::Movz {
                 rd,
@@ -2727,10 +2748,12 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let lsb = self.parse_immediate_const_expr("bitfield lsb")? as u8;
+        let lsb = self.parse_immediate_const_expr("bitfield lsb")?;
         self.expect(&Tok::Comma)?;
-        let width = self.parse_immediate_const_expr("bitfield width")? as u8;
+        let width = self.parse_immediate_const_expr("bitfield width")?;
         self.validate_bitfield_alias_args(mnemonic, sf, lsb, width)?;
+        let lsb = u8::try_from(lsb).expect("validated bitfield lsb fits in u8");
+        let width = u8::try_from(width).expect("validated bitfield width fits in u8");
         Ok(match mnemonic {
             "ubfiz" => Inst::Ubfiz {
                 rd,
@@ -4899,38 +4922,98 @@ impl<'a> Parser<'a> {
 
     // ---- Helpers ----
 
-    fn parse_optional_lsl12(&mut self) -> Result<bool, ParseError> {
-        // Check for ", lsl #12" suffix
-        if self.peek() == &Tok::Comma {
-            // Peek ahead to see if it's "lsl"
-            if self.pos + 1 < self.tokens.len() {
-                if let Tok::Ident(ref s) = self.tokens[self.pos + 1].kind {
-                    if s.to_lowercase() == "lsl" {
-                        self.advance(); // comma
-                        self.advance(); // lsl
-                        let amount = self.parse_immediate_const_expr("lsl amount")?;
-                        if amount == 12 {
-                            return Ok(true);
-                        }
-                        return Err(self.err(format!("expected lsl #12, got lsl #{}", amount)));
-                    }
-                }
-            }
+    fn parse_optional_add_sub_immediate_shift(&mut self) -> Result<Option<bool>, ParseError> {
+        let has_lsl = self.peek() == &Tok::Comma
+            && matches!(
+                self.tokens.get(self.pos + 1).map(|token| &token.kind),
+                Some(Tok::Ident(name)) if name.eq_ignore_ascii_case("lsl")
+            );
+        if !has_lsl {
+            return Ok(None);
         }
-        Ok(false)
+
+        self.advance();
+        self.advance();
+        let amount = self.parse_immediate_const_expr("lsl amount")?;
+        match amount {
+            0 => Ok(Some(false)),
+            12 => Ok(Some(true)),
+            _ => Err(self.err(format!(
+                "add/sub immediate shift must be lsl #0 or lsl #12, got lsl #{}",
+                amount
+            ))),
+        }
     }
 
-    fn parse_optional_lsl_amount(&mut self) -> Result<u8, ParseError> {
-        if self.eat(&Tok::Comma) {
-            let s = self.expect_ident()?;
-            if s.to_lowercase() != "lsl" {
-                return Err(self.err(format!("expected 'lsl', got '{}'", s)));
+    fn parse_add_sub_immediate(&mut self, context: &str) -> Result<(u16, bool, bool), ParseError> {
+        let start = self.pos;
+        let value = self.parse_immediate_const_expr(context)?;
+        let explicit_shift = self.parse_optional_add_sub_immediate_shift()?;
+        let magnitude = value.unsigned_abs();
+
+        let (imm12, shift) = match explicit_shift {
+            Some(shift) if magnitude <= 0xFFF => (magnitude, shift),
+            Some(_) => {
+                return Err(self.err_at(
+                    start,
+                    format!(
+                        "{} {} is not encodable with an explicit shift; expected magnitude 0..=4095",
+                        context, value
+                    ),
+                ));
             }
-            let amount = self.parse_immediate_const_expr("lsl amount")? as u8;
-            Ok(amount)
-        } else {
-            Ok(0)
+            None if magnitude <= 0xFFF => (magnitude, false),
+            None if magnitude <= (0xFFF << 12) && magnitude % (1 << 12) == 0 => {
+                (magnitude >> 12, true)
+            }
+            None => {
+                return Err(self.err_at(
+                    start,
+                    format!(
+                        "{} {} is not encodable; expected magnitude 0..=4095 or a multiple of 4096 through 16773120",
+                        context, value
+                    ),
+                ));
+            }
+        };
+
+        Ok((
+            u16::try_from(imm12).expect("validated add/sub immediate fits in u16"),
+            shift,
+            value.is_negative(),
+        ))
+    }
+
+    fn parse_optional_mov_wide_shift(&mut self, sf: bool) -> Result<u8, ParseError> {
+        if !self.eat(&Tok::Comma) {
+            return Ok(0);
         }
+
+        let modifier = self.expect_ident()?;
+        if modifier.to_lowercase() != "lsl" {
+            return Err(self.err(format!("expected 'lsl', got '{}'", modifier)));
+        }
+
+        let start = self.pos;
+        let amount = self.parse_immediate_const_expr("mov wide shift")?;
+        let valid = if sf {
+            matches!(amount, 0 | 16 | 32 | 48)
+        } else {
+            matches!(amount, 0 | 16)
+        };
+        if !valid {
+            return Err(self.err_at(
+                start,
+                format!(
+                    "mov wide shift must be one of {} for a {}-bit register, got {}",
+                    if sf { "0, 16, 32, or 48" } else { "0 or 16" },
+                    if sf { 64 } else { 32 },
+                    amount
+                ),
+            ));
+        }
+
+        Ok(u8::try_from(amount).expect("validated mov wide shift fits in u8"))
     }
 
     fn parse_bit_index(&mut self, sf: bool, context: &str) -> Result<u8, ParseError> {
@@ -5185,14 +5268,14 @@ impl<'a> Parser<'a> {
         &self,
         mnemonic: &str,
         sf: bool,
-        lsb: u8,
-        width: u8,
+        lsb: i64,
+        width: i64,
     ) -> Result<(), ParseError> {
-        let bits = if sf { 64u8 } else { 32u8 };
-        if width == 0 {
+        let bits = if sf { 64i64 } else { 32i64 };
+        if width <= 0 {
             return Err(self.err(format!("{} width must be at least 1", mnemonic)));
         }
-        if lsb >= bits {
+        if !(0..bits).contains(&lsb) {
             return Err(self.err(format!(
                 "{} lsb {} is out of range for {}-bit register",
                 mnemonic, lsb, bits
