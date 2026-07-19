@@ -701,12 +701,27 @@ impl Assembler {
             &self.absolute_assignments,
             &self.label_values_for_expr(),
         );
+        let assignment_locations: Vec<_> = stmts
+            .iter()
+            .filter_map(|stmt| {
+                matches!(&stmt.stmt, Stmt::Directive(Directive::Set(_, _)))
+                    .then_some((stmt.line, stmt.col))
+            })
+            .collect();
+        debug_assert_eq!(assignment_locations.len(), self.absolute_assignments.len());
         let mut first_names = BTreeMap::new();
         self.initial_absolute_symbols.clear();
         self.final_absolute_symbols.clear();
         self.absolute_assignment_values.clear();
         for ((name, _), result) in self.absolute_assignments.iter().zip(assignment_results) {
-            let value = result.map_err(|error| AsmError(error.to_string()))?;
+            let value = result.map_err(|error| {
+                let location = assignment_locations.get(error.assignment_index()).copied();
+                let error = AsmError(error.to_string());
+                match location {
+                    Some((line, col)) => error.with_loc_if_absent(line, col),
+                    None => error,
+                }
+            })?;
             if first_names.insert(name.clone(), ()).is_none() {
                 self.initial_absolute_symbols.insert(name.clone(), value);
             }
@@ -2150,7 +2165,7 @@ impl Assembler {
                 name.clone(),
                 SymbolValue::Defined {
                     section: *section,
-                    value: (self.section_bases[*section] + offset) as i64,
+                    value: *offset,
                 },
             );
         }

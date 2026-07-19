@@ -36,7 +36,7 @@ pub enum EvalError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolValue {
     Absolute(i64),
-    Defined { section: usize, value: i64 },
+    Defined { section: usize, value: u64 },
     Undefined,
 }
 
@@ -138,7 +138,7 @@ pub fn classify(
     linearize(expr, 1, &mut constant, &mut terms)?;
     terms.retain(|(_, coeff)| *coeff != 0);
 
-    let mut defined_groups: BTreeMap<usize, Vec<(String, i64, i32)>> = BTreeMap::new();
+    let mut defined_groups: BTreeMap<usize, Vec<(String, u64, i32)>> = BTreeMap::new();
     let mut defined_order = Vec::new();
     let mut remaining = Vec::new();
     let mut got_terms = Vec::new();
@@ -177,27 +177,25 @@ pub fn classify(
         }
     }
 
+    let mut defined_total = 0i128;
+    let mut anchor_groups = Vec::new();
     for section in defined_order {
         let group = defined_groups
             .remove(&section)
             .expect("section group should exist");
         let section_sum: i32 = group.iter().map(|(_, _, coeff)| *coeff).sum();
+        defined_total = defined_total
+            .checked_add(defined_group_total(&group)?)
+            .ok_or(ClassifyError::Overflow)?;
         match section_sum {
-            0 => {
-                for (_, value, coeff) in group {
-                    constant = checked_add(constant, checked_mul(value, coeff as i64)?)?;
-                }
-            }
-            1 | -1 => {
-                let (anchor_symbol, anchor_value, _) = &group[0];
-                for (_, value, coeff) in &group {
-                    constant = checked_add(
-                        constant,
-                        checked_mul(checked_sub(*value, *anchor_value)?, *coeff as i64)?,
-                    )?;
-                }
-                push_plain_term(&mut remaining, anchor_symbol.clone(), section_sum);
-            }
+            0 => {}
+            -1 | 1 => anchor_groups.push(DefinedAnchorGroup {
+                coefficient: section_sum,
+                candidates: group
+                    .into_iter()
+                    .map(|(symbol, value, _)| (symbol, value))
+                    .collect(),
+            }),
             other => {
                 return Err(ClassifyError::Illegal(format!(
                     "expression has unsupported section-relative coefficient {}",
@@ -206,12 +204,15 @@ pub fn classify(
             }
         }
     }
+    let defined_constant = i128::from(constant)
+        .checked_add(defined_total)
+        .ok_or(ClassifyError::Overflow)?;
 
     remaining.retain(|(_, coeff)| *coeff != 0);
     got_terms.retain(|(_, coeff)| *coeff != 0);
 
     if !got_terms.is_empty() || current_location_coeff != 0 {
-        if !remaining.is_empty() {
+        if !remaining.is_empty() || !anchor_groups.is_empty() {
             return Err(ClassifyError::Illegal(
                 "pointer-to-GOT expression cannot be combined with plain relocatable symbols"
                     .into(),
@@ -227,11 +228,23 @@ pub fn classify(
                 "pointer-to-GOT expression may subtract current location only once".into(),
             ));
         }
+        let constant = i64::try_from(defined_constant).map_err(|_| ClassifyError::Overflow)?;
         return Ok(ClassifiedExpr::PointerToGot {
             symbol: got_terms[0].0.clone(),
             addend: constant,
             pcrel: current_location_coeff == -1,
         });
+    }
+
+    if !relocation_coefficients_are_supported(&remaining, &anchor_groups) {
+        return Err(ClassifyError::Illegal(
+            "expression is not representable as an absolute value or relocation".into(),
+        ));
+    }
+
+    let (constant, anchors) = select_defined_anchors(defined_constant, &anchor_groups)?;
+    for (symbol, coefficient) in anchors {
+        push_plain_term(&mut remaining, symbol, coefficient);
     }
 
     match remaining.as_slice() {
@@ -353,39 +366,134 @@ fn push_plain_term(terms: &mut Vec<(String, i32)>, symbol: String, delta: i32) {
     }
 }
 
+fn defined_group_total(group: &[(String, u64, i32)]) -> Result<i128, ClassifyError> {
+    group.iter().try_fold(0i128, |total, (_, value, coeff)| {
+        let term = i128::from(*value)
+            .checked_mul(i128::from(*coeff))
+            .ok_or(ClassifyError::Overflow)?;
+        total.checked_add(term).ok_or(ClassifyError::Overflow)
+    })
+}
+
+struct DefinedAnchorGroup {
+    coefficient: i32,
+    candidates: Vec<(String, u64)>,
+}
+
+fn relocation_coefficients_are_supported(
+    remaining: &[(String, i32)],
+    anchor_groups: &[DefinedAnchorGroup],
+) -> bool {
+    let coefficients: Vec<_> = remaining
+        .iter()
+        .map(|(_, coefficient)| *coefficient)
+        .chain(anchor_groups.iter().map(|group| group.coefficient))
+        .collect();
+    matches!(coefficients.as_slice(), [] | [1] | [1, -1] | [-1, 1])
+}
+
+fn select_defined_anchors(
+    defined_constant: i128,
+    anchor_groups: &[DefinedAnchorGroup],
+) -> Result<(i64, Vec<(String, i32)>), ClassifyError> {
+    // Keep the source's first viable anchor, then try equivalent anchors when
+    // high section offsets would make that choice overflow the signed addend.
+    let convert = |value: i128| i64::try_from(value).map_err(|_| ClassifyError::Overflow);
+    match anchor_groups {
+        [] => Ok((convert(defined_constant)?, Vec::new())),
+        [group] => {
+            for (symbol, value) in &group.candidates {
+                let adjusted = defined_constant
+                    .checked_sub(i128::from(group.coefficient) * i128::from(*value))
+                    .ok_or(ClassifyError::Overflow)?;
+                if let Ok(constant) = convert(adjusted) {
+                    return Ok((constant, vec![(symbol.clone(), group.coefficient)]));
+                }
+            }
+            Err(ClassifyError::Overflow)
+        }
+        [first, second] => {
+            for (first_symbol, first_value) in &first.candidates {
+                let first_adjusted = defined_constant
+                    .checked_sub(i128::from(first.coefficient) * i128::from(*first_value))
+                    .ok_or(ClassifyError::Overflow)?;
+                for (second_symbol, second_value) in &second.candidates {
+                    let adjusted = first_adjusted
+                        .checked_sub(i128::from(second.coefficient) * i128::from(*second_value))
+                        .ok_or(ClassifyError::Overflow)?;
+                    if let Ok(constant) = convert(adjusted) {
+                        return Ok((
+                            constant,
+                            vec![
+                                (first_symbol.clone(), first.coefficient),
+                                (second_symbol.clone(), second.coefficient),
+                            ],
+                        ));
+                    }
+                }
+            }
+            Err(ClassifyError::Overflow)
+        }
+        _ => unreachable!("supported relocations use at most two defined anchors"),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AbsoluteAssignmentError {
-    UndefinedSymbol { owner: String, symbol: String },
-    CyclicDefinition(String),
-    NonAbsolute(String),
-    InvalidExpression { owner: String, error: ClassifyError },
+    UndefinedSymbol {
+        assignment: usize,
+        owner: String,
+        symbol: String,
+    },
+    CyclicDefinition {
+        assignment: usize,
+        symbol: String,
+    },
+    NonAbsolute {
+        assignment: usize,
+        symbol: String,
+    },
+    InvalidExpression {
+        assignment: usize,
+        owner: String,
+        error: ClassifyError,
+    },
 }
 
 impl AbsoluteAssignmentError {
     pub(crate) fn may_resolve_with_labels(&self) -> bool {
         matches!(self, Self::UndefinedSymbol { .. })
     }
+
+    pub(crate) fn assignment_index(&self) -> usize {
+        match self {
+            Self::UndefinedSymbol { assignment, .. }
+            | Self::CyclicDefinition { assignment, .. }
+            | Self::NonAbsolute { assignment, .. }
+            | Self::InvalidExpression { assignment, .. } => *assignment,
+        }
+    }
 }
 
 impl fmt::Display for AbsoluteAssignmentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UndefinedSymbol { owner, symbol } => write!(
+            Self::UndefinedSymbol { owner, symbol, .. } => write!(
                 f,
                 "absolute symbol '{}' references undefined symbol '{}'",
                 owner, symbol
             ),
-            Self::CyclicDefinition(symbol) => {
+            Self::CyclicDefinition { symbol, .. } => {
                 write!(f, "absolute symbol '{}' has a cyclic definition", symbol)
             }
-            Self::NonAbsolute(symbol) => {
+            Self::NonAbsolute { symbol, .. } => {
                 write!(
                     f,
                     "absolute symbol '{}' must resolve to an absolute value",
                     symbol
                 )
             }
-            Self::InvalidExpression { owner, error } => {
+            Self::InvalidExpression { owner, error, .. } => {
                 write!(f, "absolute symbol '{}': {}", owner, error)
             }
         }
@@ -547,9 +655,10 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
                         });
                     }
                     AssignmentResolutionState::Visiting => {
-                        let error = AbsoluteAssignmentError::CyclicDefinition(
-                            self.assignments[target].0.clone(),
-                        );
+                        let error = AbsoluteAssignmentError::CyclicDefinition {
+                            assignment: target,
+                            symbol: self.assignments[target].0.clone(),
+                        };
                         for frame in stack.drain(..) {
                             self.states[frame.index] =
                                 AssignmentResolutionState::Resolved(Err(error.clone()));
@@ -595,6 +704,7 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
                 Ok(i64::from_le_bytes(value.to_le_bytes()))
             }
             Err(ClassifyError::Overflow) => Err(AbsoluteAssignmentError::InvalidExpression {
+                assignment: index,
                 owner: name.clone(),
                 error: ClassifyError::Overflow,
             }),
@@ -602,12 +712,17 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
                 && self.can_resolve_with_labels(index, &symbols, &unresolved) =>
             {
                 Err(AbsoluteAssignmentError::UndefinedSymbol {
+                    assignment: index,
                     owner: name.clone(),
                     symbol: unresolved[0].clone(),
                 })
             }
-            Ok(_) => Err(AbsoluteAssignmentError::NonAbsolute(name.clone())),
+            Ok(_) => Err(AbsoluteAssignmentError::NonAbsolute {
+                assignment: index,
+                symbol: name.clone(),
+            }),
             Err(error) => Err(AbsoluteAssignmentError::InvalidExpression {
+                assignment: index,
                 owner: name.clone(),
                 error,
             }),
@@ -639,10 +754,6 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
 
 fn checked_add(lhs: i64, rhs: i64) -> Result<i64, ClassifyError> {
     lhs.checked_add(rhs).ok_or(ClassifyError::Overflow)
-}
-
-fn checked_sub(lhs: i64, rhs: i64) -> Result<i64, ClassifyError> {
-    lhs.checked_sub(rhs).ok_or(ClassifyError::Overflow)
 }
 
 fn checked_mul(lhs: i64, rhs: i64) -> Result<i64, ClassifyError> {
@@ -737,6 +848,141 @@ mod tests {
             classify(&expr, &symbols).unwrap(),
             ClassifiedExpr::Absolute(-8)
         );
+    }
+
+    #[test]
+    fn classify_same_section_difference_across_signed_address_boundary() {
+        let difference = Expr::Sub(
+            Box::new(Expr::Symbol("end".into())),
+            Box::new(Expr::Symbol("start".into())),
+        );
+        let mut symbols = BTreeMap::from([
+            (
+                "start".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 1,
+                },
+            ),
+            (
+                "end".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 1_u64 << 63,
+                },
+            ),
+        ]);
+        assert_eq!(
+            classify(&difference, &symbols).unwrap(),
+            ClassifiedExpr::Absolute(i64::MAX)
+        );
+
+        symbols.insert(
+            "start".into(),
+            SymbolValue::Defined {
+                section: 1,
+                value: 0,
+            },
+        );
+        assert_eq!(
+            classify(&difference, &symbols),
+            Err(ClassifyError::Overflow)
+        );
+
+        let adjusted = Expr::Sub(Box::new(difference), Box::new(Expr::Int(1)));
+        assert_eq!(
+            classify(&adjusted, &symbols).unwrap(),
+            ClassifiedExpr::Absolute(i64::MAX)
+        );
+    }
+
+    #[test]
+    fn high_address_symbols_keep_their_relocation_class() {
+        let symbols = BTreeMap::from([
+            (
+                "high".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: u64::MAX,
+                },
+            ),
+            (
+                "other".into(),
+                SymbolValue::Defined {
+                    section: 2,
+                    value: u64::MAX,
+                },
+            ),
+        ]);
+        assert_eq!(
+            classify(&Expr::Symbol("high".into()), &symbols).unwrap(),
+            ClassifiedExpr::Relocatable {
+                symbol: "high".into(),
+                addend: 0,
+            }
+        );
+        assert_eq!(
+            classify(
+                &Expr::Sub(
+                    Box::new(Expr::Symbol("high".into())),
+                    Box::new(Expr::Symbol("other".into())),
+                ),
+                &symbols,
+            )
+            .unwrap(),
+            ClassifiedExpr::Difference {
+                minuend: "high".into(),
+                subtrahend: "other".into(),
+                addend: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn high_address_anchor_selection_accepts_equivalent_term_orders() {
+        let symbols = BTreeMap::from([
+            (
+                "low1".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 0,
+                },
+            ),
+            (
+                "low2".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 0,
+                },
+            ),
+            (
+                "high".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 1_u64 << 63,
+                },
+            ),
+        ]);
+        let low_first = Expr::Sub(
+            Box::new(Expr::Add(
+                Box::new(Expr::Symbol("low1".into())),
+                Box::new(Expr::Symbol("high".into())),
+            )),
+            Box::new(Expr::Symbol("low2".into())),
+        );
+        let high_first = Expr::Sub(
+            Box::new(Expr::Add(
+                Box::new(Expr::Symbol("high".into())),
+                Box::new(Expr::Symbol("low1".into())),
+            )),
+            Box::new(Expr::Symbol("low2".into())),
+        );
+        let expected = ClassifiedExpr::Relocatable {
+            symbol: "high".into(),
+            addend: 0,
+        };
+        assert_eq!(classify(&low_first, &symbols).unwrap(), expected);
+        assert_eq!(classify(&high_first, &symbols).unwrap(), expected);
     }
 
     #[test]
@@ -882,7 +1128,7 @@ mod tests {
         assert_eq!(resolved.len(), assignments.len());
         assert!(resolved.iter().all(|value| matches!(
             value,
-            Err(AbsoluteAssignmentError::CyclicDefinition(symbol)) if symbol == "X0"
+            Err(AbsoluteAssignmentError::CyclicDefinition { symbol, .. }) if symbol == "X0"
         )));
     }
 }

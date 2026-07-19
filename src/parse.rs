@@ -273,6 +273,14 @@ pub fn parse_with_locations(src: &str) -> Result<Vec<LocatedStmt>, ParseError> {
     let mut p = Parser::new(&tokens);
     let mut first_assignments = BTreeMap::new();
     for (preview, value) in previews.iter().zip(resolved) {
+        let value = value.map_err(|error| {
+            let origin = &previews[error.assignment_index()];
+            LocatedAbsoluteAssignmentError {
+                error,
+                line: origin.line,
+                col: origin.col,
+            }
+        });
         let first_value = value.as_ref().ok().copied();
         p.absolute_assignment_values
             .insert((preview.line, preview.col), value);
@@ -288,6 +296,13 @@ pub fn parse_with_locations(src: &str) -> Result<Vec<LocatedStmt>, ParseError> {
 struct AbsoluteAssignmentPreview {
     name: String,
     expr: Expr,
+    line: u32,
+    col: u32,
+}
+
+#[derive(Clone)]
+struct LocatedAbsoluteAssignmentError {
+    error: expr::AbsoluteAssignmentError,
     line: u32,
     col: u32,
 }
@@ -342,7 +357,7 @@ struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     absolute_symbols: BTreeMap<String, i64>,
-    absolute_assignment_values: BTreeMap<(u32, u32), Result<i64, expr::AbsoluteAssignmentError>>,
+    absolute_assignment_values: BTreeMap<(u32, u32), Result<i64, LocatedAbsoluteAssignmentError>>,
     numeric_labels: BTreeMap<u32, u32>,
 }
 
@@ -706,14 +721,14 @@ impl<'a> Parser<'a> {
                     Some(Ok(value)) => {
                         self.absolute_symbols.insert(sym.clone(), value);
                     }
-                    Some(Err(error)) if error.may_resolve_with_labels() => {
+                    Some(Err(error)) if error.error.may_resolve_with_labels() => {
                         self.absolute_symbols.remove(&sym);
                     }
                     Some(Err(error)) => {
                         return Err(ParseError {
-                            line,
-                            col,
-                            msg: error.to_string(),
+                            line: error.line,
+                            col: error.col,
+                            msg: error.error.to_string(),
                         });
                     }
                     None => {

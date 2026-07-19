@@ -554,6 +554,17 @@ fn definite_absolute_assignment_errors_report_the_definition() {
 }
 
 #[test]
+fn dependent_assignment_errors_report_the_originating_definition() {
+    let error = assemble_source(
+        ".set ALIAS,X\n\
+         .set X,9223372036854775807 + 1\n",
+    )
+    .expect_err("overflowing dependency unexpectedly assembled");
+    assert_eq!((error.line, error.col), (Some(2), Some(1)));
+    assert_eq!(error.msg, "absolute symbol 'X': expression overflows i64");
+}
+
+#[test]
 fn label_dependent_absolute_assignments_are_deferred_to_assembly() {
     let object = assemble_source(
         ".set X,end-start\n\
@@ -564,4 +575,81 @@ fn label_dependent_absolute_assignments_are_deferred_to_assembly() {
     )
     .expect("same-section label difference unexpectedly rejected during parsing");
     assert_eq!(object.text_section().data, [0, 1]);
+}
+
+#[test]
+fn large_same_section_differences_cancel_before_signed_conversion() {
+    let object = assemble_source(
+        ".zerofill __DATA,__bss,prefix,1,0\n\
+         .zerofill __DATA,__bss,start,9223372036854775807,0\n\
+         .zerofill __DATA,__bss,end,1,0\n\
+         .set X,end-start\n",
+    )
+    .expect("representable high-address label difference unexpectedly rejected");
+
+    let value = object
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "X")
+        .unwrap();
+    assert!(value.absolute);
+    assert_eq!(value.value, i64::MAX as u64);
+
+    let start = object
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "start")
+        .unwrap();
+    let end = object
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "end")
+        .unwrap();
+    assert!(!start.absolute);
+    assert!(!end.absolute);
+    assert_eq!(start.section, end.section);
+    assert_eq!(start.value, 1);
+    assert_eq!(end.value, 1_u64 << 63);
+}
+
+#[test]
+fn high_address_relocation_anchor_is_not_term_order_dependent() {
+    let object = assemble_source(
+        ".zerofill __DATA,__bss,low1,0,0\n\
+         .zerofill __DATA,__bss,low2,9223372036854775807,0\n\
+         .zerofill __DATA,__bss,pad,1,0\n\
+         .zerofill __DATA,__bss,high,0,0\n\
+         .data\n\
+         .quad low1+high-low2\n\
+         .quad high+low1-low2\n",
+    )
+    .expect("equivalent high-address relocation expressions unexpectedly rejected");
+
+    let high_index = object
+        .symbols
+        .iter()
+        .position(|symbol| symbol.name == "high")
+        .unwrap() as u32;
+    let data = object.section("__DATA", "__data").unwrap();
+    assert_eq!(data.data, [0; 16]);
+    assert_eq!(data.relocations.len(), 2);
+    assert!(data.relocations.iter().all(|relocation| {
+        relocation.reloc_type == ARM64_RELOC_UNSIGNED
+            && relocation.symbol_idx == high_index
+            && relocation.length == 3
+    }));
+}
+
+#[test]
+fn large_label_difference_overflow_reports_the_originating_assignment() {
+    let error = assemble_source(
+        ".set ALIAS,X\n\
+         .zerofill __DATA,__bss,start,9223372036854775807,0\n\
+         .zerofill __DATA,__bss,pad,1,0\n\
+         .zerofill __DATA,__bss,end,1,0\n\
+         .set X,end-start\n",
+    )
+    .expect_err("unrepresentable high-address label difference unexpectedly assembled");
+    assert_eq!((error.line, error.col), (Some(5), Some(1)));
+    assert_eq!(error.msg, "absolute symbol 'X': expression overflows i64");
 }
