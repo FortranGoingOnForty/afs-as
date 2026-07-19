@@ -920,10 +920,11 @@ impl<'a> Parser<'a> {
         if self.numeric_label_ref_at(self.pos).is_some() {
             return false;
         }
-        matches!(
-            self.peek(),
-            Tok::Integer(_) | Tok::UnsignedInteger(_) | Tok::Minus | Tok::LParen
-        )
+        self.starts_absolute_symbol_expr()
+            || matches!(
+                self.peek(),
+                Tok::Integer(_) | Tok::UnsignedInteger(_) | Tok::Minus | Tok::LParen
+            )
     }
 
     fn starts_immediate_expr(&self) -> bool {
@@ -1259,6 +1260,9 @@ impl<'a> Parser<'a> {
         if self.numeric_label_ref_at(self.pos).is_some() {
             return true;
         }
+        if self.starts_absolute_symbol_expr() {
+            return false;
+        }
         match self.peek() {
             Tok::Ident(name) => !looks_like_gp_register_name(name),
             _ => false,
@@ -1268,6 +1272,9 @@ impl<'a> Parser<'a> {
     fn starts_non_register_literal_reference(&self) -> bool {
         if self.numeric_label_ref_at(self.pos).is_some() {
             return true;
+        }
+        if self.starts_absolute_symbol_expr() {
+            return false;
         }
         match self.peek() {
             Tok::Ident(name) => {
@@ -5758,7 +5765,17 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_register_like_operand(&self) -> bool {
-        matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
+        !self.starts_absolute_symbol_expr()
+            && matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
+    }
+
+    fn starts_absolute_symbol_expr(&self) -> bool {
+        matches!(
+            self.peek(),
+            Tok::Ident(name)
+                if classify_gp_reg_name(&name.to_lowercase()).is_none()
+                    && self.absolute_symbols.contains_key(name)
+        )
     }
 
     fn starts_fp_register_like_operand(&self) -> bool {

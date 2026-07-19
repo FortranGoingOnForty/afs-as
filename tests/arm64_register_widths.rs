@@ -128,6 +128,57 @@ fn stack_pointer_shift_operands_cannot_be_shadowed_as_constants() {
 }
 
 #[test]
+fn register_shaped_absolute_symbols_remain_immediate_operands() {
+    for (value, source, canonical) in [
+        (1, "add x0, x1, x32", "add x0, x1, #1"),
+        (1, "sub w0, w1, x32", "sub w0, w1, #1"),
+        (8, "ldr x0, [x1, x32]", "ldr x0, [x1, #8]"),
+        (4, "str w0, [x1, x32]", "str w0, [x1, #4]"),
+        (8, "ldr d0, [x1, x32]", "ldr d0, [x1, #8]"),
+        (16, "str q0, [x1, x32]", "str q0, [x1, #16]"),
+        (1, "ldrb w0, [x1, x32]", "ldrb w0, [x1, #1]"),
+        (1, "strb w0, [x1, x32]", "strb w0, [x1, #1]"),
+        (2, "ldrh w0, [x1, x32]", "ldrh w0, [x1, #2]"),
+        (2, "strh w0, [x1, x32]", "strh w0, [x1, #2]"),
+        (1, "ldrsb x0, [x1, x32]", "ldrsb x0, [x1, #1]"),
+        (2, "ldrsh w0, [x1, x32]", "ldrsh w0, [x1, #2]"),
+        (4, "ldrsw x0, [x1, x32]", "ldrsw x0, [x1, #4]"),
+    ] {
+        let with_symbol = format!(".set x32, {value}\n{source}");
+        assert_eq!(
+            parse_inst(&with_symbol).encode(),
+            parse_inst(canonical).encode(),
+            "source: {source}; canonical: {canonical}"
+        );
+    }
+}
+
+#[test]
+fn architectural_register_names_take_priority_over_absolute_symbols() {
+    for source in [
+        ".set sp, 1\nadd x0, x1, sp",
+        ".set wsp, 1\nsub w0, w1, wsp",
+        ".set sp, 8\nldr x0, [x1, sp]",
+        ".set wsp, 8\nstr w0, [x1, wsp]",
+    ] {
+        assert_rejected(source, "allow");
+    }
+
+    for (source, canonical) in [
+        (".set xzr, 1\nand x0, x1, xzr", "and x0, x1, xzr"),
+        (".set x31, 1\nand x0, x1, x31", "and x0, x1, xzr"),
+        (".set wzr, 1\nand w0, w1, wzr", "and w0, w1, wzr"),
+        (".set w31, 1\nand w0, w1, w31", "and w0, w1, wzr"),
+    ] {
+        assert_eq!(
+            parse_inst(source).encode(),
+            parse_inst(canonical).encode(),
+            "source: {source}; canonical: {canonical}"
+        );
+    }
+}
+
+#[test]
 fn scalar_fp_instruction_families_reject_mismatched_register_widths() {
     for source in [
         "fadd d0, s1, s2",
