@@ -332,6 +332,9 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
                 ),
             ));
         }
+        for relocation in &section.relocations {
+            validate_relocation(section, relocation)?;
+        }
 
         vm_cursor = checked_align_value(vm_cursor, section.align_pow2).ok_or_else(|| {
             io::Error::new(
@@ -680,6 +683,7 @@ fn suffix_string_offset(strtab: &[u8], name: &str) -> Option<usize> {
 }
 
 fn write_reloc<W: Write>(w: &mut W, rel: &Relocation) -> io::Result<()> {
+    let address = relocation_address(rel)?;
     if rel.symbol_idx > 0x00ff_ffff {
         return Err(invalid_input(format!(
             "relocation symbol index {} exceeds 24 bits",
@@ -702,13 +706,44 @@ fn write_reloc<W: Write>(w: &mut W, rel: &Relocation) -> io::Result<()> {
     // Mach-O relocation_info:
     // r_address: i32 (offset in section)
     // r_symbolnum:24, r_pcrel:1, r_length:2, r_extern:1, r_type:4
-    write_u32(w, rel.offset)?;
+    w.write_all(&address.to_le_bytes())?;
     let info = rel.symbol_idx
         | ((rel.pcrel as u32) << 24)
         | ((rel.length as u32) << 25)
         | ((rel.extern_ as u32) << 27)
         | (rel.reloc_type << 28);
     write_u32(w, info)?;
+    Ok(())
+}
+
+fn relocation_address(rel: &Relocation) -> io::Result<i32> {
+    i32::try_from(rel.offset).map_err(|_| {
+        invalid_input(format!(
+            "relocation offset {} exceeds signed 32-bit Mach-O r_address",
+            rel.offset
+        ))
+    })
+}
+
+fn validate_relocation(section: &Section, rel: &Relocation) -> io::Result<()> {
+    relocation_address(rel)?;
+    if rel.length > 3 {
+        return Err(invalid_input(format!(
+            "relocation length {} exceeds 2 bits",
+            rel.length
+        )));
+    }
+
+    let width = 1u64 << rel.length;
+    let end = u64::from(rel.offset)
+        .checked_add(width)
+        .ok_or_else(|| invalid_input("relocation range overflows u64"))?;
+    if end > section.size {
+        return Err(invalid_input(format!(
+            "relocation at offset {} with width {} exceeds section {},{} size {}",
+            rel.offset, width, section.segment, section.name, section.size
+        )));
+    }
     Ok(())
 }
 
@@ -1025,6 +1060,57 @@ mod tests {
         assert_eq!((info >> 25) & 3, 2); // length
         assert_eq!((info >> 27) & 1, 1); // extern
         assert_eq!((info >> 28) & 0xF, 3); // type = PAGE21
+    }
+
+    fn zerofill_object_with_relocation(size: u64, offset: u32, length: u8) -> ObjectFile {
+        let mut obj = ObjectFile::new();
+        let mut section = Section::new("__DATA", "__bss", SectionKind::ZeroFill);
+        section.size = size;
+        section.relocations.push(Relocation {
+            offset,
+            symbol_idx: 1,
+            pcrel: false,
+            length,
+            extern_: false,
+            reloc_type: ARM64_RELOC_UNSIGNED,
+        });
+        obj.sections.push(section);
+        obj
+    }
+
+    #[test]
+    fn relocation_address_accepts_the_signed_boundary() {
+        let max = i32::MAX as u32;
+        let obj = zerofill_object_with_relocation(u64::from(max) + 1, max, 0);
+        write_macho(&obj, &mut Vec::new()).unwrap();
+    }
+
+    #[test]
+    fn relocation_address_rejects_the_scattered_bit() {
+        let offset = i32::MAX as u32 + 1;
+        let obj = zerofill_object_with_relocation(u64::from(offset) + 1, offset, 0);
+        let error = write_macho(&obj, &mut Vec::new()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "relocation offset 2147483648 exceeds signed 32-bit Mach-O r_address"
+        );
+    }
+
+    #[test]
+    fn relocation_extent_must_fit_its_section() {
+        let offset = i32::MAX as u32 - 3;
+        let exact_size = u64::from(offset) + 4;
+        let exact = zerofill_object_with_relocation(exact_size, offset, 2);
+        write_macho(&exact, &mut Vec::new()).unwrap();
+
+        let outside = zerofill_object_with_relocation(exact_size - 1, offset, 2);
+        let error = write_macho(&outside, &mut Vec::new()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "relocation at offset 2147483644 with width 4 exceeds section __DATA,__bss size 2147483647"
+        );
     }
 
     #[test]
