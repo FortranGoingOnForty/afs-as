@@ -99,6 +99,7 @@ pub enum Directive {
         name: String,
     },
     Globl(String),
+    Extern(String),
     Local(String),
     Weak(String),
     Type {
@@ -482,6 +483,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
             }
         }
         "globl" | "global" => Directive::Globl(one_sym(args)?),
+        "extern" => Directive::Extern(one_sym(args)?),
         "local" => Directive::Local(one_sym(args)?),
         "weak" => Directive::Weak(one_sym(args)?),
         "type" => {
@@ -742,9 +744,10 @@ mod tests {
 
     #[test]
     fn directive_forms() {
-        let stmts =
-            parse(".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8\n.asciz \"hi\\n\"\n.p2align 4\n")
-                .unwrap();
+        let stmts = parse(
+            ".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8\n.asciz \"hi\\n\"\n.p2align 4\n.extern ext\n",
+        )
+        .unwrap();
         assert_eq!(
             stmts[0].stmt,
             Stmt::Directive(Directive::Comm {
@@ -770,6 +773,10 @@ mod tests {
         assert_eq!(
             stmts[3].stmt,
             Stmt::Directive(Directive::Asciz(b"hi\n".to_vec()))
+        );
+        assert_eq!(
+            stmts[5].stmt,
+            Stmt::Directive(Directive::Extern("ext".into()))
         );
     }
 

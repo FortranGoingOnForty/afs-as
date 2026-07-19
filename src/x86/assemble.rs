@@ -86,6 +86,7 @@ struct SymInfo {
     typ: Option<u8>,
     size: Option<SizeArg>,
     size_line: u32,
+    size_section: Option<usize>,
 }
 
 pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
@@ -151,6 +152,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 }
                 Directive::NoteGnuStack => { /* writer synthesizes */ }
                 Directive::Globl(s) => syminfo.entry(s.clone()).or_default().globl = true,
+                Directive::Extern(s) => {
+                    syminfo.entry(s.clone()).or_default();
+                }
                 Directive::Weak(s) => syminfo.entry(s.clone()).or_default().weak = true,
                 Directive::Local(s) => syminfo.entry(s.clone()).or_default().local = true,
                 Directive::Type { sym, kind } => {
@@ -160,16 +164,17 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     })
                 }
                 Directive::Size { sym, arg } => {
+                    if matches!(arg, SizeArg::DotMinus(_)) && current == usize::MAX {
+                        return Err(err(
+                            line,
+                            format!(".size {}, .-... before any section", sym),
+                        ));
+                    }
                     let e = syminfo.entry(sym.clone()).or_default();
                     e.size = Some(arg.clone());
                     e.size_line = line;
+                    e.size_section = matches!(arg, SizeArg::DotMinus(_)).then_some(current);
                     if matches!(arg, SizeArg::DotMinus(_)) {
-                        if current == usize::MAX {
-                            return Err(err(
-                                line,
-                                format!(".size {}, .-... before any section", sym),
-                            ));
-                        }
                         secs[current].1.items.push(Item::SizeDot(sym.clone()));
                     }
                 }
@@ -653,6 +658,46 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     // are synthesized on demand for local-label relocations.
     let mut model_sym_index: HashMap<String, usize> = HashMap::new();
     let mut section_sym: HashMap<usize, usize> = HashMap::new();
+    let symbol_size = |symbol: &str,
+                       info: &SymInfo,
+                       defined_section: Option<usize>|
+     -> Result<u64, AsmX86Error> {
+        match &info.size {
+            None => Ok(0),
+            Some(SizeArg::Const(size)) => Ok(*size),
+            Some(SizeArg::DotMinus(base)) => {
+                let size_section = info.size_section.ok_or_else(|| {
+                    err(
+                        info.size_line,
+                        format!(".size {}: directive has no section", symbol),
+                    )
+                })?;
+                if defined_section.is_some_and(|section| section != size_section) {
+                    return Err(err(
+                        info.size_line,
+                        format!(".size {}: directive not in the symbol's section", symbol),
+                    ));
+                }
+                let section = &laid[size_section];
+                let dot = section.size_dot.get(symbol).copied().ok_or_else(|| {
+                    err(
+                        info.size_line,
+                        format!(".size {}: directive has no recorded position", symbol),
+                    )
+                })?;
+                let start = section.labels.get(base).copied().ok_or_else(|| {
+                    err(
+                        info.size_line,
+                        format!(
+                            ".size {}: base '{}' not defined in this section",
+                            symbol, base
+                        ),
+                    )
+                })?;
+                Ok(dot.wrapping_sub(start))
+            }
+        }
+    };
 
     for (li, l) in laid.iter().enumerate() {
         // Deterministic: label_order from the build.
@@ -671,28 +716,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             };
             // `.size sym, .-base`: dot recorded at the directive, so
             // padding and local labels after the body don't skew it.
-            let size = match &info.size {
-                None => 0,
-                Some(SizeArg::Const(c)) => *c,
-                Some(SizeArg::DotMinus(base)) => {
-                    let dot = l.size_dot.get(label).copied().ok_or_else(|| {
-                        err(
-                            info.size_line,
-                            format!(".size {}: directive not in the symbol's section", label),
-                        )
-                    })?;
-                    let start = l.labels.get(base).copied().ok_or_else(|| {
-                        err(
-                            info.size_line,
-                            format!(
-                                ".size {}: base '{}' not defined in this section",
-                                label, base
-                            ),
-                        )
-                    })?;
-                    dot.saturating_sub(start)
-                }
-            };
+            let size = symbol_size(label, &info, Some(li))?;
             model_sym_index.insert(label.clone(), obj.symbols.len());
             obj.symbols.push(Symbol {
                 name: label.clone(),
@@ -733,6 +757,39 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             place: SymbolPlace::Common,
             value: *align,
             size: *size,
+        });
+    }
+
+    // GNU as retains strong undefined declarations even when no relocation
+    // references them. Walk the parsed directives to preserve source order;
+    // an unreferenced weak declaration is intentionally omitted.
+    for located in &stmts {
+        let symbol = match &located.stmt {
+            Stmt::Directive(Directive::Globl(symbol))
+            | Stmt::Directive(Directive::Extern(symbol))
+            | Stmt::Directive(Directive::Local(symbol))
+            | Stmt::Directive(Directive::Weak(symbol)) => symbol,
+            Stmt::Directive(Directive::Type { sym, .. })
+            | Stmt::Directive(Directive::Size { sym, .. }) => sym,
+            _ => continue,
+        };
+        if model_sym_index.contains_key(symbol) {
+            continue;
+        }
+        let info = &syminfo[symbol];
+        if info.weak || !(info.globl || info.typ.is_some() || info.size.is_some()) {
+            continue;
+        }
+        let size = symbol_size(symbol, info, None)?;
+        model_sym_index.insert(symbol.clone(), obj.symbols.len());
+        obj.symbols.push(Symbol {
+            name: symbol.clone(),
+            bind: STB_GLOBAL,
+            typ: info.typ.unwrap_or(STT_NOTYPE),
+            vis: STV_DEFAULT,
+            place: SymbolPlace::Undef,
+            value: 0,
+            size,
         });
     }
 
@@ -814,17 +871,17 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     } else {
                         // Undefined external.
                         let info = syminfo.get(&r.sym).cloned().unwrap_or_default();
-                        let idx = *model_sym_index.entry(r.sym.clone()).or_insert_with(|| {
-                            obj.symbols.push(Symbol {
-                                name: r.sym.clone(),
-                                bind: if info.weak { STB_WEAK } else { STB_GLOBAL },
-                                typ: STT_NOTYPE,
-                                vis: STV_DEFAULT,
-                                place: SymbolPlace::Undef,
-                                value: 0,
-                                size: 0,
-                            });
-                            obj.symbols.len() - 1
+                        let size = symbol_size(&r.sym, &info, None)?;
+                        let idx = obj.symbols.len();
+                        model_sym_index.insert(r.sym.clone(), idx);
+                        obj.symbols.push(Symbol {
+                            name: r.sym.clone(),
+                            bind: if info.weak { STB_WEAK } else { STB_GLOBAL },
+                            typ: info.typ.unwrap_or(STT_NOTYPE),
+                            vis: STV_DEFAULT,
+                            place: SymbolPlace::Undef,
+                            value: 0,
+                            size,
                         });
                         (idx, r.r_type, r.addend)
                     }
