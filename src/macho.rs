@@ -317,9 +317,19 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
             ));
         }
 
-        vm_cursor = align_value(vm_cursor, section.align_pow2);
+        vm_cursor = checked_align_value(vm_cursor, section.align_pow2).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "section layout alignment overflows u64",
+            )
+        })?;
         let addr = vm_cursor;
-        vm_cursor += section.size;
+        vm_cursor = vm_cursor.checked_add(section.size).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "section layout size overflows u64",
+            )
+        })?;
 
         let offset = if section.kind.is_zerofill() {
             0
@@ -389,12 +399,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         .max()
         .unwrap_or(segment_fileoff)
         .saturating_sub(segment_fileoff);
-    let vmsize = layouts
-        .iter()
-        .zip(&obj.sections)
-        .map(|(layout, section)| layout.addr + section.size)
-        .max()
-        .unwrap_or(0);
+    let vmsize = vm_cursor;
 
     // ---- Write header ----
     write_u32(w, MH_MAGIC_64)?;
@@ -622,9 +627,11 @@ fn align_to(value: u32, align: u32) -> u32 {
     (value + align - 1) & !(align - 1)
 }
 
-fn align_value(value: u64, power: u32) -> u64 {
-    let alignment = 1u64 << power;
-    (value + alignment - 1) & !(alignment - 1)
+fn checked_align_value(value: u64, power: u32) -> Option<u64> {
+    let alignment = 1u64.checked_shl(power)?;
+    value
+        .checked_add(alignment - 1)
+        .map(|value| value & !(alignment - 1))
 }
 
 pub fn pack_version(major: u32, minor: u32, patch: u32) -> u32 {
@@ -1301,6 +1308,22 @@ mod tests {
         let mut buf = Vec::new();
         write_macho(&obj, &mut buf).unwrap();
         assert_eq!(&buf[0..4], &MH_MAGIC_64.to_le_bytes());
+    }
+
+    #[test]
+    fn zerofill_layout_reports_address_overflow() {
+        let mut obj = ObjectFile::new();
+        let mut bss = Section::new("__DATA", "__bss", SectionKind::ZeroFill);
+        bss.size = u64::MAX - 1;
+        obj.sections.push(bss);
+        let mut thread_bss =
+            Section::new("__DATA", "__thread_bss", SectionKind::ThreadLocalZeroFill);
+        thread_bss.align_pow2 = 2;
+        obj.sections.push(thread_bss);
+
+        let error = write_macho(&obj, &mut Vec::new()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(error.to_string(), "section layout alignment overflows u64");
     }
 
     #[test]

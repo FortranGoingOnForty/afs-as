@@ -641,7 +641,7 @@ impl Assembler {
     }
 
     fn prepare_expression_state(&mut self, _stmts: &[LocatedStmt]) -> Result<(), AsmError> {
-        self.section_bases = self.section_base_addresses();
+        self.section_bases = self.section_base_addresses()?;
         self.absolute_symbols = self.resolve_absolute_symbols()?;
         Ok(())
     }
@@ -790,11 +790,14 @@ impl Assembler {
                 if *n > 1024 * 1024 * 64 {
                     return Err(AsmError(format!(".space size {} too large (max 64MB)", n)));
                 }
-                self.sections[self.section].size += *n;
+                self.sections[self.section].size = self.sections[self.section]
+                    .size
+                    .checked_add(*n)
+                    .ok_or_else(|| AsmError(".space size overflows u64".into()))?;
             }
             Directive::Fill { repeat, size, .. } => {
                 let total = (*repeat)
-                    .checked_mul((*size).into())
+                    .checked_mul((*size).min(8).into())
                     .ok_or_else(|| AsmError(".fill size overflows u64".into()))?;
                 self.reserve_initialized_bytes(total, ".fill")?;
             }
@@ -856,27 +859,26 @@ impl Assembler {
             }
             Directive::Byte(vals) => {
                 for expr in vals {
-                    let value = self.require_absolute_expr(expr, ".byte expression")?;
-                    self.emit_initialized_bytes(&[(value as u8)], ".byte")?;
+                    let bytes = self.require_sized_absolute_expr(expr, ".byte expression", 8)?;
+                    self.emit_initialized_bytes(&bytes[..1], ".byte")?;
                 }
             }
             Directive::Short(vals) => {
                 for expr in vals {
-                    let value = self.require_absolute_expr(expr, ".short expression")?;
-                    self.emit_initialized_bytes(&(value as u16).to_le_bytes(), ".short")?;
+                    let bytes = self.require_sized_absolute_expr(expr, ".short expression", 16)?;
+                    self.emit_initialized_bytes(&bytes[..2], ".short")?;
                 }
             }
             Directive::Word(vals) => {
                 for expr in vals {
                     match self.classify_expr(expr)? {
                         ClassifiedExpr::Absolute(value) => {
-                            self.emit_initialized_bytes(&(value as u32).to_le_bytes(), ".word")?;
+                            let bytes = checked_signed_data_bytes(value, ".word expression", 32)?;
+                            self.emit_initialized_bytes(&bytes[..4], ".word")?;
                         }
                         ClassifiedExpr::UnsignedAbsolute(value) => {
-                            return Err(AsmError(format!(
-                                ".word unsigned value {} is out of range; use .quad for a 64-bit bit pattern",
-                                value
-                            )));
+                            let bytes = checked_unsigned_data_bytes(value, ".word expression", 32)?;
+                            self.emit_initialized_bytes(&bytes[..4], ".word")?;
                         }
                         ClassifiedExpr::PointerToGot { .. } => {
                             let offset = self.current_offset() as u32;
@@ -1164,7 +1166,10 @@ impl Assembler {
                 context, self.sections[self.section].segment, self.sections[self.section].name
             )));
         }
-        self.sections[self.section].size += amount;
+        self.sections[self.section].size = self.sections[self.section]
+            .size
+            .checked_add(amount)
+            .ok_or_else(|| AsmError(format!("{} size overflows u64", context)))?;
         Ok(())
     }
 
@@ -1176,18 +1181,31 @@ impl Assembler {
 
     fn emit_space(&mut self, amount: u64) -> Result<(), AsmError> {
         if self.sections[self.section].kind.is_zerofill() {
-            self.sections[self.section].size += amount;
+            self.sections[self.section].size = self.sections[self.section]
+                .size
+                .checked_add(amount)
+                .ok_or_else(|| AsmError(".space size overflows u64".into()))?;
             return Ok(());
         }
         let section = &mut self.sections[self.section];
-        let new_len = section.data.len() + amount as usize;
+        let new_size = section
+            .size
+            .checked_add(amount)
+            .ok_or_else(|| AsmError(".space size overflows u64".into()))?;
+        let amount = usize::try_from(amount)
+            .map_err(|_| AsmError(".space size does not fit in usize".into()))?;
+        let new_len = section
+            .data
+            .len()
+            .checked_add(amount)
+            .ok_or_else(|| AsmError(".space size overflows usize".into()))?;
         section.data.resize(new_len, 0);
-        section.size += amount;
+        section.size = new_size;
         Ok(())
     }
 
     fn emit_fill(&mut self, repeat: u64, size: u8, value: u64) -> Result<(), AsmError> {
-        let byte_count: usize = size.into();
+        let byte_count: usize = size.min(8).into();
         let total = repeat
             .checked_mul(byte_count as u64)
             .ok_or_else(|| AsmError(".fill size overflows u64".into()))?;
@@ -1200,13 +1218,6 @@ impl Assembler {
         if byte_count == 0 {
             return Ok(());
         }
-        if byte_count > 8 {
-            return Err(AsmError(format!(
-                ".fill element size {} too large (max 8)",
-                size
-            )));
-        }
-
         let pattern = value.to_le_bytes();
         for _ in 0..repeat {
             self.emit_initialized_bytes(&pattern[..byte_count], ".fill")?;
@@ -1223,7 +1234,8 @@ impl Assembler {
         }
 
         let current = self.current_offset();
-        let aligned = align_value(current, power);
+        let aligned = checked_align_value(current, power)
+            .ok_or_else(|| AsmError("alignment overflows u64".into()))?;
         let padding = aligned - current;
         let section = &mut self.sections[self.section];
         section.align_pow2 = section.align_pow2.max(power);
@@ -1253,7 +1265,8 @@ impl Assembler {
         }
 
         let current = self.current_offset();
-        let aligned = align_value(current, power);
+        let aligned = checked_align_value(current, power)
+            .ok_or_else(|| AsmError("alignment overflows u64".into()))?;
         let padding = aligned - current;
         if max_skip.is_some_and(|limit| padding > limit) {
             return Ok(());
@@ -1296,9 +1309,15 @@ impl Assembler {
         if byte == 0 {
             return self.emit_space(amount);
         }
+        let amount_usize = usize::try_from(amount)
+            .map_err(|_| AsmError(format!("{} size does not fit in usize", context)))?;
+        let new_len = self.sections[self.section]
+            .data
+            .len()
+            .checked_add(amount_usize)
+            .ok_or_else(|| AsmError(format!("{} size overflows usize", context)))?;
         self.reserve_initialized_bytes(amount, context)?;
         let section = &mut self.sections[self.section];
-        let new_len = section.data.len() + amount as usize;
         section.data.resize(new_len, byte);
         Ok(())
     }
@@ -1736,7 +1755,8 @@ impl Assembler {
         let offset = {
             let section = &mut self.sections[target];
             section.align_pow2 = section.align_pow2.max(align_pow2);
-            let offset = align_value(section.size, align_pow2);
+            let offset = checked_align_value(section.size, align_pow2)
+                .ok_or_else(|| AsmError(".zerofill alignment overflows u64".into()))?;
             section.size = offset;
             offset
         };
@@ -1785,7 +1805,8 @@ impl Assembler {
 
         let section = &mut self.sections[target];
         section.align_pow2 = section.align_pow2.max(align_pow2);
-        section.size = align_value(section.size, align_pow2);
+        section.size = checked_align_value(section.size, align_pow2)
+            .ok_or_else(|| AsmError(".zerofill alignment overflows u64".into()))?;
         section.size = section
             .size
             .checked_add(size)
@@ -1945,16 +1966,19 @@ impl Assembler {
         }
     }
 
-    fn section_base_addresses(&self) -> Vec<u64> {
+    fn section_base_addresses(&self) -> Result<Vec<u64>, AsmError> {
         let mut bases = vec![0u64; self.sections.len()];
         let mut addr = 0u64;
         for index in section_allocation_order(&self.sections) {
             let section = &self.sections[index];
-            addr = align_value(addr, section.align_pow2);
+            addr = checked_align_value(addr, section.align_pow2)
+                .ok_or_else(|| AsmError("section layout alignment overflows u64".into()))?;
             bases[index] = addr;
-            addr += section.size;
+            addr = addr
+                .checked_add(section.size)
+                .ok_or_else(|| AsmError("section layout size overflows u64".into()))?;
         }
-        bases
+        Ok(bases)
     }
 
     fn symbol_values_for_expr(&self) -> BTreeMap<String, SymbolValue> {
@@ -1982,13 +2006,17 @@ impl Assembler {
             .map_err(|err| AsmError(err.to_string()))
     }
 
-    fn require_absolute_expr(&self, expr: &Expr, context: &str) -> Result<i64, AsmError> {
+    fn require_sized_absolute_expr(
+        &self,
+        expr: &Expr,
+        context: &str,
+        bits: u8,
+    ) -> Result<[u8; 8], AsmError> {
         match self.classify_expr(expr)? {
-            ClassifiedExpr::Absolute(value) => Ok(value),
-            ClassifiedExpr::UnsignedAbsolute(value) => Err(AsmError(format!(
-                "{} unsigned value {} exceeds the i64 range",
-                context, value
-            ))),
+            ClassifiedExpr::Absolute(value) => checked_signed_data_bytes(value, context, bits),
+            ClassifiedExpr::UnsignedAbsolute(value) => {
+                checked_unsigned_data_bytes(value, context, bits)
+            }
             ClassifiedExpr::Relocatable { .. }
             | ClassifiedExpr::Difference { .. }
             | ClassifiedExpr::PointerToGot { .. } => Err(AsmError(format!(
@@ -2134,7 +2162,7 @@ impl Assembler {
         self.materialize_compact_unwind_section();
         self.materialize_eh_frame_section()?;
 
-        let section_bases = self.section_base_addresses();
+        let section_bases = self.section_base_addresses()?;
         let absolute_symbols = self.absolute_symbols.clone();
         let mut symbols: Vec<Symbol> = Vec::new();
         let flags = self.metadata_flags();
@@ -2865,9 +2893,31 @@ fn encode_uleb128(buf: &mut Vec<u8>, mut value: u64) {
     }
 }
 
-fn align_value(value: u64, power: u32) -> u64 {
-    let alignment = 1u64 << power;
-    (value + alignment - 1) & !(alignment - 1)
+fn checked_align_value(value: u64, power: u32) -> Option<u64> {
+    let alignment = 1u64.checked_shl(power)?;
+    value
+        .checked_add(alignment - 1)
+        .map(|value| value & !(alignment - 1))
+}
+
+fn checked_signed_data_bytes(value: i64, context: &str, bits: u8) -> Result<[u8; 8], AsmError> {
+    if !parse::signed_data_value_fits(value, bits) {
+        return Err(AsmError(format!(
+            "{} value {} is out of range for {}-bit data",
+            context, value, bits
+        )));
+    }
+    Ok(value.to_le_bytes())
+}
+
+fn checked_unsigned_data_bytes(value: u64, context: &str, bits: u8) -> Result<[u8; 8], AsmError> {
+    if !parse::unsigned_data_value_fits(value, bits) {
+        return Err(AsmError(format!(
+            "{} value {} is out of range for {}-bit data",
+            context, value, bits
+        )));
+    }
+    Ok(value.to_le_bytes())
 }
 
 fn section_allocation_order(sections: &[Section]) -> Vec<usize> {

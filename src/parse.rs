@@ -645,9 +645,9 @@ impl<'a> Parser<'a> {
                     max_skip,
                 }
             }
-            ".byte" => Directive::Byte(self.parse_expr_list()?),
-            ".short" => Directive::Short(self.parse_expr_list()?),
-            ".word" | ".long" => Directive::Word(self.parse_expr_list()?),
+            ".byte" => Directive::Byte(self.parse_data_expr_list(name, 8)?),
+            ".short" => Directive::Short(self.parse_data_expr_list(name, 16)?),
+            ".word" | ".long" => Directive::Word(self.parse_data_expr_list(name, 32)?),
             ".quad" => Directive::Quad(self.parse_quad_expr_list()?),
             ".ascii" => {
                 if let Tok::StringLit(s) = self.peek().clone() {
@@ -678,7 +678,7 @@ impl<'a> Parser<'a> {
             ".fill" => {
                 let repeat = self.parse_unsigned_const_expr::<u64>("fill repeat expression")?;
                 self.expect(&Tok::Comma)?;
-                let size = self.parse_unsigned_const_expr::<u8>("fill size expression")?;
+                let size = self.parse_apple_fill_size()?;
                 let value = if self.eat(&Tok::Comma) {
                     self.parse_apple_fill_pattern()?
                 } else {
@@ -846,12 +846,44 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Directive(dir))
     }
 
-    fn parse_expr_list(&mut self) -> Result<Vec<Expr>, ParseError> {
-        let mut vals = vec![self.parse_expr()?];
-        while self.eat(&Tok::Comma) {
-            vals.push(self.parse_expr()?);
+    fn parse_data_expr_list(&mut self, directive: &str, bits: u8) -> Result<Vec<Expr>, ParseError> {
+        let mut values = Vec::new();
+        loop {
+            let start = self.pos;
+            let expr =
+                self.parse_expr_with_standalone_unsigned("standalone data-directive bit patterns")?;
+            self.validate_data_expr(&expr, directive, bits, start)?;
+            values.push(expr);
+            if !self.eat(&Tok::Comma) {
+                break;
+            }
         }
-        Ok(vals)
+        Ok(values)
+    }
+
+    fn validate_data_expr(
+        &self,
+        expr: &Expr,
+        directive: &str,
+        bits: u8,
+        start: usize,
+    ) -> Result<(), ParseError> {
+        let value = match expr {
+            Expr::Unsigned(value) if unsigned_data_value_fits(*value, bits) => return Ok(()),
+            Expr::Unsigned(value) => value.to_string(),
+            _ => match expr::eval_with_symbols(expr, &self.absolute_symbols) {
+                Ok(value) if signed_data_value_fits(value, bits) => return Ok(()),
+                Ok(value) => value.to_string(),
+                Err(_) => return Ok(()),
+            },
+        };
+        Err(self.err_at(
+            start,
+            format!(
+                "{} expression value {} is out of range for {}-bit data",
+                directive, value, bits
+            ),
+        ))
     }
 
     fn parse_quad_expr_list(&mut self) -> Result<Vec<Expr>, ParseError> {
@@ -952,17 +984,56 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_truncated_byte_const_expr(&mut self, context: &str) -> Result<u8, ParseError> {
-        Ok(self.parse_const_expr(context)?.to_le_bytes()[0])
+        Ok(self.parse_bit_pattern_const_expr(context)?.to_le_bytes()[0])
     }
 
     fn parse_apple_fill_pattern(&mut self) -> Result<u64, ParseError> {
         let bytes = self
-            .parse_const_expr("fill value expression")?
+            .parse_bit_pattern_const_expr("fill value expression")?
             .to_le_bytes();
         // Apple fill patterns are truncated to 32 bits, then zero-extended to the element width.
         Ok(u64::from(u32::from_le_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3],
         ])))
+    }
+
+    fn parse_apple_fill_size(&mut self) -> Result<u8, ParseError> {
+        let start = self.pos;
+        let expr = self.parse_expr_with_standalone_unsigned("standalone fill-size values")?;
+        let value = match expr {
+            Expr::Unsigned(value) => value,
+            expr => {
+                let value =
+                    expr::eval_with_symbols(&expr, &self.absolute_symbols).map_err(|err| {
+                        self.err(format!(
+                            "fill size expression must be a pure constant expression: {}",
+                            err
+                        ))
+                    })?;
+                u64::try_from(value).map_err(|_| {
+                    self.err_at(
+                        start,
+                        format!("fill size expression value {} does not fit in u64", value),
+                    )
+                })?
+            }
+        };
+        Ok(u8::try_from(value.min(8)).expect("normalized fill size fits in u8"))
+    }
+
+    fn parse_bit_pattern_const_expr(&mut self, context: &str) -> Result<u64, ParseError> {
+        let expr = self.parse_expr_with_standalone_unsigned("standalone bit-pattern values")?;
+        match expr {
+            Expr::Unsigned(value) => Ok(value),
+            expr => expr::eval_with_symbols(&expr, &self.absolute_symbols)
+                .map(|value| u64::from_le_bytes(value.to_le_bytes()))
+                .map_err(|err| {
+                    self.err(format!(
+                        "{} must be a pure constant expression: {}",
+                        context, err
+                    ))
+                }),
+        }
     }
 
     fn starts_const_expr(&self) -> bool {
@@ -1128,6 +1199,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_quad_expr(&mut self) -> Result<Expr, ParseError> {
+        self.parse_expr_with_standalone_unsigned("standalone .quad values")
+    }
+
+    fn parse_expr_with_standalone_unsigned(
+        &mut self,
+        restriction: &str,
+    ) -> Result<Expr, ParseError> {
         let start = self.pos;
         let expr = self.parse_add_sub_expr(true)?;
         if contains_wide_unsigned_literal(&expr) && !matches!(expr, Expr::Unsigned(_)) {
@@ -1136,7 +1214,10 @@ impl<'a> Parser<'a> {
                 .unwrap_or(start);
             return Err(self.err_at(
                 wide_literal,
-                "unsigned integer literals above i64::MAX must be standalone .quad values".into(),
+                format!(
+                    "unsigned integer literals above i64::MAX must be {}",
+                    restriction
+                ),
             ));
         }
         Ok(expr)
@@ -5865,6 +5946,18 @@ fn contains_wide_unsigned_literal(expr: &Expr) -> bool {
             false
         }
     }
+}
+
+pub(crate) fn signed_data_value_fits(value: i64, bits: u8) -> bool {
+    let signed_min = -(1i64 << (bits - 1));
+    let unsigned_max = (1i64 << bits) - 1;
+    (signed_min..=unsigned_max).contains(&value)
+}
+
+pub(crate) fn unsigned_data_value_fits(value: u64, bits: u8) -> bool {
+    let unsigned_max = (1u64 << bits) - 1;
+    let sign_extended_min = u64::MAX - ((1u64 << (bits - 1)) - 1);
+    value <= unsigned_max || value >= sign_extended_min
 }
 
 // ---- Name resolution helpers ----
@@ -11195,8 +11288,13 @@ mod tests {
 
     #[test]
     fn wide_unsigned_literals_are_restricted_to_standalone_quad_values() {
+        let err = parse(".word 0xbff0000000000000").unwrap_err();
+        assert_eq!(
+            err.msg,
+            ".word expression value 13830554455654793216 is out of range for 32-bit data"
+        );
+
         for source in [
-            ".word 0xbff0000000000000",
             ".quad 0xbff0000000000000 + 1",
             ".quad symbol + 0xbff0000000000000",
             ".quad -0xbff0000000000000",
