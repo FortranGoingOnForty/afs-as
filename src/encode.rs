@@ -1639,22 +1639,26 @@ pub enum Inst {
     },
 
     // ---- FP / integer conversion ----
-    /// FCVTZS Xd, Dn  (double -> signed 64-bit int, truncate toward zero)
+    /// FCVTZS Wd/Xd, Sn/Dn (truncate floating point to signed integer)
     Fcvtzs {
         rd: GpReg,
         rn: FpReg,
+        /// Selects an X destination instead of W.
         dst_64bit: bool,
+        /// Selects a D source instead of S.
         src_double: bool,
     },
     /// FCVT Dd, Sn  (single -> double)
     FcvtDFromS { rd: FpReg, rn: FpReg },
     /// FCVT Sd, Dn  (double -> single)
     FcvtSFromD { rd: FpReg, rn: FpReg },
-    /// SCVTF Dd, Xn  (signed 64-bit int -> double)
+    /// SCVTF Sd/Dd, Wn/Xn (convert signed integer to floating point)
     Scvtf {
         rd: FpReg,
         rn: GpReg,
+        /// Selects a D destination instead of S.
         dst_double: bool,
+        /// Selects an X source instead of W.
         src_64bit: bool,
     },
     /// FMOV Dd, Xn  (move bits GP -> FP, no conversion)
