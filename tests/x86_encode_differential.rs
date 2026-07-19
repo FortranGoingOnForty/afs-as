@@ -97,6 +97,9 @@ const CASES: &[&str] = &[
     "popq %rbp",
     "popq %r12",
     "ret",
+    "ret $8",
+    "ret $65535",
+    "ret $-32768",
     // widening
     "movzbl %al, %eax",
     "movzbl %dil, %r10d",

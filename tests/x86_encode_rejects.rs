@@ -30,6 +30,11 @@ const REJECTED: &[&str] = &[
     "testq $2147483648, %rax",
     "testq $-2147483649, %r11",
     "testq $4294967296, %rax",
+    // RET's optional stack adjustment is a 16-bit immediate.
+    "ret $65536",
+    "ret $-32769",
+    "ret %rax",
+    "ret $8, $16",
 ];
 
 fn encode_line(line: &str) -> afs_as::x86::encode::EncodeResult {
