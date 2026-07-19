@@ -419,6 +419,18 @@ fn corpus_extended_addsub_matches_text_bytes() {
 }
 
 #[test]
+fn corpus_sp_addsub_matches_text_bytes() {
+    if !common::native_macho_host("corpus_compat", "corpus_sp_addsub_matches_text_bytes") {
+        return;
+    }
+    let paths = assemble_fixture("sp_addsub.s");
+    assert_eq!(
+        common::object_text_bytes(&paths.obj),
+        common::object_text_bytes(&paths.ref_obj)
+    );
+}
+
+#[test]
 fn corpus_conditional_select_surface_matches_raw_object() {
     if !common::native_macho_host(
         "corpus_compat",

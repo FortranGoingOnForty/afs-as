@@ -249,6 +249,13 @@ fn sys_cmp_ext_reg() {
     );
 }
 #[test]
+fn sys_sxtw() {
+    if !native_macho_host("verify_against_system_as", "sys_sxtw") {
+        return;
+    }
+    verify("sxtw x6, w7", Inst::Sxtw { rd: X6, rn: W7 });
+}
+#[test]
 fn sys_mul() {
     if !native_macho_host("verify_against_system_as", "sys_mul") {
         return;
@@ -5060,6 +5067,66 @@ fn sys_fmadd_d() {
         },
     );
 }
+#[test]
+fn sys_fmsub_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmsub_d") {
+        return;
+    }
+    verify(
+        "fmsub d0, d1, d2, d3",
+        Inst::FmsubD {
+            rd: D0,
+            rn: D1,
+            rm: D2,
+            ra: D3,
+        },
+    );
+}
+#[test]
+fn sys_fnmsub_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fnmsub_d") {
+        return;
+    }
+    verify(
+        "fnmsub d0, d1, d2, d3",
+        Inst::FnmsubD {
+            rd: D0,
+            rn: D1,
+            rm: D2,
+            ra: D3,
+        },
+    );
+}
+#[test]
+fn sys_fmsub_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmsub_s") {
+        return;
+    }
+    verify(
+        "fmsub s0, s1, s2, s3",
+        Inst::FmsubS {
+            rd: S0,
+            rn: S1,
+            rm: S2,
+            ra: S3,
+        },
+    );
+}
+#[test]
+fn sys_fnmsub_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fnmsub_s") {
+        return;
+    }
+    verify(
+        "fnmsub s0, s1, s2, s3",
+        Inst::FnmsubS {
+            rd: S0,
+            rn: S1,
+            rm: S2,
+            ra: S3,
+        },
+    );
+}
 
 // ---- FP / integer conversion ----
 
@@ -5068,14 +5135,30 @@ fn sys_fcvtzs() {
     if !native_macho_host("verify_against_system_as", "sys_fcvtzs") {
         return;
     }
-    verify("fcvtzs x5, d6", Inst::FcvtzsD { rd: X5, rn: D6 });
+    verify(
+        "fcvtzs x5, d6",
+        Inst::Fcvtzs {
+            rd: X5,
+            rn: D6,
+            dst_64bit: true,
+            src_double: true,
+        },
+    );
 }
 #[test]
 fn sys_scvtf() {
     if !native_macho_host("verify_against_system_as", "sys_scvtf") {
         return;
     }
-    verify("scvtf d5, x6", Inst::ScvtfD { rd: D5, rn: X6 });
+    verify(
+        "scvtf d5, x6",
+        Inst::Scvtf {
+            rd: D5,
+            rn: X6,
+            dst_double: true,
+            src_64bit: true,
+        },
+    );
 }
 #[test]
 fn sys_fmov_to() {

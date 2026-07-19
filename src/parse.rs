@@ -263,14 +263,101 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, ParseError> {
 /// Parse assembly source text into statements with source locations.
 pub fn parse_with_locations(src: &str) -> Result<Vec<LocatedStmt>, ParseError> {
     let tokens = Lexer::tokenize(src)?;
+    let previews = scan_absolute_assignments(&tokens);
+    let assignments: Vec<_> = previews
+        .iter()
+        .map(|preview| (preview.name.clone(), preview.expr.clone()))
+        .collect();
+    let resolved = expr::resolve_absolute_assignments(&assignments, &BTreeMap::new());
+
     let mut p = Parser::new(&tokens);
+    let mut first_assignments = BTreeMap::new();
+    for (preview, value) in previews.iter().zip(resolved) {
+        let value = value.map_err(|error| {
+            let origin = &previews[error.assignment_index()];
+            LocatedAbsoluteAssignmentError {
+                error,
+                line: origin.line,
+                col: origin.col,
+            }
+        });
+        let first_value = value.as_ref().ok().copied();
+        p.absolute_assignment_values
+            .insert((preview.line, preview.col), value);
+        if first_assignments.insert(preview.name.clone(), ()).is_none() {
+            if let Some(value) = first_value {
+                p.absolute_symbols.insert(preview.name.clone(), value);
+            }
+        }
+    }
     p.parse_program()
+}
+
+struct AbsoluteAssignmentPreview {
+    name: String,
+    expr: Expr,
+    line: u32,
+    col: u32,
+}
+
+#[derive(Clone)]
+struct LocatedAbsoluteAssignmentError {
+    error: expr::AbsoluteAssignmentError,
+    line: u32,
+    col: u32,
+}
+
+const MAX_EXPRESSION_DEPTH: usize = 256;
+
+struct ParsedExpr {
+    expr: Expr,
+    depth: usize,
+}
+
+impl ParsedExpr {
+    fn leaf(expr: Expr) -> Self {
+        Self { expr, depth: 0 }
+    }
+}
+
+fn scan_absolute_assignments(tokens: &[Token]) -> Vec<AbsoluteAssignmentPreview> {
+    let mut assignments = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if !matches!(&token.kind, Tok::Ident(name) if name == ".set" || name == ".equ") {
+            continue;
+        }
+        if index > 0 && !matches!(tokens[index - 1].kind, Tok::Newline | Tok::Colon) {
+            continue;
+        }
+
+        let mut parser = Parser::new(tokens);
+        parser.pos = index + 1;
+        let parsed = (|| {
+            let name = parser.expect_ident()?;
+            parser.expect(&Tok::Comma)?;
+            let expr = parser.parse_absolute_assignment_expr()?;
+            if !parser.at_end_of_stmt() {
+                return Err(parser.err("invalid absolute assignment".into()));
+            }
+            Ok((name, expr))
+        })();
+        if let Ok((name, expr)) = parsed {
+            assignments.push(AbsoluteAssignmentPreview {
+                name,
+                expr,
+                line: token.line,
+                col: token.col,
+            });
+        }
+    }
+    assignments
 }
 
 struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     absolute_symbols: BTreeMap<String, i64>,
+    absolute_assignment_values: BTreeMap<(u32, u32), Result<i64, LocatedAbsoluteAssignmentError>>,
     numeric_labels: BTreeMap<u32, u32>,
 }
 
@@ -291,6 +378,23 @@ enum GpRegKind {
     Reg,
     Sp,
     Zr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GpOperandMeta {
+    is_64bit: bool,
+    kind: GpRegKind,
+    start: usize,
+}
+
+impl GpOperandMeta {
+    fn new(is_64bit: bool, kind: GpRegKind, start: usize) -> Self {
+        Self {
+            is_64bit,
+            kind,
+            start,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -339,6 +443,7 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             absolute_symbols: BTreeMap::new(),
+            absolute_assignment_values: BTreeMap::new(),
             numeric_labels: BTreeMap::new(),
         }
     }
@@ -378,27 +483,27 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_section_attr(&mut self) -> Result<String, ParseError> {
-        let mut attr = String::new();
-        let mut consumed = false;
-        loop {
-            match self.peek().clone() {
-                Tok::Ident(s) => {
-                    self.advance();
-                    attr.push_str(&s);
-                    consumed = true;
-                }
-                Tok::Integer(n) => {
-                    self.advance();
-                    attr.push_str(&n.to_string());
-                    consumed = true;
-                }
-                _ => break,
+        match self.peek().clone() {
+            Tok::Ident(attr) => {
+                self.advance();
+                Ok(attr)
             }
-        }
-        if consumed {
-            Ok(attr)
-        } else {
-            Err(self.err(format!("expected section attribute, got {}", self.peek())))
+            Tok::Integer(value) => {
+                let start = self.cur().clone();
+                self.advance();
+                let mut attr = value.to_string();
+                let width = u32::try_from(attr.len()).unwrap_or(u32::MAX);
+                let next_is_adjacent = self.cur().line == start.line
+                    && self.cur().col == start.col.saturating_add(width);
+                if next_is_adjacent {
+                    if let Tok::Ident(suffix) = self.peek().clone() {
+                        self.advance();
+                        attr.push_str(&suffix);
+                    }
+                }
+                Ok(attr)
+            }
+            other => Err(self.err(format!("expected section attribute, got {}", other))),
         }
     }
 
@@ -438,6 +543,13 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn expression_depth_error(&self, pos: usize) -> ParseError {
+        self.err_at(
+            pos,
+            format!("expression exceeds maximum depth of {MAX_EXPRESSION_DEPTH}"),
+        )
+    }
+
     fn at_end_of_stmt(&self) -> bool {
         matches!(self.peek(), Tok::Newline | Tok::Eof)
     }
@@ -453,6 +565,9 @@ impl<'a> Parser<'a> {
         self.skip_newlines();
         while self.peek() != &Tok::Eof {
             self.parse_line(&mut stmts)?;
+            if !self.at_end_of_stmt() {
+                return Err(self.err(format!("unexpected trailing token: {}", self.peek())));
+            }
             self.skip_newlines();
         }
         Ok(stmts)
@@ -473,6 +588,9 @@ impl<'a> Parser<'a> {
                         line: start.line,
                         col: start.col,
                     });
+                    if !self.at_end_of_stmt() {
+                        self.parse_line(stmts)?;
+                    }
                 } else {
                     // Directive
                     stmts.push(LocatedStmt {
@@ -563,9 +681,9 @@ impl<'a> Parser<'a> {
             ".comm" => {
                 let sym = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
-                let size = self.parse_const_expr("common size expression")? as u64;
+                let size = self.parse_unsigned_const_expr::<u64>("common size expression")?;
                 let align_pow2 = if self.eat(&Tok::Comma) {
-                    self.parse_const_expr("common alignment expression")? as u8
+                    self.parse_unsigned_const_expr::<u8>("common alignment expression")?
                 } else {
                     0
                 };
@@ -598,11 +716,28 @@ impl<'a> Parser<'a> {
             ".set" | ".equ" => {
                 let sym = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
-                let expr = self.parse_expr()?;
-                if let Ok(value) = expr::eval_with_symbols(&expr, &self.absolute_symbols) {
-                    self.absolute_symbols.insert(sym.clone(), value);
-                } else {
-                    self.absolute_symbols.remove(&sym);
+                let expr = self.parse_absolute_assignment_expr()?;
+                match self.absolute_assignment_values.get(&(line, col)).cloned() {
+                    Some(Ok(value)) => {
+                        self.absolute_symbols.insert(sym.clone(), value);
+                    }
+                    Some(Err(error)) if error.error.may_resolve_with_labels() => {
+                        self.absolute_symbols.remove(&sym);
+                    }
+                    Some(Err(error)) => {
+                        return Err(ParseError {
+                            line: error.line,
+                            col: error.col,
+                            msg: error.error.to_string(),
+                        });
+                    }
+                    None => {
+                        if let Ok(value) = expr::eval_with_symbols(&expr, &self.absolute_symbols) {
+                            self.absolute_symbols.insert(sym.clone(), value);
+                        } else {
+                            self.absolute_symbols.remove(&sym);
+                        }
+                    }
                 }
                 Directive::Set(sym, expr)
             }
@@ -622,9 +757,9 @@ impl<'a> Parser<'a> {
                     max_skip,
                 }
             }
-            ".byte" => Directive::Byte(self.parse_expr_list()?),
-            ".short" => Directive::Short(self.parse_expr_list()?),
-            ".word" | ".long" => Directive::Word(self.parse_expr_list()?),
+            ".byte" => Directive::Byte(self.parse_data_expr_list(name, 8)?),
+            ".short" => Directive::Short(self.parse_data_expr_list(name, 16)?),
+            ".word" | ".long" => Directive::Word(self.parse_data_expr_list(name, 32)?),
             ".quad" => Directive::Quad(self.parse_quad_expr_list()?),
             ".ascii" => {
                 if let Tok::StringLit(s) = self.peek().clone() {
@@ -645,19 +780,19 @@ impl<'a> Parser<'a> {
                 }
             }
             ".space" | ".skip" => {
-                let n = self.parse_const_expr("space expression")? as u64;
+                let n = self.parse_unsigned_const_expr::<u64>("space expression")?;
                 Directive::Space(n)
             }
             ".zero" => {
-                let n = self.parse_const_expr("zero expression")? as u64;
+                let n = self.parse_unsigned_const_expr::<u64>("zero expression")?;
                 Directive::Space(n)
             }
             ".fill" => {
-                let repeat = self.parse_const_expr("fill repeat expression")? as u64;
+                let repeat = self.parse_unsigned_const_expr::<u64>("fill repeat expression")?;
                 self.expect(&Tok::Comma)?;
-                let size = self.parse_const_expr("fill size expression")? as u8;
+                let size = self.parse_apple_fill_size()?;
                 let value = if self.eat(&Tok::Comma) {
-                    self.parse_const_expr("fill value expression")? as u64
+                    self.parse_apple_fill_pattern()?
                 } else {
                     0
                 };
@@ -678,9 +813,9 @@ impl<'a> Parser<'a> {
                     None
                 };
                 self.expect(&Tok::Comma)?;
-                let size = self.parse_const_expr("zerofill size expression")? as u64;
+                let size = self.parse_unsigned_const_expr::<u64>("zerofill size expression")?;
                 let align_pow2 = if self.eat(&Tok::Comma) {
-                    self.parse_const_expr("zerofill alignment expression")? as u32
+                    self.parse_unsigned_const_expr::<u32>("zerofill alignment expression")?
                 } else {
                     0
                 };
@@ -695,9 +830,10 @@ impl<'a> Parser<'a> {
             ".tbss" => {
                 let symbol = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
-                let size = self.parse_const_expr("tbss size expression")? as u64;
+                let size = self.parse_unsigned_const_expr::<u64>("tbss size expression")?;
                 self.expect(&Tok::Comma)?;
-                let align_pow2 = self.parse_const_expr("tbss alignment expression")? as u32;
+                let align_pow2 =
+                    self.parse_unsigned_const_expr::<u32>("tbss alignment expression")?;
                 Directive::Zerofill {
                     segment: "__DATA".into(),
                     section: "__thread_bss".into(),
@@ -749,13 +885,21 @@ impl<'a> Parser<'a> {
                 let sdk = if self.at_end_of_stmt() {
                     None
                 } else {
-                    let keyword = self.expect_ident()?;
+                    let keyword_start = self.pos;
+                    let keyword = self.peek().clone();
+                    let Tok::Ident(keyword) = &keyword else {
+                        return Err(self.err_at(
+                            keyword_start,
+                            format!("expected sdk_version after .build_version, got {}", keyword),
+                        ));
+                    };
                     if !keyword.eq_ignore_ascii_case("sdk_version") {
-                        return Err(self.err(format!(
-                            "expected sdk_version after .build_version, got {}",
-                            keyword
-                        )));
+                        return Err(self.err_at(
+                            keyword_start,
+                            format!("expected sdk_version after .build_version, got {}", keyword),
+                        ));
                     }
+                    self.advance();
                     Some(self.parse_version_triple("build version SDK")?)
                 };
                 if !self.at_end_of_stmt() {
@@ -814,12 +958,44 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Directive(dir))
     }
 
-    fn parse_expr_list(&mut self) -> Result<Vec<Expr>, ParseError> {
-        let mut vals = vec![self.parse_expr()?];
-        while self.eat(&Tok::Comma) {
-            vals.push(self.parse_expr()?);
+    fn parse_data_expr_list(&mut self, directive: &str, bits: u8) -> Result<Vec<Expr>, ParseError> {
+        let mut values = Vec::new();
+        loop {
+            let start = self.pos;
+            let expr =
+                self.parse_expr_with_standalone_unsigned("standalone data-directive bit patterns")?;
+            self.validate_data_expr(&expr, directive, bits, start)?;
+            values.push(expr);
+            if !self.eat(&Tok::Comma) {
+                break;
+            }
         }
-        Ok(vals)
+        Ok(values)
+    }
+
+    fn validate_data_expr(
+        &self,
+        expr: &Expr,
+        directive: &str,
+        bits: u8,
+        start: usize,
+    ) -> Result<(), ParseError> {
+        let value = match expr {
+            Expr::Unsigned(value) if unsigned_data_value_fits(*value, bits) => return Ok(()),
+            Expr::Unsigned(value) => value.to_string(),
+            _ => match expr::eval_pure(expr) {
+                Ok(value) if signed_data_value_fits(value, bits) => return Ok(()),
+                Ok(value) => value.to_string(),
+                Err(_) => return Ok(()),
+            },
+        };
+        Err(self.err_at(
+            start,
+            format!(
+                "{} expression value {} is out of range for {}-bit data",
+                directive, value, bits
+            ),
+        ))
     }
 
     fn parse_quad_expr_list(&mut self) -> Result<Vec<Expr>, ParseError> {
@@ -833,16 +1009,17 @@ impl<'a> Parser<'a> {
     fn parse_alignment_directive_args(
         &mut self,
     ) -> Result<(u32, Option<u8>, Option<u64>), ParseError> {
-        let power = self.parse_const_expr("alignment expression")? as u32;
+        let power = self.parse_unsigned_const_expr::<u32>("alignment expression")?;
         let mut fill = None;
         let mut max_skip = None;
 
         if self.eat(&Tok::Comma) {
             if !self.at_end_of_stmt() && self.peek() != &Tok::Comma {
-                fill = Some(self.parse_const_expr("alignment fill expression")? as u8);
+                fill = Some(self.parse_truncated_byte_const_expr("alignment fill expression")?);
             }
             if self.eat(&Tok::Comma) {
-                max_skip = Some(self.parse_const_expr("alignment max-skip expression")? as u64);
+                max_skip =
+                    Some(self.parse_unsigned_const_expr::<u64>("alignment max-skip expression")?);
             }
         }
 
@@ -850,10 +1027,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cfi_register(&mut self) -> Result<GpReg, ParseError> {
-        let (register, _, kind) = self.parse_gp_reg_with_size_kind()?;
-        if matches!(kind, GpRegKind::Zr) {
-            return Err(self.err("CFI directives do not accept the zero register".into()));
-        }
+        let (register, _, _) = self.parse_gp_reg_with_size_kind()?;
         Ok(register)
     }
 
@@ -902,14 +1076,87 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_unsigned_const_expr<T>(&mut self, context: &str) -> Result<T, ParseError>
+    where
+        T: TryFrom<i64>,
+    {
+        let start = self.pos;
+        let value = self.parse_const_expr(context)?;
+        T::try_from(value).map_err(|_| {
+            self.err_at(
+                start,
+                format!(
+                    "{} value {} does not fit in {}",
+                    context,
+                    value,
+                    std::any::type_name::<T>()
+                ),
+            )
+        })
+    }
+
+    fn parse_truncated_byte_const_expr(&mut self, context: &str) -> Result<u8, ParseError> {
+        Ok(self.parse_bit_pattern_const_expr(context)?.to_le_bytes()[0])
+    }
+
+    fn parse_apple_fill_pattern(&mut self) -> Result<u64, ParseError> {
+        let bytes = self
+            .parse_bit_pattern_const_expr("fill value expression")?
+            .to_le_bytes();
+        // Apple fill patterns are truncated to 32 bits, then zero-extended to the element width.
+        Ok(u64::from(u32::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3],
+        ])))
+    }
+
+    fn parse_apple_fill_size(&mut self) -> Result<u8, ParseError> {
+        let start = self.pos;
+        let expr = self.parse_expr_with_standalone_unsigned("standalone fill-size values")?;
+        let value = match expr {
+            Expr::Unsigned(value) => value,
+            expr => {
+                let value =
+                    expr::eval_with_symbols(&expr, &self.absolute_symbols).map_err(|err| {
+                        self.err(format!(
+                            "fill size expression must be a pure constant expression: {}",
+                            err
+                        ))
+                    })?;
+                u64::try_from(value).map_err(|_| {
+                    self.err_at(
+                        start,
+                        format!("fill size expression value {} does not fit in u64", value),
+                    )
+                })?
+            }
+        };
+        Ok(u8::try_from(value.min(8)).expect("normalized fill size fits in u8"))
+    }
+
+    fn parse_bit_pattern_const_expr(&mut self, context: &str) -> Result<u64, ParseError> {
+        let expr = self.parse_expr_with_standalone_unsigned("standalone bit-pattern values")?;
+        match expr {
+            Expr::Unsigned(value) => Ok(value),
+            expr => expr::eval_with_symbols(&expr, &self.absolute_symbols)
+                .map(|value| u64::from_le_bytes(value.to_le_bytes()))
+                .map_err(|err| {
+                    self.err(format!(
+                        "{} must be a pure constant expression: {}",
+                        context, err
+                    ))
+                }),
+        }
+    }
+
     fn starts_const_expr(&self) -> bool {
         if self.numeric_label_ref_at(self.pos).is_some() {
             return false;
         }
-        matches!(
-            self.peek(),
-            Tok::Integer(_) | Tok::UnsignedInteger(_) | Tok::Minus | Tok::LParen
-        )
+        self.starts_absolute_symbol_expr()
+            || matches!(
+                self.peek(),
+                Tok::Integer(_) | Tok::UnsignedInteger(_) | Tok::Minus | Tok::LParen
+            )
     }
 
     fn starts_immediate_expr(&self) -> bool {
@@ -921,9 +1168,134 @@ impl<'a> Parser<'a> {
         self.parse_const_expr(context)
     }
 
+    fn parse_u16_immediate(&mut self, context: &str) -> Result<u16, ParseError> {
+        let start = self.pos;
+        let value = self.parse_immediate_const_expr(context)?;
+        u16::try_from(value).map_err(|_| {
+            self.err_at(
+                start,
+                format!("{} must be in the range 0..=65535, got {}", context, value),
+            )
+        })
+    }
+
+    fn parse_signed_scaled_immediate(
+        &mut self,
+        context: &str,
+        bits: u8,
+        scale: u8,
+    ) -> Result<i64, ParseError> {
+        let start = self.pos;
+        let value = self.parse_immediate_const_expr(context)?;
+        let alignment = 1i64 << scale;
+        if value % alignment != 0 {
+            return Err(self.err_at(
+                start,
+                format!("{} {} is not {}-byte aligned", context, value, alignment),
+            ));
+        }
+
+        let scaled = value / alignment;
+        let min = -(1i64 << (bits - 1));
+        let max = (1i64 << (bits - 1)) - 1;
+        if !(min..=max).contains(&scaled) {
+            return Err(self.err_at(
+                start,
+                format!(
+                    "{} {} is out of range for a signed {}-bit immediate with scale {}",
+                    context, value, bits, alignment
+                ),
+            ));
+        }
+
+        Ok(value)
+    }
+
+    fn parse_i32_signed_scaled_immediate(
+        &mut self,
+        context: &str,
+        bits: u8,
+        scale: u8,
+    ) -> Result<i32, ParseError> {
+        let value = self.parse_signed_scaled_immediate(context, bits, scale)?;
+        i32::try_from(value).map_err(|_| {
+            self.err(format!(
+                "{} {} does not fit the assembler's offset representation",
+                context, value
+            ))
+        })
+    }
+
+    fn parse_i16_signed_scaled_immediate(
+        &mut self,
+        context: &str,
+        bits: u8,
+        scale: u8,
+    ) -> Result<i16, ParseError> {
+        let start = self.pos;
+        let value = self.parse_immediate_const_expr(context)?;
+        self.validate_i16_signed_scaled_immediate(value, context, bits, scale, start)
+    }
+
+    fn validate_i16_signed_scaled_immediate(
+        &self,
+        value: i64,
+        context: &str,
+        bits: u8,
+        scale: u8,
+        start: usize,
+    ) -> Result<i16, ParseError> {
+        let alignment = 1i64 << scale;
+        if value % alignment != 0 {
+            return Err(self.err_at(
+                start,
+                format!("{} {} is not {}-byte aligned", context, value, alignment),
+            ));
+        }
+
+        let scaled = value / alignment;
+        let min = -(1i64 << (bits - 1));
+        let max = (1i64 << (bits - 1)) - 1;
+        if !(min..=max).contains(&scaled) {
+            return Err(self.err_at(
+                start,
+                format!(
+                    "{} {} is out of range for a signed {}-bit immediate with scale {}",
+                    context, value, bits, alignment
+                ),
+            ));
+        }
+
+        i16::try_from(value).map_err(|_| {
+            self.err_at(
+                start,
+                format!(
+                    "{} {} does not fit the assembler's offset representation",
+                    context, value
+                ),
+            )
+        })
+    }
+
     fn parse_logical_immediate_value(&mut self, sf: bool) -> Result<u64, ParseError> {
+        let start = self.pos;
         let imm = self.parse_immediate_const_expr("logical immediate")?;
-        let raw = if sf { imm as u64 } else { (imm as u32) as u64 };
+        let raw = if sf {
+            imm as u64
+        } else {
+            let min = -i64::from(u32::MAX);
+            let max = i64::from(u32::MAX);
+            if !(min..=max).contains(&imm) {
+                return Err(self.err_at(
+                    start,
+                    format!(
+                        "32-bit logical immediate must be in the range {}..={}, got {}",
+                        min, max, imm
+                    ),
+                ));
+            }
+            (imm as u32) as u64
+        };
         if logical_immediate_encodable(raw, if sf { 64 } else { 32 }) {
             Ok(raw)
         } else {
@@ -935,62 +1307,127 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_add_sub_expr(false)
+        Ok(self.parse_add_sub_expr(false, 0)?.expr)
     }
 
     fn parse_quad_expr(&mut self) -> Result<Expr, ParseError> {
+        self.parse_expr_with_standalone_unsigned("standalone .quad values")
+    }
+
+    fn parse_absolute_assignment_expr(&mut self) -> Result<Expr, ParseError> {
+        let expr =
+            self.parse_expr_with_standalone_unsigned("standalone absolute assignment values")?;
+        Ok(match expr {
+            Expr::Unsigned(value) => Expr::Int(i64::from_le_bytes(value.to_le_bytes())),
+            expr => expr,
+        })
+    }
+
+    fn parse_expr_with_standalone_unsigned(
+        &mut self,
+        restriction: &str,
+    ) -> Result<Expr, ParseError> {
         let start = self.pos;
-        let expr = self.parse_add_sub_expr(true)?;
+        let expr = self.parse_add_sub_expr(true, 0)?.expr;
         if contains_wide_unsigned_literal(&expr) && !matches!(expr, Expr::Unsigned(_)) {
             let wide_literal = (start..self.pos)
                 .find(|&pos| matches!(&self.tokens[pos].kind, Tok::UnsignedInteger(_)))
                 .unwrap_or(start);
             return Err(self.err_at(
                 wide_literal,
-                "unsigned integer literals above i64::MAX must be standalone .quad values".into(),
+                format!(
+                    "unsigned integer literals above i64::MAX must be {}",
+                    restriction
+                ),
             ));
         }
         Ok(expr)
     }
 
-    fn parse_add_sub_expr(&mut self, allow_wide_unsigned: bool) -> Result<Expr, ParseError> {
-        let mut expr = self.parse_unary_expr(allow_wide_unsigned)?;
+    fn parse_add_sub_expr(
+        &mut self,
+        allow_wide_unsigned: bool,
+        nesting: usize,
+    ) -> Result<ParsedExpr, ParseError> {
+        let mut parsed = self.parse_unary_expr(allow_wide_unsigned, nesting)?;
         loop {
-            if self.eat(&Tok::Plus) {
-                let rhs = self.parse_unary_expr(allow_wide_unsigned)?;
-                expr = Expr::Add(Box::new(expr), Box::new(rhs));
-            } else if self.eat(&Tok::Minus) {
-                let rhs = self.parse_unary_expr(allow_wide_unsigned)?;
-                expr = Expr::Sub(Box::new(expr), Box::new(rhs));
-            } else {
-                break;
+            let operator_pos = self.pos;
+            let is_add = match self.peek() {
+                Tok::Plus => true,
+                Tok::Minus => false,
+                _ => break,
+            };
+            self.advance();
+
+            let rhs = self.parse_unary_expr(allow_wide_unsigned, nesting)?;
+            let depth = parsed.depth.max(rhs.depth) + 1;
+            if depth > MAX_EXPRESSION_DEPTH {
+                return Err(self.expression_depth_error(operator_pos));
             }
+
+            let expr = if is_add {
+                Expr::Add(Box::new(parsed.expr), Box::new(rhs.expr))
+            } else {
+                Expr::Sub(Box::new(parsed.expr), Box::new(rhs.expr))
+            };
+            parsed = ParsedExpr { expr, depth };
         }
-        Ok(expr)
+        Ok(parsed)
     }
 
-    fn parse_unary_expr(&mut self, allow_wide_unsigned: bool) -> Result<Expr, ParseError> {
-        if self.eat(&Tok::Minus) {
-            Ok(Expr::UnaryMinus(Box::new(
-                self.parse_unary_expr(allow_wide_unsigned)?,
-            )))
+    fn parse_unary_expr(
+        &mut self,
+        allow_wide_unsigned: bool,
+        nesting: usize,
+    ) -> Result<ParsedExpr, ParseError> {
+        let first_minus = self.pos;
+        let mut minus_count = 0;
+        while self.peek() == &Tok::Minus {
+            if minus_count == MAX_EXPRESSION_DEPTH {
+                return Err(self.expression_depth_error(self.pos));
+            }
+            self.advance();
+            minus_count += 1;
+        }
+
+        let signed_min_literal = minus_count > 0
+            && matches!(self.peek(), Tok::UnsignedInteger(value) if *value == 1_u64 << 63);
+        let parsed = if signed_min_literal {
+            self.advance();
+            ParsedExpr::leaf(Expr::Int(i64::MIN))
         } else {
-            self.parse_primary_expr(allow_wide_unsigned)
+            self.parse_primary_expr(allow_wide_unsigned, nesting)?
+        };
+        if parsed.depth > MAX_EXPRESSION_DEPTH - minus_count {
+            let offending_minus = first_minus + (MAX_EXPRESSION_DEPTH - parsed.depth);
+            return Err(self.expression_depth_error(offending_minus));
         }
+
+        let depth = parsed.depth + minus_count;
+        let mut expr = parsed.expr;
+        let wrapping_minuses = minus_count - usize::from(signed_min_literal);
+        for _ in 0..wrapping_minuses {
+            expr = Expr::UnaryMinus(Box::new(expr));
+        }
+        Ok(ParsedExpr { expr, depth })
     }
 
-    fn parse_primary_expr(&mut self, allow_wide_unsigned: bool) -> Result<Expr, ParseError> {
+    fn parse_primary_expr(
+        &mut self,
+        allow_wide_unsigned: bool,
+        nesting: usize,
+    ) -> Result<ParsedExpr, ParseError> {
         if let Some(symbol) = self.parse_numeric_label_ref()? {
-            return Ok(Expr::Symbol(symbol));
+            return Ok(ParsedExpr::leaf(Expr::Symbol(symbol)));
         }
         match self.peek().clone() {
             Tok::Integer(value) => {
                 self.advance();
-                Ok(Expr::Int(value))
+                Ok(ParsedExpr::leaf(Expr::Int(value)))
             }
             Tok::UnsignedInteger(value) if allow_wide_unsigned => {
                 self.advance();
-                Ok(Expr::Unsigned(value))
+                Ok(ParsedExpr::leaf(Expr::Unsigned(value)))
             }
             Tok::UnsignedInteger(value) => Err(self.err(format!(
                 "unsigned integer {} exceeds the i64 range for this context",
@@ -1002,26 +1439,30 @@ impl<'a> Parser<'a> {
                     let modifier = self.expect_ident()?;
                     let upper = modifier.to_ascii_uppercase();
                     match upper.as_str() {
-                        "GOT" => Ok(Expr::ModifiedSymbol {
+                        "GOT" => Ok(ParsedExpr::leaf(Expr::ModifiedSymbol {
                             symbol,
                             modifier: SymbolModifier::Got,
-                        }),
+                        })),
                         _ => Err(self.err(format!(
                             "unsupported relocation modifier '@{}' in expression",
                             modifier
                         ))),
                     }
                 } else {
-                    Ok(Expr::Symbol(symbol))
+                    Ok(ParsedExpr::leaf(Expr::Symbol(symbol)))
                 }
             }
             Tok::Dot => {
                 self.advance();
-                Ok(Expr::CurrentLocation)
+                Ok(ParsedExpr::leaf(Expr::CurrentLocation))
             }
             Tok::LParen => {
+                let open_paren = self.pos;
+                if nesting == MAX_EXPRESSION_DEPTH {
+                    return Err(self.expression_depth_error(open_paren));
+                }
                 self.advance();
-                let expr = self.parse_add_sub_expr(allow_wide_unsigned)?;
+                let expr = self.parse_add_sub_expr(allow_wide_unsigned, nesting + 1)?;
                 self.expect(&Tok::RParen)?;
                 Ok(expr)
             }
@@ -1081,6 +1522,19 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_branch_label_reference(&mut self) -> Result<String, ParseError> {
+        let start = self.pos;
+        let symbol = self.parse_label_reference()?;
+        if is_canonical_register_name(&symbol) {
+            Err(self.err_at(
+                start,
+                format!("expected label, got architectural register '{}'", symbol),
+            ))
+        } else {
+            Ok(symbol)
+        }
+    }
+
     fn parse_symbol_reloc_modifier(
         &mut self,
         default: Option<RelocKind>,
@@ -1120,8 +1574,18 @@ impl<'a> Parser<'a> {
         if self.numeric_label_ref_at(self.pos).is_some() {
             return true;
         }
+        if self.starts_absolute_symbol_expr() {
+            return false;
+        }
         match self.peek() {
-            Tok::Ident(name) => !looks_like_gp_register_name(name),
+            Tok::Ident(name) => {
+                let has_reloc_modifier = matches!(
+                    self.tokens.get(self.pos + 1).map(|token| &token.kind),
+                    Some(Tok::At)
+                );
+                !is_canonical_register_name(name)
+                    && (!looks_like_gp_register_name(name) || has_reloc_modifier)
+            }
             _ => false,
         }
     }
@@ -1130,10 +1594,11 @@ impl<'a> Parser<'a> {
         if self.numeric_label_ref_at(self.pos).is_some() {
             return true;
         }
+        if self.starts_absolute_symbol_expr() {
+            return false;
+        }
         match self.peek() {
-            Tok::Ident(name) => {
-                !looks_like_gp_register_name(name) && !looks_like_fp_register_name(name)
-            }
+            Tok::Ident(name) => !is_canonical_register_name(name),
             _ => false,
         }
     }
@@ -1397,11 +1862,11 @@ impl<'a> Parser<'a> {
             // Branches
             "ret" => self.parse_ret(),
             "br" => {
-                let rn = self.parse_gp_reg()?;
+                let rn = self.parse_x_reg("br")?;
                 Ok(Inst::Br { rn })
             }
             "blr" => {
-                let rn = self.parse_gp_reg()?;
+                let rn = self.parse_x_reg("blr")?;
                 Ok(Inst::Blr { rn })
             }
 
@@ -1473,7 +1938,7 @@ impl<'a> Parser<'a> {
             "fsqrt" => self.parse_fp_unary("fsqrt"),
             "fcmp" => self.parse_fcmp(),
             "fcsel" => self.parse_fcsel(),
-            "fmadd" => self.parse_fmadd(),
+            "fmadd" | "fmsub" | "fnmsub" => self.parse_fp_madd(mnemonic),
 
             // FP conversion
             "fcvt" => self.parse_fcvt(),
@@ -1483,7 +1948,7 @@ impl<'a> Parser<'a> {
 
             // System
             "svc" => {
-                let imm = self.parse_immediate_const_expr("svc immediate")? as u16;
+                let imm = self.parse_u16_immediate("svc immediate")?;
                 Ok(Inst::Svc { imm16: imm })
             }
             "nop" => Ok(Inst::Nop),
@@ -1507,7 +1972,7 @@ impl<'a> Parser<'a> {
                 Ok(Inst::Isb { option })
             }
             "brk" => {
-                let imm = self.parse_immediate_const_expr("brk immediate")? as u16;
+                let imm = self.parse_u16_immediate("brk immediate")?;
                 Ok(Inst::Brk { imm16: imm })
             }
 
@@ -1518,50 +1983,99 @@ impl<'a> Parser<'a> {
 
     // ---- Register parsing helpers ----
 
-    fn parse_gp_reg(&mut self) -> Result<GpReg, ParseError> {
-        let name = self.expect_ident()?;
-        parse_gp_reg_name(&name)
-            .ok_or_else(|| self.err(format!("expected GP register, got '{}'", name)))
+    fn parse_gp_reg_with_required_width(
+        &mut self,
+        required_64bit: bool,
+        context: &str,
+    ) -> Result<GpReg, ParseError> {
+        let start = self.pos;
+        let (reg, is_64bit) = self.parse_gp_data_reg_with_size(context)?;
+        if is_64bit != required_64bit {
+            let register = if required_64bit {
+                "an x-register"
+            } else {
+                "a w-register"
+            };
+            return Err(self.err_at(start, format!("{} requires {}", context, register)));
+        }
+        Ok(reg)
     }
 
-    /// Returns (register, is_64bit).
-    fn parse_gp_reg_with_size(&mut self) -> Result<(GpReg, bool), ParseError> {
-        let (reg, is_64bit, _kind) = self.parse_gp_reg_with_size_kind()?;
+    fn parse_x_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        self.parse_gp_reg_with_required_width(true, context)
+    }
+
+    fn parse_w_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        self.parse_gp_reg_with_required_width(false, context)
+    }
+
+    fn parse_memory_base_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        let start = self.pos;
+        let (reg, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
+        if !is_64bit || kind == GpRegKind::Zr {
+            return Err(self.err_at(
+                start,
+                format!("{} requires an x-register or sp base", context),
+            ));
+        }
+        Ok(reg)
+    }
+
+    fn parse_gp_data_reg_with_size(&mut self, context: &str) -> Result<(GpReg, bool), ParseError> {
+        let start = self.pos;
+        let (reg, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
+        if kind == GpRegKind::Sp {
+            return Err(self.err_at(
+                start,
+                format!("{} does not allow sp as a data register", context),
+            ));
+        }
         Ok((reg, is_64bit))
     }
 
+    fn parse_gp_reg_matching_width(
+        &mut self,
+        expected_64bit: bool,
+        context: &str,
+    ) -> Result<GpReg, ParseError> {
+        let start = self.pos;
+        let (reg, is_64bit) = self.parse_gp_data_reg_with_size(context)?;
+        if is_64bit != expected_64bit {
+            return Err(self.err_at(
+                start,
+                format!("{} requires registers of the same width", context),
+            ));
+        }
+        Ok(reg)
+    }
+
     fn parse_gp_reg_with_size_kind(&mut self) -> Result<(GpReg, bool, GpRegKind), ParseError> {
+        let start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
-        self.gp_reg_with_size_kind_from_name(&name, &lower)
+        self.gp_reg_with_size_kind_from_name(&name, &lower, start)
+    }
+
+    fn parse_add_sub_gp_reg_with_size_kind(
+        &mut self,
+    ) -> Result<(GpReg, bool, GpRegKind), ParseError> {
+        self.parse_gp_reg_with_size_kind()
     }
 
     fn gp_reg_with_size_kind_from_name(
         &self,
         name: &str,
         lower: &str,
+        start: usize,
     ) -> Result<(GpReg, bool, GpRegKind), ParseError> {
-        if lower == "sp" || lower == "xzr" {
-            let kind = if lower == "sp" {
-                GpRegKind::Sp
-            } else {
-                GpRegKind::Zr
-            };
-            return Ok((parse_gp_reg_name(lower).unwrap(), true, kind));
+        if let Some(register) = classify_gp_reg_name(lower) {
+            return Ok(register);
         }
-        if lower == "wzr" {
-            return Ok((WZR, false, GpRegKind::Zr));
-        }
-        if lower.starts_with('x') {
-            let reg = parse_gp_reg_name(lower)
-                .ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
-            Ok((reg, true, GpRegKind::Reg))
-        } else if lower.starts_with('w') {
-            let reg = parse_gp_reg_name(lower)
-                .ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
-            Ok((reg, false, GpRegKind::Reg))
+
+        if lower.starts_with('x') || lower.starts_with('w') {
+            Err(self.err_at(start, format!("bad register '{}'", name)))
         } else {
-            Err(self.err(format!("expected GP register, got '{}'", name)))
+            Err(self.err_at(start, format!("expected GP register, got '{}'", name)))
         }
     }
 
@@ -1570,9 +2084,10 @@ impl<'a> Parser<'a> {
         width: SimdLaneWidth,
         context: &str,
     ) -> Result<GpReg, ParseError> {
+        let start = self.pos;
         let (reg, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
         if kind == GpRegKind::Sp {
-            return Err(self.err(format!("{} does not allow SP", context)));
+            return Err(self.err_at(start, format!("{} does not allow SP", context)));
         }
         let needs_64bit = matches!(width, SimdLaneWidth::D64);
         if needs_64bit != is_64bit {
@@ -1581,28 +2096,46 @@ impl<'a> Parser<'a> {
             } else {
                 "w-register"
             };
-            return Err(self.err(format!("{} requires a {}", context, width_name)));
+            return Err(self.err_at(start, format!("{} requires a {}", context, width_name)));
         }
         Ok(reg)
     }
 
     fn parse_fp_reg_with_size(&mut self) -> Result<(FpReg, bool), ParseError> {
+        let start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         if lower.starts_with('d') {
             let reg = parse_fp_reg_name(&lower)
-                .ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
+                .ok_or_else(|| self.err_at(start, format!("bad FP register '{}'", name)))?;
             Ok((reg, true)) // double
         } else if lower.starts_with('s') {
             let reg = parse_fp_reg_name(&lower)
-                .ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
+                .ok_or_else(|| self.err_at(start, format!("bad FP register '{}'", name)))?;
             Ok((reg, false)) // single
         } else {
-            Err(self.err(format!("expected FP register, got '{}'", name)))
+            Err(self.err_at(start, format!("expected FP register, got '{}'", name)))
         }
     }
 
+    fn parse_fp_reg_matching_width(
+        &mut self,
+        expected_double: bool,
+        context: &str,
+    ) -> Result<FpReg, ParseError> {
+        let start = self.pos;
+        let (reg, is_double) = self.parse_fp_reg_with_size()?;
+        if is_double != expected_double {
+            return Err(self.err_at(
+                start,
+                format!("{} requires registers of the same width", context),
+            ));
+        }
+        Ok(reg)
+    }
+
     fn parse_fp_mem_reg_with_width(&mut self) -> Result<(FpReg, FpMemWidth), ParseError> {
+        let start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         let width = if lower.starts_with('b') {
@@ -1616,39 +2149,47 @@ impl<'a> Parser<'a> {
         } else if lower.starts_with('q') {
             FpMemWidth::Q128
         } else {
-            return Err(self.err(format!("expected FP/SIMD register, got '{}'", name)));
+            return Err(self.err_at(start, format!("expected FP/SIMD register, got '{}'", name)));
         };
-        let num: u8 = lower[1..]
-            .parse()
-            .map_err(|_| self.err(format!("bad FP/SIMD register '{}'", name)))?;
+        let num = parse_canonical_register_number(&lower[1..])
+            .ok_or_else(|| self.err_at(start, format!("bad FP/SIMD register '{}'", name)))?;
         if num > 31 {
-            return Err(self.err(format!("bad FP/SIMD register '{}'", name)));
+            return Err(self.err_at(start, format!("bad FP/SIMD register '{}'", name)));
         }
         let reg = FpReg::new(num);
         Ok((reg, width))
     }
 
     fn parse_atomic_data_reg(&mut self, context: &str) -> Result<(GpReg, bool), ParseError> {
+        let start = self.pos;
         let (reg, sf, kind) = self.parse_gp_reg_with_size_kind()?;
         if kind == GpRegKind::Sp {
-            return Err(self.err(format!("{} does not allow SP as a data register", context)));
+            return Err(self.err_at(
+                start,
+                format!("{} does not allow SP as a data register", context),
+            ));
         }
         Ok((reg, sf))
     }
 
     fn parse_atomic_wreg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        let start = self.pos;
         let (reg, sf) = self.parse_atomic_data_reg(context)?;
         if sf {
-            return Err(self.err(format!("{} requires a w-register", context)));
+            return Err(self.err_at(start, format!("{} requires a w-register", context)));
         }
         Ok(reg)
     }
 
     fn parse_atomic_base_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
         self.expect(&Tok::LBracket)?;
+        let start = self.pos;
         let (rn, sf, kind) = self.parse_gp_reg_with_size_kind()?;
         if !sf || kind == GpRegKind::Zr {
-            return Err(self.err(format!("{} expects an [Xn] or [sp] base register", context)));
+            return Err(self.err_at(
+                start,
+                format!("{} expects an [Xn] or [sp] base register", context),
+            ));
         }
         if !self.eat(&Tok::RBracket) {
             return Err(self.err(format!("{} expects a simple [Xn] memory operand", context)));
@@ -1714,12 +2255,16 @@ impl<'a> Parser<'a> {
     fn parse_atomic_rmw(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
         let (rs, sf) = self.parse_atomic_data_reg(mnemonic)?;
         self.expect(&Tok::Comma)?;
+        let rt_start = self.pos;
         let (rt, rt_sf) = self.parse_atomic_data_reg(mnemonic)?;
         if sf != rt_sf {
-            return Err(self.err(format!(
-                "{} requires source and destination registers of the same width",
-                mnemonic
-            )));
+            return Err(self.err_at(
+                rt_start,
+                format!(
+                    "{} requires source and destination registers of the same width",
+                    mnemonic
+                ),
+            ));
         }
         self.expect(&Tok::Comma)?;
         let rn = self.parse_atomic_base_reg(mnemonic)?;
@@ -1812,130 +2357,33 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_add_sub(&mut self, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let rd_start = self.pos;
+        let rd = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _, rn_kind) = self.parse_gp_reg_with_size_kind()?;
+        let rn_start = self.pos;
+        let rn = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-
-        if self.starts_immediate_expr() {
-            let imm = self.parse_immediate_const_expr("add/sub immediate")? as u16;
-            let shift = self.parse_optional_lsl12()?;
-            Ok(match (is_sub, sets_flags) {
-                (false, false) => Inst::AddImm {
-                    rd,
-                    rn,
-                    imm12: imm,
-                    shift,
-                    sf,
-                },
-                (true, false) => Inst::SubImm {
-                    rd,
-                    rn,
-                    imm12: imm,
-                    shift,
-                    sf,
-                },
-                (false, true) => Inst::AddsImm {
-                    rd,
-                    rn,
-                    imm12: imm,
-                    shift,
-                    sf,
-                },
-                (true, true) => Inst::SubsImm {
-                    rd,
-                    rn,
-                    imm12: imm,
-                    shift,
-                    sf,
-                },
-            })
-        } else {
-            let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
-            let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
-            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
-            Ok(match (is_sub, sets_flags, modifier) {
-                (false, false, None) => Inst::AddReg { rd, rn, rm, sf },
-                (true, false, None) => Inst::SubReg { rd, rn, rm, sf },
-                (false, true, None) => Inst::AddsReg { rd, rn, rm, sf },
-                (true, true, None) => Inst::SubsReg { rd, rn, rm, sf },
-                (false, false, Some(AddSubModifier::Shift(shift, amount))) => Inst::AddShiftReg {
-                    rd,
-                    rn,
-                    rm,
-                    shift,
-                    amount,
-                    sf,
-                },
-                (true, false, Some(AddSubModifier::Shift(shift, amount))) => Inst::SubShiftReg {
-                    rd,
-                    rn,
-                    rm,
-                    shift,
-                    amount,
-                    sf,
-                },
-                (false, true, Some(AddSubModifier::Shift(shift, amount))) => Inst::AddsShiftReg {
-                    rd,
-                    rn,
-                    rm,
-                    shift,
-                    amount,
-                    sf,
-                },
-                (true, true, Some(AddSubModifier::Shift(shift, amount))) => Inst::SubsShiftReg {
-                    rd,
-                    rn,
-                    rm,
-                    shift,
-                    amount,
-                    sf,
-                },
-                (false, false, Some(AddSubModifier::Extend(extend, amount))) => Inst::AddExtReg {
-                    rd,
-                    rn,
-                    rm,
-                    extend,
-                    amount,
-                    sf,
-                },
-                (true, false, Some(AddSubModifier::Extend(extend, amount))) => Inst::SubExtReg {
-                    rd,
-                    rn,
-                    rm,
-                    extend,
-                    amount,
-                    sf,
-                },
-                (false, true, Some(AddSubModifier::Extend(extend, amount))) => Inst::AddsExtReg {
-                    rd,
-                    rn,
-                    rm,
-                    extend,
-                    amount,
-                    sf,
-                },
-                (true, true, Some(AddSubModifier::Extend(extend, amount))) => Inst::SubsExtReg {
-                    rd,
-                    rn,
-                    rm,
-                    extend,
-                    amount,
-                    sf,
-                },
-            })
-        }
+        self.parse_add_sub_operand(rd, rn, rd_start, rn_start, is_sub, sets_flags)
     }
 
     /// ADD that can also handle label@PAGEOFF references (for ADRP+ADD pairs).
     fn parse_add_sub_stmt(&mut self, is_sub: bool, sets_flags: bool) -> Result<Stmt, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let rd_start = self.pos;
+        let rd_operand = self.parse_add_sub_gp_reg_with_size_kind()?;
+        let (rd, sf, rd_kind) = rd_operand;
         self.expect(&Tok::Comma)?;
-        let (rn, _, rn_kind) = self.parse_gp_reg_with_size_kind()?;
+        let rn_start = self.pos;
+        let rn_operand = self.parse_add_sub_gp_reg_with_size_kind()?;
+        let (rn, rn_is_64bit, rn_kind) = rn_operand;
         self.expect(&Tok::Comma)?;
 
         // Check for label@PAGEOFF (identifier or numeric local reference followed by @).
         if self.starts_non_register_symbol_reference() {
+            self.validate_add_sub_immediate_registers(
+                GpOperandMeta::new(sf, rd_kind, rd_start),
+                GpOperandMeta::new(rn_is_64bit, rn_kind, rn_start),
+                sets_flags,
+            )?;
             let label = self.parse_label_reference()?;
             let kind = self.parse_symbol_reloc_modifier(
                 Some(RelocKind::PageOff12),
@@ -1961,23 +2409,31 @@ impl<'a> Parser<'a> {
         }
 
         // Normal add/sub (immediate or register).
-        let inst = self.parse_add_sub_operand(rd, rn, rn_kind, sf, is_sub, sets_flags)?;
+        let inst = self.parse_add_sub_operand(
+            rd_operand, rn_operand, rd_start, rn_start, is_sub, sets_flags,
+        )?;
         Ok(Stmt::Instruction(inst))
     }
 
     /// Parse the third operand of add/sub (immediate or register).
     fn parse_add_sub_operand(
         &mut self,
-        rd: GpReg,
-        rn: GpReg,
-        rn_kind: GpRegKind,
-        sf: bool,
+        rd: (GpReg, bool, GpRegKind),
+        rn: (GpReg, bool, GpRegKind),
+        rd_start: usize,
+        rn_start: usize,
         is_sub: bool,
         sets_flags: bool,
     ) -> Result<Inst, ParseError> {
+        let (rd, sf, rd_kind) = rd;
+        let (rn, rn_is_64bit, rn_kind) = rn;
+        let rd_meta = GpOperandMeta::new(sf, rd_kind, rd_start);
+        let rn_meta = GpOperandMeta::new(rn_is_64bit, rn_kind, rn_start);
         if self.starts_immediate_expr() {
-            let imm = self.parse_immediate_const_expr("add/sub immediate")? as u16;
-            let shift = self.parse_optional_lsl12()?;
+            self.validate_add_sub_immediate_registers(rd_meta, rn_meta, sets_flags)?;
+            let (imm, shift, negate_operation) =
+                self.parse_add_sub_immediate("add/sub immediate")?;
+            let is_sub = is_sub ^ negate_operation;
             Ok(match (is_sub, sets_flags) {
                 (false, false) => Inst::AddImm {
                     rd,
@@ -2009,9 +2465,13 @@ impl<'a> Parser<'a> {
                 },
             })
         } else {
-            let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
-            let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
-            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+            let rm_start = self.pos;
+            let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
+            let rm_meta = GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start);
+            let modifier = self.parse_optional_add_sub_modifier(sf, sets_flags, rm_meta)?;
+            let modifier = self.normalize_add_sub_register_modifier(
+                rd_meta, rn_meta, rm_meta, sets_flags, modifier,
+            )?;
             Ok(match (is_sub, sets_flags, modifier) {
                 (false, false, None) => Inst::AddReg { rd, rn, rm, sf },
                 (true, false, None) => Inst::SubReg { rd, rn, rm, sf },
@@ -2086,22 +2546,46 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cmp(&mut self) -> Result<Inst, ParseError> {
-        let (rn, sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
+        let rn_start = self.pos;
+        let (rn, sf, rn_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            let imm = self.parse_immediate_const_expr("cmp immediate")? as u16;
-            let shift = self.parse_optional_lsl12()?;
-            Ok(Inst::SubsImm {
-                rd: XZR,
-                rn,
-                imm12: imm,
-                shift,
-                sf,
-            })
+            self.validate_add_sub_immediate_registers(
+                GpOperandMeta::new(sf, GpRegKind::Zr, rn_start),
+                GpOperandMeta::new(sf, rn_kind, rn_start),
+                true,
+            )?;
+            let (imm, shift, negate_operation) = self.parse_add_sub_immediate("cmp immediate")?;
+            if negate_operation {
+                Ok(Inst::AddsImm {
+                    rd: XZR,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                })
+            } else {
+                Ok(Inst::SubsImm {
+                    rd: XZR,
+                    rn,
+                    imm12: imm,
+                    shift,
+                    sf,
+                })
+            }
         } else {
-            let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
-            let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
-            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+            let rm_start = self.pos;
+            let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
+            let rn_meta = GpOperandMeta::new(sf, rn_kind, rn_start);
+            let rm_meta = GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start);
+            let modifier = self.parse_optional_add_sub_modifier(sf, true, rm_meta)?;
+            let modifier = self.normalize_add_sub_register_modifier(
+                GpOperandMeta::new(sf, GpRegKind::Zr, rn_start),
+                rn_meta,
+                rm_meta,
+                true,
+                modifier,
+            )?;
             if let Some(modifier) = modifier {
                 Ok(match modifier {
                     AddSubModifier::Shift(shift, amount) => Inst::SubsShiftReg {
@@ -2133,11 +2617,21 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cmn(&mut self) -> Result<Inst, ParseError> {
-        let (rn, sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
+        let rn_start = self.pos;
+        let (rn, sf, rn_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
-        let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
-        self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
+        let rm_start = self.pos;
+        let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
+        let rn_meta = GpOperandMeta::new(sf, rn_kind, rn_start);
+        let rm_meta = GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start);
+        let modifier = self.parse_optional_add_sub_modifier(sf, true, rm_meta)?;
+        let modifier = self.normalize_add_sub_register_modifier(
+            GpOperandMeta::new(sf, GpRegKind::Zr, rn_start),
+            rn_meta,
+            rm_meta,
+            true,
+            modifier,
+        )?;
         if let Some(modifier) = modifier {
             Ok(match modifier {
                 AddSubModifier::Shift(shift, amount) => Inst::AddsShiftReg {
@@ -2168,7 +2662,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tst(&mut self) -> Result<Inst, ParseError> {
-        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        let (rn, sf) = self.parse_gp_data_reg_with_size("tst")?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let imm = self.parse_logical_immediate_value(sf)?;
@@ -2179,7 +2673,7 @@ impl<'a> Parser<'a> {
                 sf,
             })
         } else {
-            let (rm, _) = self.parse_gp_reg_with_size()?;
+            let rm = self.parse_gp_reg_matching_width(sf, "tst")?;
             Ok(Inst::AndsReg {
                 rd: XZR,
                 rn,
@@ -2190,11 +2684,31 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_neg(&mut self) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let rd_start = self.pos;
+        let (rd, sf, rd_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
-        let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
-        self.validate_add_sub_extended_base_reg(GpRegKind::Zr, modifier)?;
+        let rm_start = self.pos;
+        let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
+        if rd_kind == GpRegKind::Sp || rm_kind == GpRegKind::Sp {
+            let start = if rd_kind == GpRegKind::Sp {
+                rd_start
+            } else {
+                rm_start
+            };
+            return Err(self.err_at(start, "neg does not allow sp operands".into()));
+        }
+        let modifier = self.parse_optional_add_sub_modifier(
+            sf,
+            false,
+            GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start),
+        )?;
+        if !matches!(modifier, Some(AddSubModifier::Extend(..))) && rm_is_64bit != sf {
+            return Err(self.err_at(rm_start, "neg requires registers of the same width".into()));
+        }
+        self.validate_add_sub_extended_base_reg(
+            GpOperandMeta::new(sf, GpRegKind::Zr, rm_start),
+            modifier,
+        )?;
         if let Some(modifier) = modifier {
             Ok(match modifier {
                 AddSubModifier::Shift(shift, amount) => Inst::SubShiftReg {
@@ -2225,9 +2739,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_mvn(&mut self) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size("mvn")?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
+        let rm = self.parse_gp_reg_matching_width(sf, "mvn")?;
         Ok(Inst::OrnReg {
             rd,
             rn: XZR,
@@ -2237,11 +2751,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cond_select(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
+        let rm = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
@@ -2280,7 +2794,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cond_select_set_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
@@ -2306,9 +2820,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cond_select_unary_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
@@ -2357,7 +2871,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cond_compare_imm(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        let (rn, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let imm5 = self.parse_immediate_const_expr("conditional compare immediate")?;
         if !(0..=31).contains(&imm5) {
@@ -2426,11 +2940,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_3reg(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
+        let rm = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         Ok(match mnemonic {
             "mul" => Inst::Mul { rd, rn, rm, sf },
             "sdiv" => Inst::Sdiv { rd, rn, rm, sf },
@@ -2440,13 +2954,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_madd_sub(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
+        let rm = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (ra, _) = self.parse_gp_reg_with_size()?;
+        let ra = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         Ok(match mnemonic {
             "madd" => Inst::Madd { rd, rn, rm, ra, sf },
             "msub" => Inst::Msub { rd, rn, rm, ra, sf },
@@ -2459,27 +2973,30 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_umull(&mut self) -> Result<Inst, ParseError> {
-        let (rd, rd_is_64bit) = self.parse_gp_reg_with_size()?;
+        let rd_start = self.pos;
+        let (rd, rd_is_64bit) = self.parse_gp_data_reg_with_size("umull")?;
         if !rd_is_64bit {
-            return Err(self.err("umull destination must be an X register".into()));
+            return Err(self.err_at(rd_start, "umull destination must be an X register".into()));
         }
         self.expect(&Tok::Comma)?;
-        let (rn, rn_is_64bit) = self.parse_gp_reg_with_size()?;
+        let rn_start = self.pos;
+        let (rn, rn_is_64bit) = self.parse_gp_data_reg_with_size("umull")?;
         if rn_is_64bit {
-            return Err(self.err("umull sources must be W registers".into()));
+            return Err(self.err_at(rn_start, "umull sources must be W registers".into()));
         }
         self.expect(&Tok::Comma)?;
-        let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+        let rm_start = self.pos;
+        let (rm, rm_is_64bit) = self.parse_gp_data_reg_with_size("umull")?;
         if rm_is_64bit {
-            return Err(self.err("umull sources must be W registers".into()));
+            return Err(self.err_at(rm_start, "umull sources must be W registers".into()));
         }
         Ok(Inst::Umull { rd, rn, rm })
     }
 
     fn parse_logic(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let imm = self.parse_logical_immediate_value(sf)?;
@@ -2491,7 +3008,7 @@ impl<'a> Parser<'a> {
                 _ => unreachable!(),
             })
         } else {
-            let (rm, _) = self.parse_gp_reg_with_size()?;
+            let rm = self.parse_gp_reg_matching_width(sf, mnemonic)?;
             Ok(match mnemonic {
                 "and" => Inst::AndReg { rd, rn, rm, sf },
                 "orr" => Inst::OrrReg { rd, rn, rm, sf },
@@ -2506,9 +3023,16 @@ impl<'a> Parser<'a> {
         if self.peek_is_scalar_fp_reg() {
             return self.parse_simd_lane_extract();
         }
-        let (rd, sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
+        let rd_start = self.pos;
+        let (rd, sf, rd_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
+            if rd_kind == GpRegKind::Sp {
+                return Err(self.err_at(
+                    rd_start,
+                    "mov immediate does not allow sp as a destination".into(),
+                ));
+            }
             let imm = self.parse_immediate_const_expr("mov immediate")?;
             if let Some(inst) = mov_alias_imm(rd, imm, sf) {
                 Ok(inst)
@@ -2519,9 +3043,23 @@ impl<'a> Parser<'a> {
                 )))
             }
         } else {
-            let (rm, _, rm_kind) = self.parse_gp_reg_with_size_kind()?;
+            let rm_start = self.pos;
+            let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
+            if rm_is_64bit != sf {
+                return Err(
+                    self.err_at(rm_start, "mov requires registers of the same width".into())
+                );
+            }
+            if (rd_kind == GpRegKind::Sp && rm_kind == GpRegKind::Zr)
+                || (rd_kind == GpRegKind::Zr && rm_kind == GpRegKind::Sp)
+            {
+                return Err(self.err_at(
+                    rm_start,
+                    "mov cannot combine the stack pointer and zero register".into(),
+                ));
+            }
             if rm_kind == GpRegKind::Sp || rd_kind == GpRegKind::Sp {
-                // MOV involving SP → ADD Xd, Xn, #0 (SP can't be used in ORR shifted reg)
+                // MOV involving SP uses ADD because SP is unavailable to ORR.
                 Ok(Inst::AddImm {
                     rd,
                     rn: rm,
@@ -2664,7 +3202,7 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::RBracket)?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_gp_reg()?;
+        let rn = self.parse_memory_base_reg("SIMD lane load memory base")?;
         self.expect(&Tok::RBracket)?;
         Ok(match width {
             SimdLaneWidth::S32 => Inst::Ld1LaneS { rt, index, rn },
@@ -2675,10 +3213,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_mov_wide(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let imm = self.parse_immediate_const_expr("mov wide immediate")? as u16;
-        let shift = self.parse_optional_lsl_amount()?;
+        let imm = self.parse_u16_immediate("mov wide immediate")?;
+        let shift = self.parse_optional_mov_wide_shift(sf)?;
         Ok(match mnemonic {
             "movz" => Inst::Movz {
                 rd,
@@ -2703,31 +3241,48 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_shift(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
         let (rd, sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
         let (rn, rn_sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
 
         if rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp {
-            return Err(self.err(format!("{} does not allow SP", mnemonic)));
+            let start = if rd_kind == GpRegKind::Sp {
+                rd_start
+            } else {
+                rn_start
+            };
+            return Err(self.err_at(start, format!("{} does not allow SP", mnemonic)));
         }
         if sf != rn_sf {
-            return Err(self.err(format!(
-                "{} requires source and destination registers of the same width",
-                mnemonic
-            )));
+            return Err(self.err_at(
+                rn_start,
+                format!(
+                    "{} requires source and destination registers of the same width",
+                    mnemonic
+                ),
+            ));
         }
 
         if self.peek_is_gp_reg() {
+            let rm_start = self.pos;
             let (rm, rm_sf, rm_kind) = self.parse_gp_reg_with_size_kind()?;
             if rm_kind == GpRegKind::Sp {
-                return Err(self.err(format!("{} register form does not allow SP", mnemonic)));
+                return Err(self.err_at(
+                    rm_start,
+                    format!("{} register form does not allow SP", mnemonic),
+                ));
             }
             if sf != rm_sf {
-                return Err(self.err(format!(
-                    "{} register form requires registers of the same width",
-                    mnemonic
-                )));
+                return Err(self.err_at(
+                    rm_start,
+                    format!(
+                        "{} register form requires registers of the same width",
+                        mnemonic
+                    ),
+                ));
             }
             return Ok(match mnemonic {
                 "lsl" => Inst::LslReg { rd, rn, rm, sf },
@@ -2759,37 +3314,53 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_extend_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
         let (rd, rd_sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
         let (rn, rn_sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
 
         if rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp {
-            return Err(self.err(format!("{} does not allow SP", mnemonic)));
+            let start = if rd_kind == GpRegKind::Sp {
+                rd_start
+            } else {
+                rn_start
+            };
+            return Err(self.err_at(start, format!("{} does not allow SP", mnemonic)));
         }
         if rn_sf {
-            return Err(self.err(format!("{} requires a w-register source", mnemonic)));
+            return Err(self.err_at(
+                rn_start,
+                format!("{} requires a w-register source", mnemonic),
+            ));
         }
 
         match mnemonic {
             "sxtw" if rd_sf => Ok(Inst::Sxtw { rd, rn }),
-            "sxtw" => Err(self.err("sxtw requires an x-register destination".into())),
+            "sxtw" => Err(self.err_at(rd_start, "sxtw requires an x-register destination".into())),
             "sxtb" => Ok(Inst::Sxtb { rd, rn, sf: rd_sf }),
             "sxth" => Ok(Inst::Sxth { rd, rn, sf: rd_sf }),
             "uxtw" if rd_sf => Ok(Inst::Uxtw { rd, rn }),
-            "uxtw" => Err(self.err("uxtw requires an x-register destination".into())),
+            "uxtw" => Err(self.err_at(rd_start, "uxtw requires an x-register destination".into())),
             _ => unreachable!(),
         }
     }
 
     fn parse_bitfield_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let lsb = self.parse_immediate_const_expr("bitfield lsb")? as u8;
+        let lsb_start = self.pos;
+        let lsb = self.parse_immediate_const_expr("bitfield lsb")?;
         self.expect(&Tok::Comma)?;
-        let width = self.parse_immediate_const_expr("bitfield width")? as u8;
-        self.validate_bitfield_alias_args(mnemonic, sf, lsb, width)?;
+        let width_start = self.pos;
+        let width = self.parse_immediate_const_expr("bitfield width")?;
+        self.validate_bitfield_alias_args(mnemonic, sf, lsb, width, lsb_start, width_start)?;
+        let lsb = u8::try_from(lsb)
+            .map_err(|_| self.err(format!("{} lsb does not fit in u8", mnemonic)))?;
+        let width = u8::try_from(width)
+            .map_err(|_| self.err(format!("{} width does not fit in u8", mnemonic)))?;
         Ok(match mnemonic {
             "ubfiz" => Inst::Ubfiz {
                 rd,
@@ -2818,10 +3389,10 @@ impl<'a> Parser<'a> {
 
     fn parse_b(&mut self) -> Result<Stmt, ParseError> {
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("branch offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("branch offset", 26, 2)?;
             Ok(Stmt::Instruction(Inst::B { offset }))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::B { offset: 0 },
@@ -2836,10 +3407,10 @@ impl<'a> Parser<'a> {
 
     fn parse_bl(&mut self) -> Result<Stmt, ParseError> {
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("branch offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("branch offset", 26, 2)?;
             Ok(Stmt::Instruction(Inst::Bl { offset }))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Bl { offset: 0 },
@@ -2856,10 +3427,11 @@ impl<'a> Parser<'a> {
         let cond = parse_condition(cond_str)
             .ok_or_else(|| self.err(format!("unknown condition: {}", cond_str)))?;
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("branch offset")? as i32;
+            let offset =
+                self.parse_i32_signed_scaled_immediate("conditional branch offset", 19, 2)?;
             Ok(Stmt::Instruction(Inst::BCond { cond, offset }))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::BCond { cond, offset: 0 },
@@ -2873,10 +3445,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cbz(&mut self, is_nz: bool) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("cbz/cbnz")?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("cbz/cbnz offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("cbz/cbnz offset", 19, 2)?;
             let inst = if is_nz {
                 Inst::Cbnz { rt, offset, sf }
             } else {
@@ -2884,7 +3456,7 @@ impl<'a> Parser<'a> {
             };
             Ok(Stmt::Instruction(inst))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             let inst = if is_nz {
                 Inst::Cbnz { rt, offset: 0, sf }
@@ -2903,7 +3475,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tbz(&mut self, is_nz: bool) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("tbz/tbnz")?;
         self.expect(&Tok::Comma)?;
         let bit = self.parse_bit_index(
             sf,
@@ -2915,7 +3487,7 @@ impl<'a> Parser<'a> {
         )?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("tbz/tbnz offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("tbz/tbnz offset", 14, 2)?;
             let inst = if is_nz {
                 Inst::Tbnz {
                     rt,
@@ -2933,7 +3505,7 @@ impl<'a> Parser<'a> {
             };
             Ok(Stmt::Instruction(inst))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             let inst = if is_nz {
                 Inst::Tbnz {
@@ -2965,16 +3537,16 @@ impl<'a> Parser<'a> {
         if self.at_end_of_stmt() {
             Ok(Inst::Ret { rn: X30 })
         } else {
-            let rn = self.parse_gp_reg()?;
+            let rn = self.parse_x_reg("ret")?;
             Ok(Inst::Ret { rn })
         }
     }
 
     fn parse_adr(&mut self) -> Result<Stmt, ParseError> {
-        let rd = self.parse_gp_reg()?;
+        let rd = self.parse_x_reg("adr destination")?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            let imm = self.parse_immediate_const_expr("adr immediate")? as i32;
+            let imm = self.parse_i32_signed_scaled_immediate("adr immediate", 21, 0)?;
             Ok(Stmt::Instruction(Inst::Adr { rd, imm }))
         } else {
             let label = self.parse_label_reference()?;
@@ -2991,10 +3563,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_adrp(&mut self) -> Result<Stmt, ParseError> {
-        let rd = self.parse_gp_reg()?;
+        let rd = self.parse_x_reg("adrp destination")?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            let imm = self.parse_immediate_const_expr("adrp immediate")? as i32;
+            let imm = self.parse_signed_scaled_immediate("adrp immediate", 21, 12)?;
             Ok(Stmt::Instruction(Inst::Adrp { rd, imm }))
         } else {
             let label = self.parse_label_reference()?;
@@ -3032,39 +3604,53 @@ impl<'a> Parser<'a> {
         sf: bool,
         rt: GpReg,
         rn: GpReg,
+        offset: i64,
+        start: usize,
+    ) -> Result<Inst, ParseError> {
+        let scale = if sf { 3 } else { 2 };
+        let fits_unsigned =
+            offset >= 0 && offset % (1i64 << scale) == 0 && (offset >> scale) <= 0xFFF;
+        if fits_unsigned {
+            let offset = u16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(match (is_load, sf) {
+                (true, true) => Inst::LdrImm64 { rt, rn, offset },
+                (false, true) => Inst::StrImm64 { rt, rn, offset },
+                (true, false) => Inst::LdrImm32 { rt, rn, offset },
+                (false, false) => Inst::StrImm32 { rt, rn, offset },
+            });
+        }
+
+        if (-256..=255).contains(&offset) {
+            let offset = i16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(self.gp_unscaled_mem_inst(is_load, sf, rt, rn, offset));
+        }
+
+        Err(self.err_at(
+            start,
+            format!(
+                "memory offset {} is not encodable as a signed unscaled or unsigned scaled offset",
+                offset
+            ),
+        ))
+    }
+
+    fn gp_unscaled_mem_inst(
+        &self,
+        is_load: bool,
+        sf: bool,
+        rt: GpReg,
+        rn: GpReg,
         offset: i16,
-        force_unscaled: bool,
     ) -> Inst {
-        if force_unscaled || offset < 0 {
-            match (is_load, sf) {
-                (true, true) => Inst::Ldur64 { rt, rn, offset },
-                (false, true) => Inst::Stur64 { rt, rn, offset },
-                (true, false) => Inst::Ldur32 { rt, rn, offset },
-                (false, false) => Inst::Stur32 { rt, rn, offset },
-            }
-        } else {
-            match (is_load, sf) {
-                (true, true) => Inst::LdrImm64 {
-                    rt,
-                    rn,
-                    offset: offset as u16,
-                },
-                (false, true) => Inst::StrImm64 {
-                    rt,
-                    rn,
-                    offset: offset as u16,
-                },
-                (true, false) => Inst::LdrImm32 {
-                    rt,
-                    rn,
-                    offset: offset as u16,
-                },
-                (false, false) => Inst::StrImm32 {
-                    rt,
-                    rn,
-                    offset: offset as u16,
-                },
-            }
+        match (is_load, sf) {
+            (true, true) => Inst::Ldur64 { rt, rn, offset },
+            (false, true) => Inst::Stur64 { rt, rn, offset },
+            (true, false) => Inst::Ldur32 { rt, rn, offset },
+            (false, false) => Inst::Stur32 { rt, rn, offset },
         }
     }
 
@@ -3093,6 +3679,7 @@ impl<'a> Parser<'a> {
         rt: FpReg,
         rn: GpReg,
         offset: i64,
+        start: usize,
     ) -> Result<Inst, ParseError> {
         let scale = 1i64 << width.scale();
         let fits_unsigned =
@@ -3129,22 +3716,25 @@ impl<'a> Parser<'a> {
             });
         }
 
-        Err(self.err(format!(
-            "FP/SIMD memory offset {offset} is out of range for {}",
-            if is_load { "LDR" } else { "STR" }
-        )))
+        Err(self.err_at(
+            start,
+            format!(
+                "FP/SIMD memory offset {offset} is out of range for {}",
+                if is_load { "LDR" } else { "STR" }
+            ),
+        ))
     }
 
     fn parse_ldur_stur(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("ldur/stur data operand")?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_memory_base_reg("ldur/stur memory base")?;
         let offset = if self.eat(&Tok::RBracket) {
             0
         } else {
             self.expect(&Tok::Comma)?;
-            let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+            let offset = self.parse_i16_signed_scaled_immediate("memory offset", 9, 0)?;
             self.expect(&Tok::RBracket)?;
             offset
         };
@@ -3157,16 +3747,16 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Stmt::Instruction(
-            self.gp_mem_offset_inst(is_load, sf, rt, rn, offset, true),
+            self.gp_unscaled_mem_inst(is_load, sf, rt, rn, offset),
         ))
     }
 
     fn parse_ldr_str_gp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("ldr/str data operand")?;
         self.expect(&Tok::Comma)?;
 
         if is_load && self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("ldr literal offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("ldr literal offset", 19, 2)?;
             let inst = if sf {
                 Inst::LdrLit64 { rt, offset }
             } else {
@@ -3198,18 +3788,18 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_memory_base_reg("ldr/str memory base")?;
 
         if self.eat(&Tok::RBracket) {
             // [Xn] or [Xn], #off (post-index)
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
                 return Ok(Stmt::Instruction(
                     self.gp_mem_post_inst(is_load, sf, rt, rn, offset),
                 ));
             }
             return Ok(Stmt::Instruction(
-                self.gp_mem_offset_inst(is_load, sf, rt, rn, 0, false),
+                self.gp_mem_offset_inst(is_load, sf, rt, rn, 0, self.pos)?,
             ));
         }
 
@@ -3292,18 +3882,31 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::Instruction(inst));
         }
 
-        let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+        let offset_start = self.pos;
+        let offset = self.parse_immediate_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
+            let offset = self.validate_i16_signed_scaled_immediate(
+                offset,
+                "memory offset",
+                9,
+                0,
+                offset_start,
+            )?;
             return Ok(Stmt::Instruction(
                 self.gp_mem_pre_inst(is_load, sf, rt, rn, offset),
             ));
         }
 
-        Ok(Stmt::Instruction(
-            self.gp_mem_offset_inst(is_load, sf, rt, rn, offset, false),
-        ))
+        Ok(Stmt::Instruction(self.gp_mem_offset_inst(
+            is_load,
+            sf,
+            rt,
+            rn,
+            offset,
+            offset_start,
+        )?))
     }
 
     fn parse_ldr_str_fp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
@@ -3315,7 +3918,7 @@ impl<'a> Parser<'a> {
             if is_scalar_narrow {
                 return Err(self.err("narrow FP literal loads are not supported".into()));
             }
-            let offset = self.parse_immediate_const_expr("ldr literal offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("ldr literal offset", 19, 2)?;
             let inst = match width {
                 FpMemWidth::B8 | FpMemWidth::H16 => unreachable!(),
                 FpMemWidth::D64 => Inst::LdrFpLit64 { rt, offset },
@@ -3352,7 +3955,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_memory_base_reg("FP/SIMD memory base")?;
 
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
@@ -3361,7 +3964,7 @@ impl<'a> Parser<'a> {
                         self.err("post-index narrow FP loads/stores are not supported".into())
                     );
                 }
-                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
                 let inst = match (is_load, width) {
                     (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                     (true, FpMemWidth::D64) => Inst::LdrFpPost64 { rt, rn, offset },
@@ -3476,6 +4079,7 @@ impl<'a> Parser<'a> {
             return Ok(Stmt::Instruction(inst));
         }
 
+        let offset_start = self.pos;
         let offset = self.parse_immediate_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
 
@@ -3483,70 +4087,77 @@ impl<'a> Parser<'a> {
             if is_scalar_narrow {
                 return Err(self.err("pre-index narrow FP loads/stores are not supported".into()));
             }
+            let offset = self.validate_i16_signed_scaled_immediate(
+                offset,
+                "memory offset",
+                9,
+                0,
+                offset_start,
+            )?;
             let inst = match (is_load, width) {
                 (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
-                (true, FpMemWidth::D64) => Inst::LdrFpPre64 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (false, FpMemWidth::D64) => Inst::StrFpPre64 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (true, FpMemWidth::S32) => Inst::LdrFpPre32 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (false, FpMemWidth::S32) => Inst::StrFpPre32 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (true, FpMemWidth::Q128) => Inst::LdrFpPre128 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
-                (false, FpMemWidth::Q128) => Inst::StrFpPre128 {
-                    rt,
-                    rn,
-                    offset: offset as i16,
-                },
+                (true, FpMemWidth::D64) => Inst::LdrFpPre64 { rt, rn, offset },
+                (false, FpMemWidth::D64) => Inst::StrFpPre64 { rt, rn, offset },
+                (true, FpMemWidth::S32) => Inst::LdrFpPre32 { rt, rn, offset },
+                (false, FpMemWidth::S32) => Inst::StrFpPre32 { rt, rn, offset },
+                (true, FpMemWidth::Q128) => Inst::LdrFpPre128 { rt, rn, offset },
+                (false, FpMemWidth::Q128) => Inst::StrFpPre128 { rt, rn, offset },
             };
             return Ok(Stmt::Instruction(inst));
         }
 
-        let inst = self.fp_mem_offset_inst(is_load, width, rt, rn, offset)?;
+        let inst = self.fp_mem_offset_inst(is_load, width, rt, rn, offset, offset_start)?;
         Ok(Stmt::Instruction(inst))
     }
 
-    fn parse_ldstb_h_offset_inst(&self, mnemonic: &str, rt: GpReg, rn: GpReg, offset: i16) -> Inst {
-        match mnemonic {
-            "ldrb" => Inst::Ldrb {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            "ldrh" => Inst::Ldrh {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            "strb" => Inst::Strb {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            "strh" => Inst::Strh {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
+    fn parse_ldstb_h_offset_inst(
+        &self,
+        mnemonic: &str,
+        rt: GpReg,
+        rn: GpReg,
+        offset: i64,
+        start: usize,
+    ) -> Result<Inst, ParseError> {
+        let scale = match mnemonic {
+            "ldrb" | "strb" => 0,
+            "ldrh" | "strh" => 1,
             _ => unreachable!(),
+        };
+        let fits_unsigned =
+            offset >= 0 && offset % (1i64 << scale) == 0 && (offset >> scale) <= 0xFFF;
+        if fits_unsigned {
+            let offset = u16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(match mnemonic {
+                "ldrb" => Inst::Ldrb { rt, rn, offset },
+                "ldrh" => Inst::Ldrh { rt, rn, offset },
+                "strb" => Inst::Strb { rt, rn, offset },
+                "strh" => Inst::Strh { rt, rn, offset },
+                _ => unreachable!(),
+            });
         }
+
+        if (-256..=255).contains(&offset) {
+            let offset = i16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(match mnemonic {
+                "ldrb" => Inst::Ldurb { rt, rn, offset },
+                "ldrh" => Inst::Ldurh { rt, rn, offset },
+                "strb" => Inst::Sturb { rt, rn, offset },
+                "strh" => Inst::Sturh { rt, rn, offset },
+                _ => unreachable!(),
+            });
+        }
+
+        Err(self.err_at(
+            start,
+            format!(
+                "memory offset {} is not encodable as a signed unscaled or unsigned scaled offset",
+                offset
+            ),
+        ))
     }
 
     fn parse_ldst_signed_b_h_offset_inst(
@@ -3555,31 +4166,76 @@ impl<'a> Parser<'a> {
         rt: GpReg,
         sf: bool,
         rn: GpReg,
-        offset: i16,
-    ) -> Inst {
-        match (mnemonic, sf) {
-            ("ldrsb", false) => Inst::Ldrsb32 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            ("ldrsb", true) => Inst::Ldrsb64 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            ("ldrsh", false) => Inst::Ldrsh32 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            ("ldrsh", true) => Inst::Ldrsh64 {
-                rt,
-                rn,
-                offset: offset as u16,
-            },
-            _ => unreachable!(),
+        offset: i64,
+        start: usize,
+    ) -> Result<Inst, ParseError> {
+        let scale = if mnemonic == "ldrsb" { 0 } else { 1 };
+        let fits_unsigned =
+            offset >= 0 && offset % (1i64 << scale) == 0 && (offset >> scale) <= 0xFFF;
+        if fits_unsigned {
+            let offset = u16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(match (mnemonic, sf) {
+                ("ldrsb", false) => Inst::Ldrsb32 { rt, rn, offset },
+                ("ldrsb", true) => Inst::Ldrsb64 { rt, rn, offset },
+                ("ldrsh", false) => Inst::Ldrsh32 { rt, rn, offset },
+                ("ldrsh", true) => Inst::Ldrsh64 { rt, rn, offset },
+                _ => unreachable!(),
+            });
         }
+
+        if (-256..=255).contains(&offset) {
+            let offset = i16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(match (mnemonic, sf) {
+                ("ldrsb", false) => Inst::Ldursb32 { rt, rn, offset },
+                ("ldrsb", true) => Inst::Ldursb64 { rt, rn, offset },
+                ("ldrsh", false) => Inst::Ldursh32 { rt, rn, offset },
+                ("ldrsh", true) => Inst::Ldursh64 { rt, rn, offset },
+                _ => unreachable!(),
+            });
+        }
+
+        Err(self.err_at(
+            start,
+            format!(
+                "memory offset {} is not encodable as a signed unscaled or unsigned scaled offset",
+                offset
+            ),
+        ))
+    }
+
+    fn parse_ldrsw_offset_inst(
+        &self,
+        rt: GpReg,
+        rn: GpReg,
+        offset: i64,
+        start: usize,
+    ) -> Result<Inst, ParseError> {
+        let fits_unsigned = offset >= 0 && offset % 4 == 0 && (offset >> 2) <= 0xFFF;
+        if fits_unsigned {
+            let offset = u16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(Inst::Ldrsw { rt, rn, offset });
+        }
+
+        if (-256..=255).contains(&offset) {
+            let offset = i16::try_from(offset).map_err(|_| {
+                self.err_at(start, format!("memory offset {} is not encodable", offset))
+            })?;
+            return Ok(Inst::Ldursw { rt, rn, offset });
+        }
+
+        Err(self.err_at(
+            start,
+            format!(
+                "memory offset {} is not encodable as a signed unscaled or unsigned scaled offset",
+                offset
+            ),
+        ))
     }
 
     fn parse_ldstb_h_reg_inst(
@@ -3722,16 +4378,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldstb_h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let rt = self.parse_gp_reg()?;
+        let rt = self.parse_w_reg(&format!("{} data operand", mnemonic))?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_gp_reg()?;
+        let rn = self.parse_memory_base_reg(&format!("{} memory base", mnemonic))?;
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
                 return Ok(self.parse_ldstb_h_post_inst(mnemonic, rt, rn, offset));
             }
-            return Ok(self.parse_ldstb_h_offset_inst(mnemonic, rt, rn, 0));
+            return self.parse_ldstb_h_offset_inst(mnemonic, rt, rn, 0, self.pos);
         }
 
         self.expect(&Tok::Comma)?;
@@ -3746,25 +4402,33 @@ impl<'a> Parser<'a> {
             return Ok(self.parse_ldstb_h_reg_inst(mnemonic, rt, rn, rm, extend, shift));
         }
 
-        let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+        let offset_start = self.pos;
+        let offset = self.parse_immediate_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
         if self.eat(&Tok::Bang) {
+            let offset = self.validate_i16_signed_scaled_immediate(
+                offset,
+                "memory offset",
+                9,
+                0,
+                offset_start,
+            )?;
             return Ok(self.parse_ldstb_h_pre_inst(mnemonic, rt, rn, offset));
         }
-        Ok(self.parse_ldstb_h_offset_inst(mnemonic, rt, rn, offset))
+        self.parse_ldstb_h_offset_inst(mnemonic, rt, rn, offset, offset_start)
     }
 
     fn parse_ldst_signed_b_h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_gp_reg()?;
+        let rn = self.parse_memory_base_reg(&format!("{} memory base", mnemonic))?;
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("post-index offset")? as i16;
+                let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
                 return Ok(self.parse_ldst_signed_b_h_post_inst(mnemonic, rt, sf, rn, offset));
             }
-            return Ok(self.parse_ldst_signed_b_h_offset_inst(mnemonic, rt, sf, rn, 0));
+            return self.parse_ldst_signed_b_h_offset_inst(mnemonic, rt, sf, rn, 0, self.pos);
         }
 
         self.expect(&Tok::Comma)?;
@@ -3786,23 +4450,32 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        let offset = self.parse_immediate_const_expr("memory offset")? as i16;
+        let offset_start = self.pos;
+        let offset = self.parse_immediate_const_expr("memory offset")?;
         self.expect(&Tok::RBracket)?;
         if self.eat(&Tok::Bang) {
+            let offset = self.validate_i16_signed_scaled_immediate(
+                offset,
+                "memory offset",
+                9,
+                0,
+                offset_start,
+            )?;
             return Ok(self.parse_ldst_signed_b_h_pre_inst(mnemonic, rt, sf, rn, offset));
         }
-        Ok(self.parse_ldst_signed_b_h_offset_inst(mnemonic, rt, sf, rn, offset))
+        self.parse_ldst_signed_b_h_offset_inst(mnemonic, rt, sf, rn, offset, offset_start)
     }
 
     fn parse_ldrsw(&mut self) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let rt_start = self.pos;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("ldrsw destination")?;
         if !sf {
-            return Err(self.err("ldrsw destination must be an x-register".into()));
+            return Err(self.err_at(rt_start, "ldrsw destination must be an x-register".into()));
         }
         self.expect(&Tok::Comma)?;
 
         if self.starts_immediate_expr() {
-            let offset = self.parse_immediate_const_expr("ldrsw literal offset")? as i32;
+            let offset = self.parse_i32_signed_scaled_immediate("ldrsw literal offset", 19, 2)?;
             return Ok(Stmt::Instruction(Inst::LdrswLit { rt, offset }));
         }
 
@@ -3820,8 +4493,8 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_gp_reg()?;
-        let offset = if self.eat(&Tok::Comma) {
+        let rn = self.parse_memory_base_reg("ldrsw memory base")?;
+        let (offset, offset_start) = if self.eat(&Tok::Comma) {
             if self.starts_register_like_operand() {
                 let (rm, extend, shift) = self.parse_reg_offset_operand(2)?;
                 self.expect(&Tok::RBracket)?;
@@ -3833,16 +4506,19 @@ impl<'a> Parser<'a> {
                     shift,
                 }));
             }
-            self.parse_immediate_const_expr("memory offset")?
+            let offset_start = self.pos;
+            let offset = self.parse_immediate_const_expr("memory offset")?;
+            (offset, offset_start)
         } else {
-            0
+            (0, self.pos)
         };
         self.expect(&Tok::RBracket)?;
-        Ok(Stmt::Instruction(Inst::Ldrsw {
+        Ok(Stmt::Instruction(self.parse_ldrsw_offset_inst(
             rt,
             rn,
-            offset: offset as u16,
-        }))
+            offset,
+            offset_start,
+        )?))
     }
 
     fn parse_ldp_stp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
@@ -3853,19 +4529,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldp_stp_gp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
-        let (rt1, sf) = self.parse_gp_reg_with_size()?;
+        let (rt1, sf) = self.parse_gp_data_reg_with_size("ldp/stp data operand")?;
         self.expect(&Tok::Comma)?;
-        let (rt2, second_sf) = self.parse_gp_reg_with_size()?;
+        let rt2_start = self.pos;
+        let (rt2, second_sf) = self.parse_gp_data_reg_with_size("ldp/stp data operand")?;
         if sf != second_sf {
-            return Err(self.err("ldp/stp register pair must use matching register widths".into()));
+            return Err(self.err_at(
+                rt2_start,
+                "ldp/stp register pair must use matching register widths".into(),
+            ));
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_memory_base_reg("ldp/stp memory base")?;
+        let scale = if sf { 3 } else { 2 };
 
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
+                let offset =
+                    self.parse_i16_signed_scaled_immediate("pair post-index offset", 7, scale)?;
                 return Ok(match (is_load, sf) {
                     (true, true) => Inst::LdpPost64 {
                         rt1,
@@ -3923,7 +4605,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
-        let offset = self.parse_immediate_const_expr("pair offset")? as i16;
+        let offset = self.parse_i16_signed_scaled_immediate("pair offset", 7, scale)?;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
@@ -3988,22 +4670,26 @@ impl<'a> Parser<'a> {
     fn parse_ldp_stp_fp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
         let (rt1, width) = self.parse_fp_mem_reg_with_width()?;
         self.expect(&Tok::Comma)?;
+        let rt2_start = self.pos;
         let (rt2, second_width) = self.parse_fp_mem_reg_with_width()?;
         if width != second_width {
-            return Err(
-                self.err("ldp/stp FP register pair must use matching register widths".into())
-            );
+            return Err(self.err_at(
+                rt2_start,
+                "ldp/stp FP register pair must use matching register widths".into(),
+            ));
         }
         if matches!(width, FpMemWidth::B8 | FpMemWidth::H16) {
             return Err(self.err("ldp/stp does not support b/h FP register pairs".into()));
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_memory_base_reg("ldp/stp FP memory base")?;
+        let scale = width.scale();
 
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
-                let offset = self.parse_immediate_const_expr("pair post-index offset")? as i16;
+                let offset =
+                    self.parse_i16_signed_scaled_immediate("pair post-index offset", 7, scale)?;
                 return Ok(match (is_load, width) {
                     (_, FpMemWidth::B8 | FpMemWidth::H16) => unreachable!(),
                     (true, FpMemWidth::D64) => Inst::LdpFpPost64 {
@@ -4087,7 +4773,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
-        let offset = self.parse_immediate_const_expr("pair offset")? as i16;
+        let offset = self.parse_i16_signed_scaled_immediate("pair offset", 7, scale)?;
         self.expect(&Tok::RBracket)?;
 
         if self.eat(&Tok::Bang) {
@@ -4178,9 +4864,9 @@ impl<'a> Parser<'a> {
     fn parse_fp_arith(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
+        let rn = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_fp_reg_with_size()?;
+        let rm = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         Ok(match (mnemonic, is_double) {
             ("fadd", true) => Inst::FaddD { rd, rn, rm },
             ("fadd", false) => Inst::FaddS { rd, rn, rm },
@@ -4698,7 +5384,7 @@ impl<'a> Parser<'a> {
     fn parse_fp_unary(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
+        let rn = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         Ok(match (mnemonic, is_double) {
             ("fneg", true) => Inst::FnegD { rd, rn },
             ("fneg", false) => Inst::FnegS { rd, rn },
@@ -4713,7 +5399,7 @@ impl<'a> Parser<'a> {
     fn parse_fcmp(&mut self) -> Result<Inst, ParseError> {
         let (rn, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_fp_reg_with_size()?;
+        let rm = self.parse_fp_reg_matching_width(is_double, "fcmp")?;
         if is_double {
             Ok(Inst::FcmpD { rn, rm })
         } else {
@@ -4724,9 +5410,9 @@ impl<'a> Parser<'a> {
     fn parse_fcsel(&mut self) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
+        let rn = self.parse_fp_reg_matching_width(is_double, "fcsel")?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_fp_reg_with_size()?;
+        let rm = self.parse_fp_reg_matching_width(is_double, "fcsel")?;
         self.expect(&Tok::Comma)?;
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
@@ -4738,26 +5424,35 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_fmadd(&mut self) -> Result<Inst, ParseError> {
+    fn parse_fp_madd(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
+        let rn = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_fp_reg_with_size()?;
+        let rm = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (ra, _) = self.parse_fp_reg_with_size()?;
-        if is_double {
-            Ok(Inst::FmaddD { rd, rn, rm, ra })
-        } else {
-            Ok(Inst::FmaddS { rd, rn, rm, ra })
-        }
+        let ra = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
+        Ok(match (mnemonic, is_double) {
+            ("fmadd", true) => Inst::FmaddD { rd, rn, rm, ra },
+            ("fmadd", false) => Inst::FmaddS { rd, rn, rm, ra },
+            ("fmsub", true) => Inst::FmsubD { rd, rn, rm, ra },
+            ("fmsub", false) => Inst::FmsubS { rd, rn, rm, ra },
+            ("fnmsub", true) => Inst::FnmsubD { rd, rn, rm, ra },
+            ("fnmsub", false) => Inst::FnmsubS { rd, rn, rm, ra },
+            _ => unreachable!(),
+        })
     }
 
     fn parse_fcvtzs(&mut self) -> Result<Inst, ParseError> {
-        let rd = self.parse_gp_reg()?;
+        let (rd, dst_64bit) = self.parse_gp_data_reg_with_size("fcvtzs")?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
-        Ok(Inst::FcvtzsD { rd, rn })
+        let (rn, src_double) = self.parse_fp_reg_with_size()?;
+        Ok(Inst::Fcvtzs {
+            rd,
+            rn,
+            dst_64bit,
+            src_double,
+        })
     }
 
     fn parse_fcvt(&mut self) -> Result<Inst, ParseError> {
@@ -4772,20 +5467,27 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_scvtf(&mut self) -> Result<Inst, ParseError> {
-        let (rd, _) = self.parse_fp_reg_with_size()?;
+        let (rd, dst_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let rn = self.parse_gp_reg()?;
-        Ok(Inst::ScvtfD { rd, rn })
+        let (rn, src_64bit) = self.parse_gp_data_reg_with_size("scvtf")?;
+        Ok(Inst::Scvtf {
+            rd,
+            rn,
+            dst_double,
+            src_64bit,
+        })
     }
 
     fn parse_fmov(&mut self) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
 
         if lower.starts_with('d') || lower.starts_with('s') {
             let rd = parse_fp_reg_name(&lower)
-                .ok_or_else(|| self.err(format!("bad FP reg '{}'", name)))?;
+                .ok_or_else(|| self.err_at(rd_start, format!("bad FP register '{}'", name)))?;
             let is_double = lower.starts_with('d');
             match self.peek() {
                 Tok::Integer(_) | Tok::UnsignedInteger(_) | Tok::Float(_) => {
@@ -4796,10 +5498,13 @@ impl<'a> Parser<'a> {
                         Ok(Inst::FmovImmS { rd, imm8 })
                     }
                 }
-                Tok::Ident(src) if looks_like_fp_register_name(src) => {
+                Tok::Ident(src) if looks_like_fp_register_spelling(src) => {
                     let (rn, src_is_double) = self.parse_fp_reg_with_size()?;
                     if src_is_double != is_double {
-                        Err(self.err("fmov register copy requires matching FP widths".into()))
+                        Err(self.err_at(
+                            rn_start,
+                            "fmov register copy requires matching FP widths".into(),
+                        ))
                     } else if is_double {
                         Ok(Inst::FmovRegD { rd, rn })
                     } else {
@@ -4810,20 +5515,22 @@ impl<'a> Parser<'a> {
                     // FMOV Dd, Xn or FMOV Sd, Wn (GP → FP)
                     let (rn, sf, kind) = self.parse_gp_reg_with_size_kind()?;
                     if kind == GpRegKind::Sp {
-                        return Err(self.err("fmov does not allow SP".into()));
+                        return Err(self.err_at(rn_start, "fmov does not allow SP".into()));
                     }
                     if is_double {
                         if !sf {
-                            return Err(
-                                self.err("fmov dN, ... requires an x-register source".into())
-                            );
+                            return Err(self.err_at(
+                                rn_start,
+                                "fmov dN, ... requires an x-register source".into(),
+                            ));
                         }
                         Ok(Inst::FmovToD { rd, rn })
                     } else {
                         if sf {
-                            return Err(
-                                self.err("fmov sN, ... requires a w-register source".into())
-                            );
+                            return Err(self.err_at(
+                                rn_start,
+                                "fmov sN, ... requires a w-register source".into(),
+                            ));
                         }
                         Ok(Inst::FmovToS { rd, rn })
                     }
@@ -4831,50 +5538,44 @@ impl<'a> Parser<'a> {
             }
         } else {
             // FMOV Xd, Dn or FMOV Wd, Sn (FP → GP)
-            let (rd, sf, kind) = self.gp_reg_with_size_kind_from_name(&name, &lower)?;
+            let (rd, sf, kind) = self.gp_reg_with_size_kind_from_name(&name, &lower, rd_start)?;
             if kind == GpRegKind::Sp {
-                return Err(self.err("fmov does not allow SP".into()));
+                return Err(self.err_at(rd_start, "fmov does not allow SP".into()));
             }
             let (rn, is_double) = self.parse_fp_reg_with_size()?;
             match (sf, is_double) {
                 (true, true) => Ok(Inst::FmovFromD { rd, rn }),
                 (false, false) => Ok(Inst::FmovFromS { rd, rn }),
-                (true, false) => Err(self.err("fmov xN, ... requires a d-register source".into())),
-                (false, true) => Err(self.err("fmov wN, ... requires an s-register source".into())),
+                (true, false) => {
+                    Err(self.err_at(rn_start, "fmov xN, ... requires a d-register source".into()))
+                }
+                (false, true) => Err(self.err_at(
+                    rn_start,
+                    "fmov wN, ... requires an s-register source".into(),
+                )),
             }
         }
     }
 
     fn parse_simd_reg(&mut self) -> Result<FpReg, ParseError> {
+        let start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         parse_simd_reg_name(&lower)
-            .ok_or_else(|| self.err(format!("expected vector register, got '{}'", name)))
+            .ok_or_else(|| self.err_at(start, format!("expected vector register, got '{}'", name)))
     }
 
     fn peek_is_gp_reg(&self) -> bool {
-        match self.peek() {
-            Tok::Ident(name) => parse_gp_reg_name(&name.to_lowercase()).is_some(),
-            _ => false,
-        }
+        !self.starts_absolute_symbol_expr()
+            && matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
     }
 
     fn peek_is_simd_reg(&self) -> bool {
-        match self.peek() {
-            Tok::Ident(name) => parse_simd_reg_name(&name.to_lowercase()).is_some(),
-            _ => false,
-        }
+        matches!(self.peek(), Tok::Ident(name) if looks_like_simd_register_spelling(name))
     }
 
     fn peek_is_scalar_fp_reg(&self) -> bool {
-        match self.peek() {
-            Tok::Ident(name) => {
-                let lower = name.to_lowercase();
-                (lower.starts_with('s') || lower.starts_with('d'))
-                    && parse_fp_reg_name(&lower).is_some()
-            }
-            _ => false,
-        }
+        matches!(self.peek(), Tok::Ident(name) if looks_like_scalar_fp_register_spelling(name))
     }
 
     fn parse_fp_modified_immediate(&mut self, is_double: bool) -> Result<u8, ParseError> {
@@ -4958,38 +5659,96 @@ impl<'a> Parser<'a> {
 
     // ---- Helpers ----
 
-    fn parse_optional_lsl12(&mut self) -> Result<bool, ParseError> {
-        // Check for ", lsl #12" suffix
-        if self.peek() == &Tok::Comma {
-            // Peek ahead to see if it's "lsl"
-            if self.pos + 1 < self.tokens.len() {
-                if let Tok::Ident(ref s) = self.tokens[self.pos + 1].kind {
-                    if s.to_lowercase() == "lsl" {
-                        self.advance(); // comma
-                        self.advance(); // lsl
-                        let amount = self.parse_immediate_const_expr("lsl amount")?;
-                        if amount == 12 {
-                            return Ok(true);
-                        }
-                        return Err(self.err(format!("expected lsl #12, got lsl #{}", amount)));
-                    }
-                }
-            }
+    fn parse_optional_add_sub_immediate_shift(&mut self) -> Result<Option<bool>, ParseError> {
+        let has_lsl = self.peek() == &Tok::Comma
+            && matches!(
+                self.tokens.get(self.pos + 1).map(|token| &token.kind),
+                Some(Tok::Ident(name)) if name.eq_ignore_ascii_case("lsl")
+            );
+        if !has_lsl {
+            return Ok(None);
         }
-        Ok(false)
+
+        self.advance();
+        self.advance();
+        let amount = self.parse_immediate_const_expr("lsl amount")?;
+        match amount {
+            0 => Ok(Some(false)),
+            12 => Ok(Some(true)),
+            _ => Err(self.err(format!(
+                "add/sub immediate shift must be lsl #0 or lsl #12, got lsl #{}",
+                amount
+            ))),
+        }
     }
 
-    fn parse_optional_lsl_amount(&mut self) -> Result<u8, ParseError> {
-        if self.eat(&Tok::Comma) {
-            let s = self.expect_ident()?;
-            if s.to_lowercase() != "lsl" {
-                return Err(self.err(format!("expected 'lsl', got '{}'", s)));
+    fn parse_add_sub_immediate(&mut self, context: &str) -> Result<(u16, bool, bool), ParseError> {
+        let start = self.pos;
+        let value = self.parse_immediate_const_expr(context)?;
+        let explicit_shift = self.parse_optional_add_sub_immediate_shift()?;
+        let magnitude = value.unsigned_abs();
+
+        let (imm12, shift) = match explicit_shift {
+            Some(shift) if magnitude <= 0xFFF => (magnitude, shift),
+            Some(_) => {
+                return Err(self.err_at(
+                    start,
+                    format!(
+                        "{} {} is not encodable with an explicit shift; expected magnitude 0..=4095",
+                        context, value
+                    ),
+                ));
             }
-            let amount = self.parse_immediate_const_expr("lsl amount")? as u8;
-            Ok(amount)
-        } else {
-            Ok(0)
+            None if magnitude <= 0xFFF => (magnitude, false),
+            None if magnitude <= (0xFFF << 12) && magnitude % (1 << 12) == 0 => {
+                (magnitude >> 12, true)
+            }
+            None => {
+                return Err(self.err_at(
+                    start,
+                    format!(
+                        "{} {} is not encodable; expected magnitude 0..=4095 or a multiple of 4096 through 16773120",
+                        context, value
+                    ),
+                ));
+            }
+        };
+
+        let imm12 = u16::try_from(imm12)
+            .map_err(|_| self.err(format!("{} does not fit in u16", context)))?;
+        Ok((imm12, shift, value.is_negative()))
+    }
+
+    fn parse_optional_mov_wide_shift(&mut self, sf: bool) -> Result<u8, ParseError> {
+        if !self.eat(&Tok::Comma) {
+            return Ok(0);
         }
+
+        let modifier = self.expect_ident()?;
+        if modifier.to_lowercase() != "lsl" {
+            return Err(self.err(format!("expected 'lsl', got '{}'", modifier)));
+        }
+
+        let start = self.pos;
+        let amount = self.parse_immediate_const_expr("mov wide shift")?;
+        let valid = if sf {
+            matches!(amount, 0 | 16 | 32 | 48)
+        } else {
+            matches!(amount, 0 | 16)
+        };
+        if !valid {
+            return Err(self.err_at(
+                start,
+                format!(
+                    "mov wide shift must be one of {} for a {}-bit register, got {}",
+                    if sf { "0, 16, 32, or 48" } else { "0 or 16" },
+                    if sf { 64 } else { 32 },
+                    amount
+                ),
+            ));
+        }
+
+        u8::try_from(amount).map_err(|_| self.err("mov wide shift does not fit in u8".into()))
     }
 
     fn parse_bit_index(&mut self, sf: bool, context: &str) -> Result<u8, ParseError> {
@@ -5007,7 +5766,8 @@ impl<'a> Parser<'a> {
     fn parse_optional_add_sub_modifier(
         &mut self,
         sf: bool,
-        rm_is_64bit: bool,
+        sets_flags: bool,
+        rm: GpOperandMeta,
     ) -> Result<Option<AddSubModifier>, ParseError> {
         if !self.eat(&Tok::Comma) {
             return Ok(None);
@@ -5033,71 +5793,33 @@ impl<'a> Parser<'a> {
                 Ok(Some(AddSubModifier::Shift(shift, amount as u8)))
             }
             "uxtb" | "uxth" | "uxtw" | "uxtx" | "sxtb" | "sxth" | "sxtw" | "sxtx" => {
+                let x_extension = matches!(name.as_str(), "uxtx" | "sxtx");
+                // LLVM accepts Wm or Xm for UXTX/SXTX only in 64-bit flag-setting forms.
+                let valid_width = match (sf, sets_flags, x_extension) {
+                    (_, _, false) | (false, _, true) => !rm.is_64bit,
+                    (true, false, true) => rm.is_64bit,
+                    (true, true, true) => true,
+                };
+                if !valid_width {
+                    let requires_64bit = sf && x_extension;
+                    return Err(self.err_at(
+                        rm.start,
+                        format!(
+                            "{} add/sub extensions require a {}-register operand",
+                            name,
+                            if requires_64bit { "x" } else { "w" }
+                        ),
+                    ));
+                }
                 let extend = match name.as_str() {
-                    "uxtb" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
-                                "uxtb add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Uxtb
-                    }
-                    "uxth" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
-                                "uxth add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Uxth
-                    }
-                    "uxtw" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
-                                "uxtw add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Uxtw
-                    }
-                    "uxtx" => {
-                        if !rm_is_64bit {
-                            return Err(self.err(
-                                "uxtx add/sub extensions require an x-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Uxtx
-                    }
-                    "sxtb" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
-                                "sxtb add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Sxtb
-                    }
-                    "sxth" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
-                                "sxth add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Sxth
-                    }
-                    "sxtw" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
-                                "sxtw add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Sxtw
-                    }
-                    "sxtx" => {
-                        if !rm_is_64bit {
-                            return Err(self.err(
-                                "sxtx add/sub extensions require an x-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Sxtx
-                    }
+                    "uxtb" => RegExtend::Uxtb,
+                    "uxth" => RegExtend::Uxth,
+                    "uxtw" => RegExtend::Uxtw,
+                    "uxtx" => RegExtend::Uxtx,
+                    "sxtb" => RegExtend::Sxtb,
+                    "sxth" => RegExtend::Sxth,
+                    "sxtw" => RegExtend::Sxtw,
+                    "sxtx" => RegExtend::Sxtx,
                     _ => unreachable!(),
                 };
                 let amount = if self.starts_immediate_expr() {
@@ -5117,13 +5839,158 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn normalize_add_sub_register_modifier(
+        &self,
+        rd: GpOperandMeta,
+        rn: GpOperandMeta,
+        rm: GpOperandMeta,
+        sets_flags: bool,
+        modifier: Option<AddSubModifier>,
+    ) -> Result<Option<AddSubModifier>, ParseError> {
+        if rm.kind == GpRegKind::Sp {
+            return Err(self.err_at(
+                rm.start,
+                "add/sub register forms do not allow sp as the third operand".into(),
+            ));
+        }
+
+        let uses_sp = rd.kind == GpRegKind::Sp || rn.kind == GpRegKind::Sp;
+        if !uses_sp && rn.is_64bit != rd.is_64bit {
+            return Err(self.err_at(
+                rn.start,
+                "add/sub requires registers of the same width".into(),
+            ));
+        }
+        let modifier = if uses_sp {
+            if rn.is_64bit != rd.is_64bit {
+                return Err(self.err_at(
+                    rn.start,
+                    "add/sub register operands involving sp must have matching widths".into(),
+                ));
+            }
+
+            let default_extend = if rd.is_64bit {
+                RegExtend::Uxtx
+            } else {
+                RegExtend::Uxtw
+            };
+            match modifier {
+                None if rm.is_64bit == rd.is_64bit => {
+                    Some(AddSubModifier::Extend(default_extend, 0))
+                }
+                None => {
+                    return Err(self.err_at(
+                        rm.start,
+                        "add/sub register operands involving sp must have matching widths".into(),
+                    ));
+                }
+                Some(AddSubModifier::Shift(RegShift::Lsl, amount))
+                    if rm.is_64bit == rd.is_64bit =>
+                {
+                    if amount > 4 {
+                        return Err(
+                            self.err("sp add/sub lsl amount must be in the range 0..=4".into())
+                        );
+                    }
+                    Some(AddSubModifier::Extend(default_extend, amount))
+                }
+                Some(AddSubModifier::Shift(RegShift::Lsl, _)) => {
+                    return Err(self.err_at(
+                        rm.start,
+                        "add/sub register operands involving sp must have matching widths".into(),
+                    ));
+                }
+                Some(AddSubModifier::Shift(_, _)) => {
+                    return Err(self.err(
+                        "sp add/sub register forms only support lsl or an extend modifier".into(),
+                    ));
+                }
+                Some(AddSubModifier::Extend(..)) if !rd.is_64bit && rm.is_64bit => {
+                    return Err(self.err_at(
+                        rm.start,
+                        "add/sub register operands involving sp must have matching widths".into(),
+                    ));
+                }
+                Some(modifier @ AddSubModifier::Extend(..)) => Some(modifier),
+            }
+        } else {
+            modifier
+        };
+
+        if !uses_sp
+            && !matches!(modifier, Some(AddSubModifier::Extend(..)))
+            && rm.is_64bit != rd.is_64bit
+        {
+            return Err(self.err_at(
+                rm.start,
+                "add/sub requires registers of the same width".into(),
+            ));
+        }
+
+        if matches!(modifier, Some(AddSubModifier::Extend(..))) {
+            self.validate_add_sub_extended_base_reg(rn, modifier)?;
+            match (sets_flags, rd.kind) {
+                (false, GpRegKind::Zr) => {
+                    return Err(self.err_at(
+                        rd.start,
+                        "extended add/sub forms require a register or sp destination, not xzr/wzr"
+                            .into(),
+                    ));
+                }
+                (true, GpRegKind::Sp) => {
+                    return Err(self.err_at(
+                        rd.start,
+                        "flag-setting extended add/sub forms do not allow an sp destination".into(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        Ok(modifier)
+    }
+
+    fn validate_add_sub_immediate_registers(
+        &self,
+        rd: GpOperandMeta,
+        rn: GpOperandMeta,
+        sets_flags: bool,
+    ) -> Result<(), ParseError> {
+        if rd.is_64bit != rn.is_64bit {
+            let message = if rd.kind == GpRegKind::Sp || rn.kind == GpRegKind::Sp {
+                "add/sub immediate operands involving sp must have matching widths"
+            } else {
+                "add/sub immediate operands must have matching widths"
+            };
+            return Err(self.err_at(rn.start, message.into()));
+        }
+        if rn.kind == GpRegKind::Zr {
+            return Err(self.err_at(
+                rn.start,
+                "add/sub immediate forms require a register or sp base, not xzr/wzr".into(),
+            ));
+        }
+        match (sets_flags, rd.kind) {
+            (false, GpRegKind::Zr) => Err(self.err_at(
+                rd.start,
+                "add/sub immediate forms require a register or sp destination, not xzr/wzr".into(),
+            )),
+            (true, GpRegKind::Sp) => Err(self.err_at(
+                rd.start,
+                "flag-setting add/sub immediate forms do not allow an sp destination".into(),
+            )),
+            _ => Ok(()),
+        }
+    }
+
     fn validate_add_sub_extended_base_reg(
         &self,
-        rn_kind: GpRegKind,
+        rn: GpOperandMeta,
         modifier: Option<AddSubModifier>,
     ) -> Result<(), ParseError> {
-        if matches!(modifier, Some(AddSubModifier::Extend(..))) && rn_kind == GpRegKind::Zr {
-            return Err(self.err(
+        if matches!(modifier, Some(AddSubModifier::Extend(..))) && rn.kind == GpRegKind::Zr {
+            return Err(self.err_at(
+                rn.start,
                 "extended add/sub forms require an x-register or sp base operand, not xzr/wzr"
                     .into(),
             ));
@@ -5135,41 +6002,66 @@ impl<'a> Parser<'a> {
         &self,
         mnemonic: &str,
         sf: bool,
-        lsb: u8,
-        width: u8,
+        lsb: i64,
+        width: i64,
+        lsb_start: usize,
+        width_start: usize,
     ) -> Result<(), ParseError> {
-        let bits = if sf { 64u8 } else { 32u8 };
-        if width == 0 {
-            return Err(self.err(format!("{} width must be at least 1", mnemonic)));
+        let bits = if sf { 64i64 } else { 32i64 };
+        if width <= 0 {
+            return Err(self.err_at(
+                width_start,
+                format!("{} width must be at least 1", mnemonic),
+            ));
         }
-        if lsb >= bits {
-            return Err(self.err(format!(
-                "{} lsb {} is out of range for {}-bit register",
-                mnemonic, lsb, bits
-            )));
+        if !(0..bits).contains(&lsb) {
+            return Err(self.err_at(
+                lsb_start,
+                format!(
+                    "{} lsb {} is out of range for {}-bit register",
+                    mnemonic, lsb, bits
+                ),
+            ));
         }
         if width > bits - lsb {
-            return Err(self.err(format!(
-                "{} width {} with lsb {} exceeds {}-bit register width",
-                mnemonic, width, lsb, bits
-            )));
+            return Err(self.err_at(
+                width_start,
+                format!(
+                    "{} width {} with lsb {} exceeds {}-bit register width",
+                    mnemonic, width, lsb, bits
+                ),
+            ));
         }
         Ok(())
     }
 
     fn starts_register_like_operand(&self) -> bool {
-        matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
+        !self.starts_absolute_symbol_expr()
+            && matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
+    }
+
+    fn starts_absolute_symbol_expr(&self) -> bool {
+        matches!(
+            self.peek(),
+            Tok::Ident(name)
+                if !is_canonical_register_name(name)
+                    && self.absolute_symbols.contains_key(name)
+        )
     }
 
     fn starts_fp_register_like_operand(&self) -> bool {
-        matches!(self.peek(), Tok::Ident(name) if looks_like_fp_register_name(name))
+        matches!(self.peek(), Tok::Ident(name) if looks_like_fp_register_spelling(name))
     }
 
     fn parse_reg_offset_operand(
         &mut self,
         scale: u8,
     ) -> Result<(GpReg, AddrExtend, bool), ParseError> {
-        let (rm, is_64bit) = self.parse_gp_reg_with_size()?;
+        let rm_start = self.pos;
+        let (rm, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
+        if kind == GpRegKind::Sp {
+            return Err(self.err_at(rm_start, "register offset does not allow sp".into()));
+        }
         let mut extend = AddrExtend::Lsl;
         let mut shift = false;
 
@@ -5203,7 +6095,7 @@ impl<'a> Parser<'a> {
             };
 
             let amount = if self.starts_immediate_expr() {
-                self.parse_immediate_const_expr("register offset shift")? as u8
+                self.parse_immediate_const_expr("register offset shift")?
             } else {
                 0
             };
@@ -5231,6 +6123,18 @@ fn contains_wide_unsigned_literal(expr: &Expr) -> bool {
     }
 }
 
+pub(crate) fn signed_data_value_fits(value: i64, bits: u8) -> bool {
+    let signed_min = -(1i64 << (bits - 1));
+    let unsigned_max = (1i64 << bits) - 1;
+    (signed_min..=unsigned_max).contains(&value)
+}
+
+pub(crate) fn unsigned_data_value_fits(value: u64, bits: u8) -> bool {
+    let unsigned_max = (1u64 << bits) - 1;
+    let sign_extended_min = u64::MAX - ((1u64 << (bits - 1)) - 1);
+    value <= unsigned_max || value >= sign_extended_min
+}
+
 // ---- Name resolution helpers ----
 
 fn numeric_label_symbol(number: u32, ordinal: u32) -> String {
@@ -5246,30 +6150,28 @@ fn decimal_width(mut value: u32) -> u32 {
     width
 }
 
-fn parse_gp_reg_name(name: &str) -> Option<GpReg> {
-    let lower = name.to_lowercase();
-    match lower.as_str() {
-        "sp" => Some(SP),
-        "xzr" | "wzr" => Some(XZR),
-        _ => {
-            let (prefix, num_str) = if lower.starts_with('x') || lower.starts_with('w') {
-                (&lower[..1], &lower[1..])
-            } else {
-                return None;
-            };
-            let num: u8 = num_str.parse().ok()?;
-            if num > 30 {
-                return None;
-            }
-            let _ = prefix; // both x and w map to the same encoding
-            Some(GpReg::new(num))
-        }
+fn classify_gp_reg_name(lower: &str) -> Option<(GpReg, bool, GpRegKind)> {
+    match lower {
+        "sp" => return Some((SP, true, GpRegKind::Sp)),
+        "wsp" => return Some((SP, false, GpRegKind::Sp)),
+        "xzr" | "x31" => return Some((XZR, true, GpRegKind::Zr)),
+        "wzr" | "w31" => return Some((WZR, false, GpRegKind::Zr)),
+        _ => {}
     }
+
+    let (is_64bit, num_str) = if let Some(num) = lower.strip_prefix('x') {
+        (true, num)
+    } else {
+        (false, lower.strip_prefix('w')?)
+    };
+    let num = parse_canonical_register_number(num_str)?;
+    (num <= 30).then(|| (GpReg::new(num), is_64bit, GpRegKind::Reg))
 }
 
 fn looks_like_gp_register_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower == "sp"
+        || lower == "wsp"
         || lower == "xzr"
         || lower == "wzr"
         || lower.starts_with('x')
@@ -5288,7 +6190,7 @@ fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
     } else {
         return None;
     };
-    let num: u8 = num_str.parse().ok()?;
+    let num = parse_canonical_register_number(num_str)?;
     if num > 31 {
         return None;
     }
@@ -5299,15 +6201,49 @@ fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
 fn parse_simd_reg_name(name: &str) -> Option<FpReg> {
     let lower = name.to_lowercase();
     let num_str = lower.strip_prefix('v')?;
-    let num: u8 = num_str.parse().ok()?;
+    let num = parse_canonical_register_number(num_str)?;
     if num > 31 {
         return None;
     }
     Some(FpReg::new(num))
 }
 
-fn looks_like_fp_register_name(name: &str) -> bool {
-    parse_fp_reg_name(name).is_some()
+fn is_canonical_register_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    classify_gp_reg_name(&lower).is_some()
+        || parse_fp_reg_name(&lower).is_some()
+        || parse_simd_reg_name(&lower).is_some()
+}
+
+fn parse_canonical_register_number(suffix: &str) -> Option<u8> {
+    if suffix.is_empty() || (suffix.len() > 1 && suffix.starts_with('0')) {
+        return None;
+    }
+    suffix.parse().ok()
+}
+
+fn looks_like_fp_register_spelling(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let mut chars = lower.chars();
+    matches!(chars.next(), Some('b' | 'h' | 'd' | 's' | 'q'))
+        && chars.clone().next().is_some()
+        && chars.all(|ch| ch.is_ascii_digit())
+}
+
+fn looks_like_scalar_fp_register_spelling(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let mut chars = lower.chars();
+    matches!(chars.next(), Some('d' | 's'))
+        && chars.clone().next().is_some()
+        && chars.all(|ch| ch.is_ascii_digit())
+}
+
+fn looks_like_simd_register_spelling(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let Some(suffix) = lower.strip_prefix('v') else {
+        return false;
+    };
+    !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn parse_condition(s: &str) -> Option<Cond> {
@@ -5381,10 +6317,10 @@ fn expand_fp_modified_immediate(imm8: u8, is_double: bool) -> u64 {
     (sign << (exponent_bits + fraction_bits)) | (exponent << fraction_bits) | fraction
 }
 
-fn parse_index_shift(amount: u8, scale: u8) -> Result<bool, &'static str> {
+fn parse_index_shift(amount: i64, scale: u8) -> Result<bool, &'static str> {
     match amount {
         0 => Ok(false),
-        value if value == scale => Ok(true),
+        value if value == i64::from(scale) => Ok(true),
         _ => Err("register offset shift must be omitted, #0, or the element scale"),
     }
 }
@@ -5545,6 +6481,117 @@ mod tests {
                 sf: false
             }
         );
+    }
+
+    #[test]
+    fn parse_sp_register_arithmetic_uses_extended_forms() {
+        let cases = [
+            ("add x0, sp, x1", 0x8B21_63E0),
+            ("add sp, x1, x2", 0x8B22_603F),
+            ("sub x3, sp, x4", 0xCB24_63E3),
+            ("sub sp, x5, x6", 0xCB26_60BF),
+            ("adds x7, sp, x8", 0xAB28_63E7),
+            ("subs x9, sp, x10", 0xEB2A_63E9),
+            ("cmp sp, x11", 0xEB2B_63FF),
+            ("cmn sp, x12", 0xAB2C_63FF),
+            ("add x13, sp, x14, lsl #4", 0x8B2E_73ED),
+            ("sub sp, x15, x16, lsl #2", 0xCB30_69FF),
+            ("add w0, wsp, w1", 0x0B21_43E0),
+            ("add wsp, w1, w2", 0x0B22_403F),
+            ("sub w3, wsp, w4", 0x4B24_43E3),
+            ("sub wsp, w5, w6", 0x4B26_40BF),
+            ("adds w7, wsp, w8", 0x2B28_43E7),
+            ("subs w9, wsp, w10", 0x6B2A_43E9),
+            ("cmp wsp, w11", 0x6B2B_43FF),
+            ("cmn wsp, w12", 0x2B2C_43FF),
+            ("add w13, wsp, w14, lsl #4", 0x0B2E_53ED),
+            ("sub wsp, w15, w16, lsl #2", 0x4B30_49FF),
+            ("add w17, wsp, w18, uxtw #3", 0x0B32_4FF1),
+            ("sub wsp, w19, w20, sxtw #4", 0x4B34_D27F),
+            ("sub sp, sp, x16", 0xCB30_63FF),
+            ("add sp, sp, x16", 0x8B30_63FF),
+            ("sub wsp, wsp, w16", 0x4B30_43FF),
+            ("add wsp, wsp, w16", 0x0B30_43FF),
+        ];
+
+        for (source, expected_encoding) in cases {
+            assert_eq!(
+                parse_inst(source).encode(),
+                expected_encoding,
+                "source: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_sp_immediate_arithmetic_preserves_register_roles() {
+        let cases = [
+            ("add sp, sp, #16", 0x9100_43FF),
+            ("sub sp, sp, #16", 0xD100_43FF),
+            ("adds xzr, sp, #1", 0xB100_07FF),
+            ("subs xzr, sp, #1", 0xF100_07FF),
+            ("add wsp, wsp, #16", 0x1100_43FF),
+            ("subs wzr, wsp, #1", 0x7100_07FF),
+        ];
+
+        for (source, expected_encoding) in cases {
+            assert_eq!(
+                parse_inst(source).encode(),
+                expected_encoding,
+                "source: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn error_sp_register_arithmetic_rejects_non_encodable_forms() {
+        let cases = [
+            (
+                "add x0, sp, x1, lsl #5",
+                "lsl amount must be in the range 0..=4",
+            ),
+            (
+                "add x0, sp, x1, lsr #1",
+                "only support lsl or an extend modifier",
+            ),
+            ("add x0, x1, sp", "do not allow sp as the third operand"),
+            ("add xzr, sp, x1", "require a register or sp destination"),
+            ("adds sp, x1, x2", "do not allow an sp destination"),
+            ("add sp, w1, x2", "involving sp must have matching widths"),
+            (
+                "add w0, wsp, w1, lsl #5",
+                "lsl amount must be in the range 0..=4",
+            ),
+            (
+                "add w0, wsp, w1, lsr #1",
+                "only support lsl or an extend modifier",
+            ),
+            ("add w0, w1, wsp", "do not allow sp as the third operand"),
+            ("add wzr, wsp, w1", "require a register or sp destination"),
+            ("adds wsp, w1, w2", "do not allow an sp destination"),
+            ("add wsp, x1, w2", "involving sp must have matching widths"),
+            ("add w0, wsp, x1, uxtx", "require a w-register operand"),
+            ("add wsp, w1, x2, sxtx", "require a w-register operand"),
+            ("cmp wsp, x1, uxtx", "require a w-register operand"),
+            ("neg sp, x1", "neg does not allow sp"),
+            ("neg x0, sp", "neg does not allow sp"),
+            ("neg wsp, w1", "neg does not allow sp"),
+            ("neg w0, wsp", "neg does not allow sp"),
+            ("add xzr, x1, #1", "require a register or sp destination"),
+            ("add x0, xzr, #1", "require a register or sp base"),
+            ("adds sp, x1, #1", "do not allow an sp destination"),
+            ("subs sp, x1, #1", "do not allow an sp destination"),
+            (
+                "add xzr, x1, _sym@PAGEOFF",
+                "require a register or sp destination",
+            ),
+            ("add x0, xzr, _sym@PAGEOFF", "require a register or sp base"),
+        ];
+
+        for (source, expected) in cases {
+            let error = parse_err(source);
+            assert!(error.contains(expected), "source: {source}; got: {error}");
+        }
     }
 
     #[test]
@@ -9921,10 +10968,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_fused_multiply_subtract_double() {
+        assert_eq!(
+            parse_inst("fmsub d0, d1, d2, d3"),
+            Inst::FmsubD {
+                rd: D0,
+                rn: D1,
+                rm: D2,
+                ra: D3
+            }
+        );
+        assert_eq!(
+            parse_inst("fnmsub d0, d1, d2, d3"),
+            Inst::FnmsubD {
+                rd: D0,
+                rn: D1,
+                rm: D2,
+                ra: D3
+            }
+        );
+    }
+
+    #[test]
     fn parse_fcvtzs_() {
         assert_eq!(
             parse_inst("fcvtzs x0, d1"),
-            Inst::FcvtzsD { rd: X0, rn: D1 }
+            Inst::Fcvtzs {
+                rd: X0,
+                rn: D1,
+                dst_64bit: true,
+                src_double: true,
+            }
         );
     }
 
@@ -9953,7 +11027,15 @@ mod tests {
 
     #[test]
     fn parse_scvtf_() {
-        assert_eq!(parse_inst("scvtf d0, x1"), Inst::ScvtfD { rd: D0, rn: X1 });
+        assert_eq!(
+            parse_inst("scvtf d0, x1"),
+            Inst::Scvtf {
+                rd: D0,
+                rn: X1,
+                dst_double: true,
+                src_64bit: true,
+            }
+        );
     }
 
     #[test]
@@ -10038,6 +11120,28 @@ mod tests {
         assert_eq!(
             parse_inst("fmadd s0, s1, s2, s3"),
             Inst::FmaddS {
+                rd: S0,
+                rn: S1,
+                rm: S2,
+                ra: S3
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fused_multiply_subtract_single() {
+        assert_eq!(
+            parse_inst("fmsub s0, s1, s2, s3"),
+            Inst::FmsubS {
+                rd: S0,
+                rn: S1,
+                rm: S2,
+                ra: S3
+            }
+        );
+        assert_eq!(
+            parse_inst("fnmsub s0, s1, s2, s3"),
+            Inst::FnmsubS {
                 rd: S0,
                 rn: S1,
                 rm: S2,
@@ -10144,6 +11248,53 @@ mod tests {
     }
 
     #[test]
+    fn parse_chained_labels_on_one_line() {
+        assert_eq!(
+            parse_stmts(".Llocal: named: 1: ret"),
+            vec![
+                Stmt::Label(".Llocal".into()),
+                Stmt::Label("named".into()),
+                Stmt::Label(".Ltmp$1$1".into()),
+                Stmt::Instruction(Inst::Ret { rn: X30 }),
+            ]
+        );
+        assert_eq!(
+            parse_stmts(".Llocal: named: 1: .byte 1, 2, 3"),
+            vec![
+                Stmt::Label(".Llocal".into()),
+                Stmt::Label("named".into()),
+                Stmt::Label(".Ltmp$1$1".into()),
+                Stmt::Directive(Directive::Byte(vec![
+                    Expr::Int(1),
+                    Expr::Int(2),
+                    Expr::Int(3),
+                ])),
+            ]
+        );
+    }
+
+    #[test]
+    fn reject_trailing_tokens_after_arm64_statements() {
+        for (source, col, token) in [
+            ("nop ret", 5, "ret"),
+            ("named: nop ret", 12, "ret"),
+            (".Llocal: nop ret", 14, "ret"),
+            ("1: nop ret", 8, "ret"),
+            (".byte 1 ret", 9, "ret"),
+            (".text nop", 7, "nop"),
+        ] {
+            let error = parse(source).expect_err("trailing token unexpectedly parsed");
+            assert_eq!(error.line, 1, "source: {source}");
+            assert_eq!(error.col, col, "source: {source}");
+            assert_eq!(
+                error.msg,
+                format!("unexpected trailing token: {token}"),
+                "source: {source}"
+            );
+        }
+    }
+
+    #[test]
     fn parse_global_directive() {
         let stmts = parse_stmts(".global _main");
         assert_eq!(
@@ -10212,16 +11363,19 @@ mod tests {
 
     #[test]
     fn parse_equ_directive() {
-        let stmts = parse_stmts(".equ ABS2, ABS1 + 5");
+        let stmts = parse_stmts(".set ABS1, 7\n.equ ABS2, ABS1 + 5");
         assert_eq!(
             stmts,
-            vec![Stmt::Directive(Directive::Set(
-                "ABS2".into(),
-                Expr::Add(
-                    Box::new(Expr::Symbol("ABS1".into())),
-                    Box::new(Expr::Int(5))
-                ),
-            ))]
+            vec![
+                Stmt::Directive(Directive::Set("ABS1".into(), Expr::Int(7))),
+                Stmt::Directive(Directive::Set(
+                    "ABS2".into(),
+                    Expr::Add(
+                        Box::new(Expr::Symbol("ABS1".into())),
+                        Box::new(Expr::Int(5))
+                    ),
+                )),
+            ]
         );
     }
 
@@ -10335,6 +11489,44 @@ mod tests {
     }
 
     #[test]
+    fn expression_depth_limit_accepts_the_boundary() {
+        let source = format!(".quad {}1", "-".repeat(MAX_EXPRESSION_DEPTH));
+        parse(&source).expect("boundary-depth expression unexpectedly rejected");
+    }
+
+    #[test]
+    fn expression_depth_limit_rejects_deep_expression_shapes() {
+        let unary = format!(".data\n.quad {}1", "-".repeat(MAX_EXPRESSION_DEPTH + 1));
+        let parenthesized = format!(
+            ".data\n.quad {}1{}",
+            "(".repeat(MAX_EXPRESSION_DEPTH + 1),
+            ")".repeat(MAX_EXPRESSION_DEPTH + 1)
+        );
+        let additive = format!(
+            ".data\n.quad {}",
+            vec!["1"; MAX_EXPRESSION_DEPTH + 2].join("+")
+        );
+
+        for (shape, source, expected_col) in [
+            ("unary", unary, 263),
+            ("parenthesized", parenthesized, 263),
+            ("additive", additive, 520),
+        ] {
+            let error = parse(&source).expect_err("deep expression unexpectedly parsed");
+            assert_eq!(error.line, 2, "wrong line for {shape} expression");
+            assert_eq!(
+                error.col, expected_col,
+                "wrong column for {shape} expression"
+            );
+            assert_eq!(
+                error.msg,
+                format!("expression exceeds maximum depth of {MAX_EXPRESSION_DEPTH}"),
+                "wrong diagnostic for {shape} expression"
+            );
+        }
+    }
+
+    #[test]
     fn parse_unsigned_quad_values_in_labels_comments_and_lists() {
         assert_eq!(
             parse_stmts(
@@ -10353,9 +11545,50 @@ mod tests {
     }
 
     #[test]
-    fn wide_unsigned_literals_are_restricted_to_standalone_quad_values() {
+    fn signed_minimum_and_full_width_assignments_preserve_their_bits() {
+        assert_eq!(
+            parse_stmts(".quad -9223372036854775808"),
+            vec![Stmt::Directive(Directive::Quad(vec![Expr::Int(i64::MIN)]))]
+        );
+        assert_eq!(
+            parse_stmts(".set ALL_ONES, 0xffffffffffffffff"),
+            vec![Stmt::Directive(Directive::Set(
+                "ALL_ONES".into(),
+                Expr::Int(-1),
+            ))]
+        );
+
+        let error = parse(".quad -9223372036854775809").unwrap_err();
+        assert_eq!((error.line, error.col), (1, 8));
+        assert_eq!(
+            error.msg,
+            "unsigned integer literals above i64::MAX must be standalone .quad values"
+        );
+    }
+
+    #[test]
+    fn full_width_assignments_reject_compound_unsigned_expressions() {
         for source in [
-            ".word 0xbff0000000000000",
+            ".set X,0xffffffffffffffff + 1",
+            ".equ X,1 + 0xffffffffffffffff",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert_eq!(
+                error.msg,
+                "unsigned integer literals above i64::MAX must be standalone absolute assignment values"
+            );
+        }
+    }
+
+    #[test]
+    fn wide_unsigned_literals_are_restricted_to_standalone_quad_values() {
+        let err = parse(".word 0xbff0000000000000").unwrap_err();
+        assert_eq!(
+            err.msg,
+            ".word expression value 13830554455654793216 is out of range for 32-bit data"
+        );
+
+        for source in [
             ".quad 0xbff0000000000000 + 1",
             ".quad symbol + 0xbff0000000000000",
             ".quad -0xbff0000000000000",
@@ -10635,6 +11868,34 @@ mod tests {
                 offset: 16,
             })]
         );
+    }
+
+    #[test]
+    fn parse_cfi_register_31_spellings() {
+        for spelling in ["sp", "wsp", "xzr", "wzr", "x31", "w31"] {
+            let source = format!(
+                ".cfi_def_cfa {spelling}, 16\n\
+                 .cfi_def_cfa_register {spelling}\n\
+                 .cfi_offset {spelling}, -8\n\
+                 .cfi_restore {spelling}"
+            );
+            assert_eq!(
+                parse_stmts(&source),
+                vec![
+                    Stmt::Directive(Directive::CfiDefCfa {
+                        register: SP,
+                        offset: 16,
+                    }),
+                    Stmt::Directive(Directive::CfiDefCfaRegister(SP)),
+                    Stmt::Directive(Directive::CfiOffset {
+                        register: SP,
+                        offset: -8,
+                    }),
+                    Stmt::Directive(Directive::CfiRestore(SP)),
+                ],
+                "spelling: {spelling}"
+            );
+        }
     }
 
     #[test]

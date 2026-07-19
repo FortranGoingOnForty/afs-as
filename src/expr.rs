@@ -1,14 +1,15 @@
 //! Expression AST and constant evaluation for assembler directives and operands.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Int(i64),
     /// Positive integer literal above `i64::MAX` whose value is preserved as
-    /// a 64-bit bit pattern. The parser restricts this to standalone `.quad`
-    /// values so relocation addends and general expression math remain i64.
+    /// a 64-bit bit pattern. The parser permits these only as standalone data
+    /// or directive-pattern values so relocation addends and expression math
+    /// remain `i64`.
     Unsigned(u64),
     Symbol(String),
     ModifiedSymbol {
@@ -35,7 +36,7 @@ pub enum EvalError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolValue {
     Absolute(i64),
-    Defined { section: usize, value: i64 },
+    Defined { section: usize, value: u64 },
     Undefined,
 }
 
@@ -137,7 +138,7 @@ pub fn classify(
     linearize(expr, 1, &mut constant, &mut terms)?;
     terms.retain(|(_, coeff)| *coeff != 0);
 
-    let mut defined_groups: BTreeMap<usize, Vec<(String, i64, i32)>> = BTreeMap::new();
+    let mut defined_groups: BTreeMap<usize, Vec<(String, u64, i32)>> = BTreeMap::new();
     let mut defined_order = Vec::new();
     let mut remaining = Vec::new();
     let mut got_terms = Vec::new();
@@ -176,27 +177,25 @@ pub fn classify(
         }
     }
 
+    let mut defined_total = 0i128;
+    let mut anchor_groups = Vec::new();
     for section in defined_order {
         let group = defined_groups
             .remove(&section)
             .expect("section group should exist");
         let section_sum: i32 = group.iter().map(|(_, _, coeff)| *coeff).sum();
+        defined_total = defined_total
+            .checked_add(defined_group_total(&group)?)
+            .ok_or(ClassifyError::Overflow)?;
         match section_sum {
-            0 => {
-                for (_, value, coeff) in group {
-                    constant = checked_add(constant, checked_mul(value, coeff as i64)?)?;
-                }
-            }
-            1 | -1 => {
-                let (anchor_symbol, anchor_value, _) = &group[0];
-                for (_, value, coeff) in &group {
-                    constant = checked_add(
-                        constant,
-                        checked_mul(checked_sub(*value, *anchor_value)?, *coeff as i64)?,
-                    )?;
-                }
-                push_plain_term(&mut remaining, anchor_symbol.clone(), section_sum);
-            }
+            0 => {}
+            -1 | 1 => anchor_groups.push(DefinedAnchorGroup {
+                coefficient: section_sum,
+                candidates: group
+                    .into_iter()
+                    .map(|(symbol, value, _)| (symbol, value))
+                    .collect(),
+            }),
             other => {
                 return Err(ClassifyError::Illegal(format!(
                     "expression has unsupported section-relative coefficient {}",
@@ -205,12 +204,15 @@ pub fn classify(
             }
         }
     }
+    let defined_constant = i128::from(constant)
+        .checked_add(defined_total)
+        .ok_or(ClassifyError::Overflow)?;
 
     remaining.retain(|(_, coeff)| *coeff != 0);
     got_terms.retain(|(_, coeff)| *coeff != 0);
 
     if !got_terms.is_empty() || current_location_coeff != 0 {
-        if !remaining.is_empty() {
+        if !remaining.is_empty() || !anchor_groups.is_empty() {
             return Err(ClassifyError::Illegal(
                 "pointer-to-GOT expression cannot be combined with plain relocatable symbols"
                     .into(),
@@ -226,11 +228,23 @@ pub fn classify(
                 "pointer-to-GOT expression may subtract current location only once".into(),
             ));
         }
+        let constant = i64::try_from(defined_constant).map_err(|_| ClassifyError::Overflow)?;
         return Ok(ClassifiedExpr::PointerToGot {
             symbol: got_terms[0].0.clone(),
             addend: constant,
             pcrel: current_location_coeff == -1,
         });
+    }
+
+    if !relocation_coefficients_are_supported(&remaining, &anchor_groups) {
+        return Err(ClassifyError::Illegal(
+            "expression is not representable as an absolute value or relocation".into(),
+        ));
+    }
+
+    let (constant, anchors) = select_defined_anchors(defined_constant, &anchor_groups)?;
+    for (symbol, coefficient) in anchors {
+        push_plain_term(&mut remaining, symbol, coefficient);
     }
 
     match remaining.as_slice() {
@@ -352,12 +366,394 @@ fn push_plain_term(terms: &mut Vec<(String, i32)>, symbol: String, delta: i32) {
     }
 }
 
-fn checked_add(lhs: i64, rhs: i64) -> Result<i64, ClassifyError> {
-    lhs.checked_add(rhs).ok_or(ClassifyError::Overflow)
+fn defined_group_total(group: &[(String, u64, i32)]) -> Result<i128, ClassifyError> {
+    group.iter().try_fold(0i128, |total, (_, value, coeff)| {
+        let term = i128::from(*value)
+            .checked_mul(i128::from(*coeff))
+            .ok_or(ClassifyError::Overflow)?;
+        total.checked_add(term).ok_or(ClassifyError::Overflow)
+    })
 }
 
-fn checked_sub(lhs: i64, rhs: i64) -> Result<i64, ClassifyError> {
-    lhs.checked_sub(rhs).ok_or(ClassifyError::Overflow)
+struct DefinedAnchorGroup {
+    coefficient: i32,
+    candidates: Vec<(String, u64)>,
+}
+
+fn relocation_coefficients_are_supported(
+    remaining: &[(String, i32)],
+    anchor_groups: &[DefinedAnchorGroup],
+) -> bool {
+    let coefficients: Vec<_> = remaining
+        .iter()
+        .map(|(_, coefficient)| *coefficient)
+        .chain(anchor_groups.iter().map(|group| group.coefficient))
+        .collect();
+    matches!(coefficients.as_slice(), [] | [1] | [1, -1] | [-1, 1])
+}
+
+fn select_defined_anchors(
+    defined_constant: i128,
+    anchor_groups: &[DefinedAnchorGroup],
+) -> Result<(i64, Vec<(String, i32)>), ClassifyError> {
+    // Keep the source's first viable anchor, then try equivalent anchors when
+    // high section offsets would make that choice overflow the signed addend.
+    let convert = |value: i128| i64::try_from(value).map_err(|_| ClassifyError::Overflow);
+    match anchor_groups {
+        [] => Ok((convert(defined_constant)?, Vec::new())),
+        [group] => {
+            for (symbol, value) in &group.candidates {
+                let adjusted = defined_constant
+                    .checked_sub(i128::from(group.coefficient) * i128::from(*value))
+                    .ok_or(ClassifyError::Overflow)?;
+                if let Ok(constant) = convert(adjusted) {
+                    return Ok((constant, vec![(symbol.clone(), group.coefficient)]));
+                }
+            }
+            Err(ClassifyError::Overflow)
+        }
+        [first, second] => {
+            for (first_symbol, first_value) in &first.candidates {
+                let first_adjusted = defined_constant
+                    .checked_sub(i128::from(first.coefficient) * i128::from(*first_value))
+                    .ok_or(ClassifyError::Overflow)?;
+                for (second_symbol, second_value) in &second.candidates {
+                    let adjusted = first_adjusted
+                        .checked_sub(i128::from(second.coefficient) * i128::from(*second_value))
+                        .ok_or(ClassifyError::Overflow)?;
+                    if let Ok(constant) = convert(adjusted) {
+                        return Ok((
+                            constant,
+                            vec![
+                                (first_symbol.clone(), first.coefficient),
+                                (second_symbol.clone(), second.coefficient),
+                            ],
+                        ));
+                    }
+                }
+            }
+            Err(ClassifyError::Overflow)
+        }
+        _ => unreachable!("supported relocations use at most two defined anchors"),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AbsoluteAssignmentError {
+    UndefinedSymbol {
+        assignment: usize,
+        owner: String,
+        symbol: String,
+    },
+    CyclicDefinition {
+        assignment: usize,
+        symbol: String,
+    },
+    NonAbsolute {
+        assignment: usize,
+        symbol: String,
+    },
+    InvalidExpression {
+        assignment: usize,
+        owner: String,
+        error: ClassifyError,
+    },
+}
+
+impl AbsoluteAssignmentError {
+    pub(crate) fn may_resolve_with_labels(&self) -> bool {
+        matches!(self, Self::UndefinedSymbol { .. })
+    }
+
+    pub(crate) fn assignment_index(&self) -> usize {
+        match self {
+            Self::UndefinedSymbol { assignment, .. }
+            | Self::CyclicDefinition { assignment, .. }
+            | Self::NonAbsolute { assignment, .. }
+            | Self::InvalidExpression { assignment, .. } => *assignment,
+        }
+    }
+}
+
+impl fmt::Display for AbsoluteAssignmentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UndefinedSymbol { owner, symbol, .. } => write!(
+                f,
+                "absolute symbol '{}' references undefined symbol '{}'",
+                owner, symbol
+            ),
+            Self::CyclicDefinition { symbol, .. } => {
+                write!(f, "absolute symbol '{}' has a cyclic definition", symbol)
+            }
+            Self::NonAbsolute { symbol, .. } => {
+                write!(
+                    f,
+                    "absolute symbol '{}' must resolve to an absolute value",
+                    symbol
+                )
+            }
+            Self::InvalidExpression { owner, error, .. } => {
+                write!(f, "absolute symbol '{}': {}", owner, error)
+            }
+        }
+    }
+}
+
+impl std::error::Error for AbsoluteAssignmentError {}
+
+pub(crate) fn resolve_absolute_assignments(
+    assignments: &[(String, Expr)],
+    base_symbols: &BTreeMap<String, SymbolValue>,
+) -> Vec<Result<i64, AbsoluteAssignmentError>> {
+    AbsoluteAssignmentResolver::new(assignments, base_symbols).resolve_all()
+}
+
+struct AbsoluteAssignmentResolver<'a> {
+    assignments: &'a [(String, Expr)],
+    dependencies: Vec<Vec<ReferencedAssignmentSymbol>>,
+    states: Vec<AssignmentResolutionState>,
+}
+
+#[derive(Debug, Clone)]
+struct ReferencedAssignmentSymbol {
+    name: String,
+    dependency: AssignmentDependency,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AssignmentDependency {
+    Assignment(usize),
+    Base(SymbolValue),
+    Undefined,
+}
+
+#[derive(Debug, Clone)]
+enum AssignmentResolutionState {
+    Unvisited,
+    Visiting,
+    Resolved(Result<i64, AbsoluteAssignmentError>),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AssignmentResolutionFrame {
+    index: usize,
+    next_dependency: usize,
+}
+
+impl<'a> AbsoluteAssignmentResolver<'a> {
+    fn new(
+        assignments: &'a [(String, Expr)],
+        base_symbols: &'a BTreeMap<String, SymbolValue>,
+    ) -> Self {
+        let mut positions: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (index, (name, _)) in assignments.iter().enumerate() {
+            positions.entry(name.clone()).or_default().push(index);
+        }
+        let dependencies = assignments
+            .iter()
+            .enumerate()
+            .map(|(index, (_, expression))| {
+                let mut seen = BTreeSet::new();
+                referenced_symbols(expression)
+                    .into_iter()
+                    .filter(|symbol| seen.insert(symbol.clone()))
+                    .map(|name| ReferencedAssignmentSymbol {
+                        dependency: Self::dependency_for_symbol(
+                            &name,
+                            index,
+                            &positions,
+                            base_symbols,
+                        ),
+                        name,
+                    })
+                    .collect()
+            })
+            .collect();
+        Self {
+            assignments,
+            dependencies,
+            states: vec![AssignmentResolutionState::Unvisited; assignments.len()],
+        }
+    }
+
+    fn dependency_for_symbol(
+        symbol: &str,
+        assignment_index: usize,
+        positions: &BTreeMap<String, Vec<usize>>,
+        base_symbols: &BTreeMap<String, SymbolValue>,
+    ) -> AssignmentDependency {
+        if let Some(indices) = positions.get(symbol) {
+            let prior_count = indices.partition_point(|index| *index < assignment_index);
+            let target = if prior_count > 0 {
+                Some(indices[prior_count - 1])
+            } else {
+                indices.get(prior_count).copied()
+            };
+            if let Some(target) = target {
+                return AssignmentDependency::Assignment(target);
+            }
+        }
+
+        base_symbols
+            .get(symbol)
+            .copied()
+            .map(AssignmentDependency::Base)
+            .unwrap_or(AssignmentDependency::Undefined)
+    }
+
+    fn resolve_all(mut self) -> Vec<Result<i64, AbsoluteAssignmentError>> {
+        for index in 0..self.assignments.len() {
+            self.resolve_assignment(index);
+        }
+        self.states
+            .into_iter()
+            .map(|state| match state {
+                AssignmentResolutionState::Resolved(value) => value,
+                AssignmentResolutionState::Unvisited | AssignmentResolutionState::Visiting => {
+                    unreachable!("every absolute assignment was visited")
+                }
+            })
+            .collect()
+    }
+
+    fn resolve_assignment(&mut self, root: usize) {
+        if !matches!(self.states[root], AssignmentResolutionState::Unvisited) {
+            return;
+        }
+
+        self.states[root] = AssignmentResolutionState::Visiting;
+        let mut stack = vec![AssignmentResolutionFrame {
+            index: root,
+            next_dependency: 0,
+        }];
+
+        while let Some(frame) = stack.last().copied() {
+            let Some(reference) = self.dependencies[frame.index]
+                .get(frame.next_dependency)
+                .cloned()
+            else {
+                let result = self.evaluate_assignment(frame.index);
+                self.states[frame.index] = AssignmentResolutionState::Resolved(result);
+                stack.pop();
+                continue;
+            };
+
+            match reference.dependency {
+                AssignmentDependency::Base(_) => {
+                    stack.last_mut().expect("resolution frame").next_dependency += 1;
+                }
+                AssignmentDependency::Undefined => {
+                    stack.last_mut().expect("resolution frame").next_dependency += 1;
+                }
+                AssignmentDependency::Assignment(target) => match self.states[target].clone() {
+                    AssignmentResolutionState::Unvisited => {
+                        self.states[target] = AssignmentResolutionState::Visiting;
+                        stack.push(AssignmentResolutionFrame {
+                            index: target,
+                            next_dependency: 0,
+                        });
+                    }
+                    AssignmentResolutionState::Visiting => {
+                        let error = AbsoluteAssignmentError::CyclicDefinition {
+                            assignment: target,
+                            symbol: self.assignments[target].0.clone(),
+                        };
+                        for frame in stack.drain(..) {
+                            self.states[frame.index] =
+                                AssignmentResolutionState::Resolved(Err(error.clone()));
+                        }
+                    }
+                    AssignmentResolutionState::Resolved(Ok(_)) => {
+                        stack.last_mut().expect("resolution frame").next_dependency += 1;
+                    }
+                    AssignmentResolutionState::Resolved(Err(error)) => {
+                        self.states[frame.index] = AssignmentResolutionState::Resolved(Err(error));
+                        stack.pop();
+                    }
+                },
+            }
+        }
+    }
+
+    fn evaluate_assignment(&self, index: usize) -> Result<i64, AbsoluteAssignmentError> {
+        let mut symbols = BTreeMap::new();
+        let mut unresolved = Vec::new();
+        for reference in &self.dependencies[index] {
+            let value = match reference.dependency {
+                AssignmentDependency::Assignment(target) => match &self.states[target] {
+                    AssignmentResolutionState::Resolved(Ok(value)) => SymbolValue::Absolute(*value),
+                    AssignmentResolutionState::Resolved(Err(error)) => return Err(error.clone()),
+                    AssignmentResolutionState::Unvisited | AssignmentResolutionState::Visiting => {
+                        unreachable!("assignment dependencies resolve before evaluation")
+                    }
+                },
+                AssignmentDependency::Base(value) => value,
+                AssignmentDependency::Undefined => {
+                    unresolved.push(reference.name.clone());
+                    SymbolValue::Undefined
+                }
+            };
+            symbols.insert(reference.name.clone(), value);
+        }
+
+        let name = &self.assignments[index].0;
+        match classify(&self.assignments[index].1, &symbols) {
+            Ok(ClassifiedExpr::Absolute(value)) => Ok(value),
+            Ok(ClassifiedExpr::UnsignedAbsolute(value)) => {
+                Ok(i64::from_le_bytes(value.to_le_bytes()))
+            }
+            Err(ClassifyError::Overflow) => Err(AbsoluteAssignmentError::InvalidExpression {
+                assignment: index,
+                owner: name.clone(),
+                error: ClassifyError::Overflow,
+            }),
+            _ if !unresolved.is_empty()
+                && self.can_resolve_with_labels(index, &symbols, &unresolved) =>
+            {
+                Err(AbsoluteAssignmentError::UndefinedSymbol {
+                    assignment: index,
+                    owner: name.clone(),
+                    symbol: unresolved[0].clone(),
+                })
+            }
+            Ok(_) => Err(AbsoluteAssignmentError::NonAbsolute {
+                assignment: index,
+                symbol: name.clone(),
+            }),
+            Err(error) => Err(AbsoluteAssignmentError::InvalidExpression {
+                assignment: index,
+                owner: name.clone(),
+                error,
+            }),
+        }
+    }
+
+    fn can_resolve_with_labels(
+        &self,
+        index: usize,
+        symbols: &BTreeMap<String, SymbolValue>,
+        unresolved: &[String],
+    ) -> bool {
+        let mut defined = symbols.clone();
+        for symbol in unresolved {
+            defined.insert(
+                symbol.clone(),
+                SymbolValue::Defined {
+                    section: usize::MAX,
+                    value: 0,
+                },
+            );
+        }
+        matches!(
+            classify(&self.assignments[index].1, &defined),
+            Ok(ClassifiedExpr::Absolute(_))
+        )
+    }
+}
+
+fn checked_add(lhs: i64, rhs: i64) -> Result<i64, ClassifyError> {
+    lhs.checked_add(rhs).ok_or(ClassifyError::Overflow)
 }
 
 fn checked_mul(lhs: i64, rhs: i64) -> Result<i64, ClassifyError> {
@@ -455,6 +851,141 @@ mod tests {
     }
 
     #[test]
+    fn classify_same_section_difference_across_signed_address_boundary() {
+        let difference = Expr::Sub(
+            Box::new(Expr::Symbol("end".into())),
+            Box::new(Expr::Symbol("start".into())),
+        );
+        let mut symbols = BTreeMap::from([
+            (
+                "start".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 1,
+                },
+            ),
+            (
+                "end".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 1_u64 << 63,
+                },
+            ),
+        ]);
+        assert_eq!(
+            classify(&difference, &symbols).unwrap(),
+            ClassifiedExpr::Absolute(i64::MAX)
+        );
+
+        symbols.insert(
+            "start".into(),
+            SymbolValue::Defined {
+                section: 1,
+                value: 0,
+            },
+        );
+        assert_eq!(
+            classify(&difference, &symbols),
+            Err(ClassifyError::Overflow)
+        );
+
+        let adjusted = Expr::Sub(Box::new(difference), Box::new(Expr::Int(1)));
+        assert_eq!(
+            classify(&adjusted, &symbols).unwrap(),
+            ClassifiedExpr::Absolute(i64::MAX)
+        );
+    }
+
+    #[test]
+    fn high_address_symbols_keep_their_relocation_class() {
+        let symbols = BTreeMap::from([
+            (
+                "high".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: u64::MAX,
+                },
+            ),
+            (
+                "other".into(),
+                SymbolValue::Defined {
+                    section: 2,
+                    value: u64::MAX,
+                },
+            ),
+        ]);
+        assert_eq!(
+            classify(&Expr::Symbol("high".into()), &symbols).unwrap(),
+            ClassifiedExpr::Relocatable {
+                symbol: "high".into(),
+                addend: 0,
+            }
+        );
+        assert_eq!(
+            classify(
+                &Expr::Sub(
+                    Box::new(Expr::Symbol("high".into())),
+                    Box::new(Expr::Symbol("other".into())),
+                ),
+                &symbols,
+            )
+            .unwrap(),
+            ClassifiedExpr::Difference {
+                minuend: "high".into(),
+                subtrahend: "other".into(),
+                addend: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn high_address_anchor_selection_accepts_equivalent_term_orders() {
+        let symbols = BTreeMap::from([
+            (
+                "low1".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 0,
+                },
+            ),
+            (
+                "low2".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 0,
+                },
+            ),
+            (
+                "high".into(),
+                SymbolValue::Defined {
+                    section: 1,
+                    value: 1_u64 << 63,
+                },
+            ),
+        ]);
+        let low_first = Expr::Sub(
+            Box::new(Expr::Add(
+                Box::new(Expr::Symbol("low1".into())),
+                Box::new(Expr::Symbol("high".into())),
+            )),
+            Box::new(Expr::Symbol("low2".into())),
+        );
+        let high_first = Expr::Sub(
+            Box::new(Expr::Add(
+                Box::new(Expr::Symbol("high".into())),
+                Box::new(Expr::Symbol("low1".into())),
+            )),
+            Box::new(Expr::Symbol("low2".into())),
+        );
+        let expected = ClassifiedExpr::Relocatable {
+            symbol: "high".into(),
+            addend: 0,
+        };
+        assert_eq!(classify(&low_first, &symbols).unwrap(), expected);
+        assert_eq!(classify(&high_first, &symbols).unwrap(), expected);
+    }
+
+    #[test]
     fn classify_external_difference() {
         let expr = Expr::Add(
             Box::new(Expr::Sub(
@@ -549,5 +1080,55 @@ mod tests {
                 pcrel: true,
             }
         );
+    }
+
+    #[test]
+    fn absolute_assignments_resolve_chronologically_and_freeze_aliases() {
+        let assignments = vec![
+            ("A".into(), Expr::Symbol("B".into())),
+            ("B".into(), Expr::Int(2)),
+            ("B".into(), Expr::Int(3)),
+        ];
+        assert_eq!(
+            resolve_absolute_assignments(&assignments, &BTreeMap::new()),
+            [Ok(2), Ok(2), Ok(3)]
+        );
+    }
+
+    #[test]
+    fn absolute_assignment_resolution_handles_deep_alias_chains() {
+        const COUNT: usize = 20_000;
+        let assignments: Vec<_> = (0..COUNT)
+            .map(|index| {
+                let expression = if index + 1 == COUNT {
+                    Expr::Int(7)
+                } else {
+                    Expr::Symbol(format!("X{}", index + 1))
+                };
+                (format!("X{index}"), expression)
+            })
+            .collect();
+        let resolved = resolve_absolute_assignments(&assignments, &BTreeMap::new());
+        assert_eq!(resolved.len(), assignments.len());
+        assert!(resolved.iter().all(|value| value == &Ok(7)));
+    }
+
+    #[test]
+    fn absolute_assignment_resolution_handles_deep_cycles() {
+        const COUNT: usize = 20_000;
+        let assignments: Vec<_> = (0..COUNT)
+            .map(|index| {
+                (
+                    format!("X{index}"),
+                    Expr::Symbol(format!("X{}", (index + 1) % COUNT)),
+                )
+            })
+            .collect();
+        let resolved = resolve_absolute_assignments(&assignments, &BTreeMap::new());
+        assert_eq!(resolved.len(), assignments.len());
+        assert!(resolved.iter().all(|value| matches!(
+            value,
+            Err(AbsoluteAssignmentError::CyclicDefinition { symbol, .. }) if symbol == "X0"
+        )));
     }
 }

@@ -174,6 +174,13 @@ fn rt_cmp_ext_reg() {
     roundtrip(".text\ncmp x0, w1, sxtw\n");
 }
 #[test]
+fn rt_sxtw() {
+    if !native_macho_host("roundtrip", "rt_sxtw") {
+        return;
+    }
+    roundtrip(".text\nsxtw x6, w7\n");
+}
+#[test]
 fn rt_add_imm() {
     if !native_macho_host("roundtrip", "rt_add_imm") {
         return;
@@ -2687,6 +2694,20 @@ fn rt_fmadd_d() {
     roundtrip(".text\nfmadd d0, d1, d2, d3\n");
 }
 #[test]
+fn rt_fmsub_d() {
+    if !native_macho_host("roundtrip", "rt_fmsub_d") {
+        return;
+    }
+    roundtrip(".text\nfmsub d0, d1, d2, d3\n");
+}
+#[test]
+fn rt_fnmsub_d() {
+    if !native_macho_host("roundtrip", "rt_fnmsub_d") {
+        return;
+    }
+    roundtrip(".text\nfnmsub d0, d1, d2, d3\n");
+}
+#[test]
 fn rt_fcvtzs() {
     if !native_macho_host("roundtrip", "rt_fcvtzs") {
         return;
@@ -2898,6 +2919,20 @@ fn rt_fmadd_s() {
         return;
     }
     roundtrip(".text\nfmadd s0, s1, s2, s3\n");
+}
+#[test]
+fn rt_fmsub_s() {
+    if !native_macho_host("roundtrip", "rt_fmsub_s") {
+        return;
+    }
+    roundtrip(".text\nfmsub s0, s1, s2, s3\n");
+}
+#[test]
+fn rt_fnmsub_s() {
+    if !native_macho_host("roundtrip", "rt_fnmsub_s") {
+        return;
+    }
+    roundtrip(".text\nfnmsub s0, s1, s2, s3\n");
 }
 
 // LDP/STP missing variants

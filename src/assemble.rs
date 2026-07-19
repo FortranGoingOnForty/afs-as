@@ -72,6 +72,7 @@ pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
 fn assemble_located_stmts(stmts: &[LocatedStmt]) -> Result<ObjectFile, AsmError> {
     let mut asm = Assembler::new();
     asm.collect_layout(stmts)?;
+    asm.prepare_unwind_layout()?;
     asm.prepare_expression_state(stmts)?;
     asm.reset_for_emission();
     asm.process(stmts)?;
@@ -219,7 +220,7 @@ impl std::fmt::Display for AsmError {
                 )?;
                 if let Some(snippet) = &self.snippet {
                     writeln!(f, "{}", snippet)?;
-                    write!(f, "{}^", " ".repeat(col.saturating_sub(1) as usize))?;
+                    write!(f, "{}^", diagnostic_caret_prefix(snippet, col))?;
                 }
                 Ok(())
             }
@@ -228,6 +229,16 @@ impl std::fmt::Display for AsmError {
             _ => write!(f, "error: {}", self.msg),
         }
     }
+}
+
+fn diagnostic_caret_prefix(snippet: &str, col: u32) -> String {
+    let mut chars = snippet.chars();
+    (0..col.saturating_sub(1))
+        .map(|_| match chars.next() {
+            Some('\t') => '\t',
+            Some(_) | None => ' ',
+        })
+        .collect()
 }
 
 impl std::error::Error for AsmError {}
@@ -245,16 +256,23 @@ struct Assembler {
     current_line: u32,
     current_col: u32,
     sections: Vec<Section>,
+    source_section_count: usize,
 
     /// Labels → (section index, offset within section).
     labels: BTreeMap<String, (usize, u64)>,
-    /// Absolute symbol assignments declared via `.set` / `.equ`.
-    absolute_defs: BTreeMap<String, Expr>,
+    /// Absolute symbol assignments declared via `.set` / `.equ`, in source order.
+    absolute_assignments: Vec<(String, Expr)>,
+    absolute_symbol_names: BTreeSet<String>,
+    absolute_assignment_values: Vec<i64>,
+    next_absolute_assignment: usize,
+    initial_absolute_symbols: BTreeMap<String, i64>,
     absolute_symbols: BTreeMap<String, i64>,
+    final_absolute_symbols: BTreeMap<String, i64>,
     common_symbols: BTreeMap<String, CommonSymbol>,
     symbol_order: BTreeMap<String, usize>,
     next_symbol_order: usize,
     section_bases: Vec<u64>,
+    expected_section_layout: Vec<SectionLayoutFingerprint>,
     /// Symbol attributes declared via directives.
     symbol_attrs: BTreeMap<String, SymbolAttrs>,
     /// Unresolved fixups captured during emission.
@@ -267,6 +285,27 @@ struct Assembler {
     active_cfi_proc: Option<CfiProcState>,
     compact_unwind_rows: Vec<CompactUnwindRow>,
     eh_frame_rows: Vec<EhFrameRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SectionLayoutFingerprint {
+    segment: String,
+    name: String,
+    kind: SectionKind,
+    align_pow2: u32,
+    size: u64,
+}
+
+impl From<&Section> for SectionLayoutFingerprint {
+    fn from(section: &Section) -> Self {
+        Self {
+            segment: section.segment.clone(),
+            name: section.name.clone(),
+            kind: section.kind.clone(),
+            align_pow2: section.align_pow2,
+            size: section.size,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -307,7 +346,7 @@ enum FixupKind {
     GotLoadPageOff12,
     TlvpLoadPageOff12,
     Data32,
-    Data64,
+    Data64(ClassifiedExpr),
 }
 
 struct PendingReloc {
@@ -405,6 +444,9 @@ const UNWIND_ARM64_FRAME_X21_X22_PAIR: u32 = 0x00000002;
 const UNWIND_ARM64_FRAME_X23_X24_PAIR: u32 = 0x00000004;
 const UNWIND_ARM64_FRAME_X25_X26_PAIR: u32 = 0x00000008;
 const UNWIND_ARM64_FRAME_X27_X28_PAIR: u32 = 0x00000010;
+const COMPACT_UNWIND_ENTRY_SIZE: u64 = 32;
+const EH_FRAME_CIE_SIZE: u64 = 20;
+const EH_FRAME_FDE_FIXED_SIZE: usize = 25;
 
 impl CfiProcState {
     fn new(start_section: usize, start_offset: u64, function_symbol: String) -> Self {
@@ -565,13 +607,20 @@ impl Assembler {
             current_line: 0,
             current_col: 0,
             sections: vec![Section::text()],
+            source_section_count: 1,
             labels: BTreeMap::new(),
-            absolute_defs: BTreeMap::new(),
+            absolute_assignments: Vec::new(),
+            absolute_symbol_names: BTreeSet::new(),
+            absolute_assignment_values: Vec::new(),
+            next_absolute_assignment: 0,
+            initial_absolute_symbols: BTreeMap::new(),
             absolute_symbols: BTreeMap::new(),
+            final_absolute_symbols: BTreeMap::new(),
             common_symbols: BTreeMap::new(),
             symbol_order: BTreeMap::from([(String::from("ltmp0"), 0)]),
             next_symbol_order: 1,
             section_bases: Vec::new(),
+            expected_section_layout: Vec::new(),
             symbol_attrs: BTreeMap::new(),
             fixups: Vec::new(),
             pending_relocs: vec![Vec::new()],
@@ -609,6 +658,7 @@ impl Assembler {
         self.section = 0;
         self.current_line = 0;
         self.current_col = 0;
+        self.sections.truncate(self.source_section_count);
         for section in &mut self.sections {
             section.data.clear();
             section.relocations.clear();
@@ -616,13 +666,14 @@ impl Assembler {
             section.size = 0;
         }
         self.fixups.clear();
+        self.next_absolute_assignment = 0;
+        self.absolute_symbols
+            .clone_from(&self.initial_absolute_symbols);
         self.pending_relocs.clear();
         self.pending_relocs
             .resize_with(self.sections.len(), Vec::new);
         self.active_cfi_proc = None;
         self.linker_optimization_hints.clear();
-        self.compact_unwind_rows.clear();
-        self.eh_frame_rows.clear();
     }
 
     fn note_stmt_location(&mut self, line: u32, col: u32) {
@@ -630,9 +681,65 @@ impl Assembler {
         self.current_col = col;
     }
 
-    fn prepare_expression_state(&mut self, _stmts: &[LocatedStmt]) -> Result<(), AsmError> {
-        self.section_bases = self.section_base_addresses();
-        self.absolute_symbols = self.resolve_absolute_symbols()?;
+    fn prepare_expression_state(&mut self, stmts: &[LocatedStmt]) -> Result<(), AsmError> {
+        self.section_bases = match self.section_base_addresses() {
+            Ok(bases) => bases,
+            Err(error) => {
+                let error = match Self::section_layout_error_location(stmts) {
+                    Some((line, col)) => error.with_loc_if_absent(line, col),
+                    None => error,
+                };
+                return Err(error);
+            }
+        };
+        self.expected_section_layout = self
+            .sections
+            .iter()
+            .map(SectionLayoutFingerprint::from)
+            .collect();
+        let assignment_results = expr::resolve_absolute_assignments(
+            &self.absolute_assignments,
+            &self.label_values_for_expr(),
+        );
+        let assignment_locations: Vec<_> = stmts
+            .iter()
+            .filter_map(|stmt| {
+                matches!(&stmt.stmt, Stmt::Directive(Directive::Set(_, _)))
+                    .then_some((stmt.line, stmt.col))
+            })
+            .collect();
+        debug_assert_eq!(assignment_locations.len(), self.absolute_assignments.len());
+        let mut first_names = BTreeMap::new();
+        self.initial_absolute_symbols.clear();
+        self.final_absolute_symbols.clear();
+        self.absolute_assignment_values.clear();
+        for ((name, _), result) in self.absolute_assignments.iter().zip(assignment_results) {
+            let value = result.map_err(|error| {
+                let location = assignment_locations.get(error.assignment_index()).copied();
+                let error = AsmError(error.to_string());
+                match location {
+                    Some((line, col)) => error.with_loc_if_absent(line, col),
+                    None => error,
+                }
+            })?;
+            if first_names.insert(name.clone(), ()).is_none() {
+                self.initial_absolute_symbols.insert(name.clone(), value);
+            }
+            self.final_absolute_symbols.insert(name.clone(), value);
+            self.absolute_assignment_values.push(value);
+        }
+        self.absolute_symbols
+            .clone_from(&self.final_absolute_symbols);
+        Ok(())
+    }
+
+    fn prepare_unwind_layout(&mut self) -> Result<(), AsmError> {
+        self.source_section_count = self.sections.len();
+        for section in self.unwind_layout_sections()? {
+            self.note_section_temp(self.sections.len());
+            self.sections.push(section);
+            self.pending_relocs.push(Vec::new());
+        }
         Ok(())
     }
 
@@ -640,35 +747,77 @@ impl Assembler {
         self.section = 0;
 
         for stmt in stmts {
-            match &stmt.stmt {
-                Stmt::Label(name) => {
-                    if self.common_symbols.contains_key(name) {
-                        return Err(AsmError(format!("duplicate symbol '{}'", name))
-                            .with_loc_if_absent(stmt.line, stmt.col));
-                    }
-                    self.note_symbol(name);
-                    let offset = self.current_offset();
-                    if self
-                        .labels
-                        .insert(name.clone(), (self.section, offset))
-                        .is_some()
-                    {
-                        return Err(AsmError(format!("duplicate label '{}'", name))
-                            .with_loc_if_absent(stmt.line, stmt.col));
-                    }
-                }
-                Stmt::Directive(dir) => {
-                    self.collect_directive_layout(dir)
-                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
-                }
-                Stmt::Instruction(_) | Stmt::InstructionWithReloc(_, _) => {
-                    self.reserve_initialized_bytes(4, "instruction")
-                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
-                }
-            }
+            self.collect_layout_stmt(stmt)?;
+        }
+
+        if self.active_cfi_proc.is_some() {
+            return Err(AsmError(
+                "unterminated .cfi_startproc before end of file".into(),
+            ));
         }
 
         Ok(())
+    }
+
+    fn collect_layout_stmt(&mut self, stmt: &LocatedStmt) -> Result<(), AsmError> {
+        match &stmt.stmt {
+            Stmt::Label(name) => {
+                if self.common_symbols.contains_key(name) {
+                    return Err(AsmError(format!("duplicate symbol '{}'", name))
+                        .with_loc_if_absent(stmt.line, stmt.col));
+                }
+                self.note_symbol(name);
+                let offset = self.current_offset();
+                if self
+                    .labels
+                    .insert(name.clone(), (self.section, offset))
+                    .is_some()
+                {
+                    return Err(AsmError(format!("duplicate label '{}'", name))
+                        .with_loc_if_absent(stmt.line, stmt.col));
+                }
+            }
+            Stmt::Directive(dir) => {
+                self.collect_directive_layout(dir)
+                    .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
+            }
+            Stmt::Instruction(_) | Stmt::InstructionWithReloc(_, _) => {
+                self.reserve_initialized_bytes(4, "instruction")
+                    .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn section_layout_error_location(stmts: &[LocatedStmt]) -> Option<(u32, u32)> {
+        if stmts.is_empty() || !Self::section_layout_overflows(stmts)? {
+            return None;
+        }
+
+        let mut first = 1;
+        let mut past_last = stmts.len();
+        while first < past_last {
+            let middle = first + (past_last - first) / 2;
+            if Self::section_layout_overflows(&stmts[..middle])? {
+                past_last = middle;
+            } else {
+                first = middle + 1;
+            }
+        }
+
+        let stmt = &stmts[first - 1];
+        Some((stmt.line, stmt.col))
+    }
+
+    fn section_layout_overflows(stmts: &[LocatedStmt]) -> Option<bool> {
+        let mut probe = Self::new();
+        for stmt in stmts {
+            probe.collect_layout_stmt(stmt).ok()?;
+        }
+        let unwind_sections = probe.unwind_layout_sections().ok()?;
+        let mut sections = probe.sections;
+        sections.extend(unwind_sections);
+        Some(Self::section_base_addresses_for(&sections).is_err())
     }
 
     fn process(&mut self, stmts: &[LocatedStmt]) -> Result<(), AsmError> {
@@ -722,7 +871,8 @@ impl Assembler {
             Directive::Data => self.switch_to("__DATA", "__data")?,
             Directive::Set(name, expr) => {
                 self.note_symbol(name);
-                self.absolute_defs.insert(name.clone(), expr.clone());
+                self.absolute_symbol_names.insert(name.clone());
+                self.absolute_assignments.push((name.clone(), expr.clone()));
             }
             Directive::Comm {
                 name,
@@ -780,11 +930,14 @@ impl Assembler {
                 if *n > 1024 * 1024 * 64 {
                     return Err(AsmError(format!(".space size {} too large (max 64MB)", n)));
                 }
-                self.sections[self.section].size += *n;
+                self.sections[self.section].size = self.sections[self.section]
+                    .size
+                    .checked_add(*n)
+                    .ok_or_else(|| AsmError(".space size overflows u64".into()))?;
             }
             Directive::Fill { repeat, size, .. } => {
                 let total = (*repeat)
-                    .checked_mul((*size).into())
+                    .checked_mul((*size).min(8).into())
                     .ok_or_else(|| AsmError(".fill size overflows u64".into()))?;
                 self.reserve_initialized_bytes(total, ".fill")?;
             }
@@ -797,14 +950,14 @@ impl Assembler {
             } => {
                 self.reserve_zerofill(segment, section, symbol.as_deref(), *size, *align_pow2)?;
             }
-            Directive::CfiStartProc
-            | Directive::CfiEndProc
-            | Directive::CfiDefCfa { .. }
+            Directive::CfiStartProc => self.start_cfi_proc()?,
+            Directive::CfiEndProc => self.finish_cfi_proc()?,
+            Directive::CfiDefCfa { .. }
             | Directive::CfiDefCfaOffset(_)
             | Directive::CfiDefCfaRegister(_)
             | Directive::CfiOffset { .. }
             | Directive::CfiRestore(_)
-            | Directive::CfiAdjustCfaOffset(_) => {}
+            | Directive::CfiAdjustCfaOffset(_) => self.apply_cfi_directive(dir)?,
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
@@ -825,8 +978,8 @@ impl Assembler {
         match dir {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
-            Directive::Set(_, _)
-            | Directive::Comm { .. }
+            Directive::Set(name, _) => self.activate_absolute_definition(name)?,
+            Directive::Comm { .. }
             | Directive::Extern(_)
             | Directive::Global(_)
             | Directive::PrivateExtern(_)
@@ -846,27 +999,26 @@ impl Assembler {
             }
             Directive::Byte(vals) => {
                 for expr in vals {
-                    let value = self.require_absolute_expr(expr, ".byte expression")?;
-                    self.emit_initialized_bytes(&[(value as u8)], ".byte")?;
+                    let bytes = self.require_sized_absolute_expr(expr, ".byte expression", 8)?;
+                    self.emit_initialized_bytes(&bytes[..1], ".byte")?;
                 }
             }
             Directive::Short(vals) => {
                 for expr in vals {
-                    let value = self.require_absolute_expr(expr, ".short expression")?;
-                    self.emit_initialized_bytes(&(value as u16).to_le_bytes(), ".short")?;
+                    let bytes = self.require_sized_absolute_expr(expr, ".short expression", 16)?;
+                    self.emit_initialized_bytes(&bytes[..2], ".short")?;
                 }
             }
             Directive::Word(vals) => {
                 for expr in vals {
                     match self.classify_expr(expr)? {
                         ClassifiedExpr::Absolute(value) => {
-                            self.emit_initialized_bytes(&(value as u32).to_le_bytes(), ".word")?;
+                            let bytes = checked_signed_data_bytes(value, ".word expression", 32)?;
+                            self.emit_initialized_bytes(&bytes[..4], ".word")?;
                         }
                         ClassifiedExpr::UnsignedAbsolute(value) => {
-                            return Err(AsmError(format!(
-                                ".word unsigned value {} is out of range; use .quad for a 64-bit bit pattern",
-                                value
-                            )));
+                            let bytes = checked_unsigned_data_bytes(value, ".word expression", 32)?;
+                            self.emit_initialized_bytes(&bytes[..4], ".word")?;
                         }
                         ClassifiedExpr::PointerToGot { .. } => {
                             let offset = self.current_offset() as u32;
@@ -891,6 +1043,7 @@ impl Assembler {
             }
             Directive::Quad(vals) => {
                 for expr in vals {
+                    let classified = self.classify_expr(expr)?;
                     let offset = self.current_offset() as u32;
                     self.emit_initialized_bytes(&0u64.to_le_bytes(), ".quad")?;
                     self.fixups.push(Fixup {
@@ -899,7 +1052,7 @@ impl Assembler {
                         line: self.current_line,
                         col: self.current_col,
                         expr: expr.clone(),
-                        kind: FixupKind::Data64,
+                        kind: FixupKind::Data64(classified),
                     });
                 }
             }
@@ -927,18 +1080,14 @@ impl Assembler {
             } => {
                 self.emit_zerofill(segment, section, *size, *align_pow2)?;
             }
-            Directive::CfiStartProc => {
-                self.start_cfi_proc()?;
-            }
-            Directive::CfiEndProc => {
-                self.finish_cfi_proc()?;
-            }
-            Directive::CfiDefCfa { .. }
+            Directive::CfiStartProc
+            | Directive::CfiEndProc
+            | Directive::CfiDefCfa { .. }
             | Directive::CfiDefCfaOffset(_)
             | Directive::CfiDefCfaRegister(_)
             | Directive::CfiOffset { .. }
             | Directive::CfiRestore(_)
-            | Directive::CfiAdjustCfaOffset(_) => self.apply_cfi_directive(dir)?,
+            | Directive::CfiAdjustCfaOffset(_) => {}
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
@@ -1154,7 +1303,10 @@ impl Assembler {
                 context, self.sections[self.section].segment, self.sections[self.section].name
             )));
         }
-        self.sections[self.section].size += amount;
+        self.sections[self.section].size = self.sections[self.section]
+            .size
+            .checked_add(amount)
+            .ok_or_else(|| AsmError(format!("{} size overflows u64", context)))?;
         Ok(())
     }
 
@@ -1166,18 +1318,31 @@ impl Assembler {
 
     fn emit_space(&mut self, amount: u64) -> Result<(), AsmError> {
         if self.sections[self.section].kind.is_zerofill() {
-            self.sections[self.section].size += amount;
+            self.sections[self.section].size = self.sections[self.section]
+                .size
+                .checked_add(amount)
+                .ok_or_else(|| AsmError(".space size overflows u64".into()))?;
             return Ok(());
         }
         let section = &mut self.sections[self.section];
-        let new_len = section.data.len() + amount as usize;
+        let new_size = section
+            .size
+            .checked_add(amount)
+            .ok_or_else(|| AsmError(".space size overflows u64".into()))?;
+        let amount = usize::try_from(amount)
+            .map_err(|_| AsmError(".space size does not fit in usize".into()))?;
+        let new_len = section
+            .data
+            .len()
+            .checked_add(amount)
+            .ok_or_else(|| AsmError(".space size overflows usize".into()))?;
         section.data.resize(new_len, 0);
-        section.size += amount;
+        section.size = new_size;
         Ok(())
     }
 
     fn emit_fill(&mut self, repeat: u64, size: u8, value: u64) -> Result<(), AsmError> {
-        let byte_count: usize = size.into();
+        let byte_count: usize = size.min(8).into();
         let total = repeat
             .checked_mul(byte_count as u64)
             .ok_or_else(|| AsmError(".fill size overflows u64".into()))?;
@@ -1190,14 +1355,8 @@ impl Assembler {
         if byte_count == 0 {
             return Ok(());
         }
-        if byte_count > 8 {
-            return Err(AsmError(format!(
-                ".fill element size {} too large (max 8)",
-                size
-            )));
-        }
-
-        let pattern = value.to_le_bytes();
+        // Darwin truncates the pattern to 32 bits before extending it to the element width.
+        let pattern = u64::from(value as u32).to_le_bytes();
         for _ in 0..repeat {
             self.emit_initialized_bytes(&pattern[..byte_count], ".fill")?;
         }
@@ -1213,7 +1372,8 @@ impl Assembler {
         }
 
         let current = self.current_offset();
-        let aligned = align_value(current, power);
+        let aligned = checked_align_value(current, power)
+            .ok_or_else(|| AsmError("alignment overflows u64".into()))?;
         let padding = aligned - current;
         let section = &mut self.sections[self.section];
         section.align_pow2 = section.align_pow2.max(power);
@@ -1243,7 +1403,8 @@ impl Assembler {
         }
 
         let current = self.current_offset();
-        let aligned = align_value(current, power);
+        let aligned = checked_align_value(current, power)
+            .ok_or_else(|| AsmError("alignment overflows u64".into()))?;
         let padding = aligned - current;
         if max_skip.is_some_and(|limit| padding > limit) {
             return Ok(());
@@ -1286,9 +1447,15 @@ impl Assembler {
         if byte == 0 {
             return self.emit_space(amount);
         }
+        let amount_usize = usize::try_from(amount)
+            .map_err(|_| AsmError(format!("{} size does not fit in usize", context)))?;
+        let new_len = self.sections[self.section]
+            .data
+            .len()
+            .checked_add(amount_usize)
+            .ok_or_else(|| AsmError(format!("{} size overflows usize", context)))?;
         self.reserve_initialized_bytes(amount, context)?;
         let section = &mut self.sections[self.section];
-        let new_len = section.data.len() + amount as usize;
         section.data.resize(new_len, byte);
         Ok(())
     }
@@ -1333,7 +1500,7 @@ impl Assembler {
                     false,
                 ),
                 FixupKind::Data32 => self.resolve_data32_fixup(fixup),
-                FixupKind::Data64 => self.resolve_data64_fixup(fixup),
+                FixupKind::Data64(classified) => self.resolve_data64_fixup(fixup, classified),
             };
             result.map_err(|e| e.with_loc_if_absent(line, col))?;
         }
@@ -1427,6 +1594,14 @@ impl Assembler {
         let context = if pcrel { "page fixup" } else { "pageoff fixup" };
         let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, context)?;
         if addend != 0 {
+            if !matches!(
+                reloc_type,
+                crate::macho::ARM64_RELOC_PAGE21 | crate::macho::ARM64_RELOC_PAGEOFF12
+            ) {
+                return Err(AsmError(
+                    "GOT and TLVP page relocations do not support addends".into(),
+                ));
+            }
             self.record_addend_reloc(fixup.section, fixup.offset, 2, addend)?;
         }
         self.record_pending_reloc(fixup.section, fixup.offset, symbol, 2, reloc_type, pcrel);
@@ -1480,8 +1655,12 @@ impl Assembler {
         Ok(())
     }
 
-    fn resolve_data64_fixup(&mut self, fixup: Fixup) -> Result<(), AsmError> {
-        match self.classify_expr(&fixup.expr)? {
+    fn resolve_data64_fixup(
+        &mut self,
+        fixup: Fixup,
+        classified: ClassifiedExpr,
+    ) -> Result<(), AsmError> {
+        match classified {
             ClassifiedExpr::Absolute(value) => {
                 self.patch_section_data(
                     fixup.section,
@@ -1547,6 +1726,11 @@ impl Assembler {
                 addend,
                 pcrel,
             } => {
+                if pcrel {
+                    return Err(AsmError(
+                        ".quad pointer-to-GOT expression must not be PC-relative".into(),
+                    ));
+                }
                 self.patch_section_data(
                     fixup.section,
                     fixup.offset,
@@ -1577,6 +1761,11 @@ impl Assembler {
                 value
             ))),
             ClassifiedExpr::PointerToGot { symbol, addend, pcrel } => {
+                if !pcrel {
+                    return Err(AsmError(
+                        ".long pointer-to-GOT expression must be PC-relative".into(),
+                    ));
+                }
                 self.patch_section_data(fixup.section, fixup.offset, &(addend as u32).to_le_bytes(), ".word")?;
                 self.record_pending_reloc(
                     fixup.section,
@@ -1687,7 +1876,7 @@ impl Assembler {
                 name, align_pow2
             )));
         }
-        if self.labels.contains_key(name) || self.absolute_defs.contains_key(name) {
+        if self.labels.contains_key(name) || self.absolute_symbol_names.contains(name) {
             return Err(AsmError(format!("duplicate symbol '{}'", name)));
         }
         if self
@@ -1726,13 +1915,16 @@ impl Assembler {
         let offset = {
             let section = &mut self.sections[target];
             section.align_pow2 = section.align_pow2.max(align_pow2);
-            let offset = align_value(section.size, align_pow2);
+            let offset = checked_align_value(section.size, align_pow2)
+                .ok_or_else(|| AsmError(".zerofill alignment overflows u64".into()))?;
             section.size = offset;
             offset
         };
 
         if let Some(symbol) = symbol {
-            if self.common_symbols.contains_key(symbol) || self.absolute_defs.contains_key(symbol) {
+            if self.common_symbols.contains_key(symbol)
+                || self.absolute_symbol_names.contains(symbol)
+            {
                 return Err(AsmError(format!("duplicate symbol '{}'", symbol)));
             }
             self.note_symbol(symbol);
@@ -1775,7 +1967,8 @@ impl Assembler {
 
         let section = &mut self.sections[target];
         section.align_pow2 = section.align_pow2.max(align_pow2);
-        section.size = align_value(section.size, align_pow2);
+        section.size = checked_align_value(section.size, align_pow2)
+            .ok_or_else(|| AsmError(".zerofill alignment overflows u64".into()))?;
         section.size = section
             .size
             .checked_add(size)
@@ -1935,31 +2128,44 @@ impl Assembler {
         }
     }
 
-    fn section_base_addresses(&self) -> Vec<u64> {
-        let mut bases = vec![0u64; self.sections.len()];
+    fn section_base_addresses(&self) -> Result<Vec<u64>, AsmError> {
+        Self::section_base_addresses_for(&self.sections)
+    }
+
+    fn section_base_addresses_for(sections: &[Section]) -> Result<Vec<u64>, AsmError> {
+        let mut bases = vec![0u64; sections.len()];
         let mut addr = 0u64;
-        for index in section_allocation_order(&self.sections) {
-            let section = &self.sections[index];
-            addr = align_value(addr, section.align_pow2);
+        for index in section_allocation_order(sections) {
+            let section = &sections[index];
+            addr = checked_align_value(addr, section.align_pow2)
+                .ok_or_else(|| AsmError("section layout alignment overflows u64".into()))?;
             bases[index] = addr;
-            addr += section.size;
+            addr = addr
+                .checked_add(section.size)
+                .ok_or_else(|| AsmError("section layout size overflows u64".into()))?;
         }
-        bases
+        Ok(bases)
     }
 
     fn symbol_values_for_expr(&self) -> BTreeMap<String, SymbolValue> {
-        let mut values = BTreeMap::new();
+        let mut values = self.label_values_for_expr();
 
         for (name, value) in &self.absolute_symbols {
             values.insert(name.clone(), SymbolValue::Absolute(*value));
         }
+
+        values
+    }
+
+    fn label_values_for_expr(&self) -> BTreeMap<String, SymbolValue> {
+        let mut values = BTreeMap::new();
 
         for (name, (section, offset)) in &self.labels {
             values.insert(
                 name.clone(),
                 SymbolValue::Defined {
                     section: *section,
-                    value: (self.section_bases[*section] + offset) as i64,
+                    value: *offset,
                 },
             );
         }
@@ -1972,13 +2178,37 @@ impl Assembler {
             .map_err(|err| AsmError(err.to_string()))
     }
 
-    fn require_absolute_expr(&self, expr: &Expr, context: &str) -> Result<i64, AsmError> {
+    fn activate_absolute_definition(&mut self, name: &str) -> Result<(), AsmError> {
+        let (expected_name, _) = self
+            .absolute_assignments
+            .get(self.next_absolute_assignment)
+            .ok_or_else(|| AsmError("missing resolved absolute assignment".into()))?;
+        if expected_name != name {
+            return Err(AsmError(format!(
+                "absolute assignment order changed between passes: expected '{}', got '{}'",
+                expected_name, name
+            )));
+        }
+        let value = *self
+            .absolute_assignment_values
+            .get(self.next_absolute_assignment)
+            .ok_or_else(|| AsmError("missing resolved absolute assignment value".into()))?;
+        self.next_absolute_assignment += 1;
+        self.absolute_symbols.insert(name.to_string(), value);
+        Ok(())
+    }
+
+    fn require_sized_absolute_expr(
+        &self,
+        expr: &Expr,
+        context: &str,
+        bits: u8,
+    ) -> Result<[u8; 8], AsmError> {
         match self.classify_expr(expr)? {
-            ClassifiedExpr::Absolute(value) => Ok(value),
-            ClassifiedExpr::UnsignedAbsolute(value) => Err(AsmError(format!(
-                "{} unsigned value {} exceeds the i64 range",
-                context, value
-            ))),
+            ClassifiedExpr::Absolute(value) => checked_signed_data_bytes(value, context, bits),
+            ClassifiedExpr::UnsignedAbsolute(value) => {
+                checked_unsigned_data_bytes(value, context, bits)
+            }
             ClassifiedExpr::Relocatable { .. }
             | ClassifiedExpr::Difference { .. }
             | ClassifiedExpr::PointerToGot { .. } => Err(AsmError(format!(
@@ -2114,6 +2344,44 @@ impl Assembler {
         self.pending_relocs.push(Vec::new());
     }
 
+    fn unwind_layout_sections(&self) -> Result<Vec<Section>, AsmError> {
+        let mut sections = Vec::new();
+
+        if !self.compact_unwind_rows.is_empty() {
+            let row_count = u64::try_from(self.compact_unwind_rows.len())
+                .map_err(|_| AsmError("compact unwind row count exceeds u64".into()))?;
+            let mut section = Section::new("__LD", "__compact_unwind", SectionKind::CompactUnwind);
+            section.align_pow2 = 3;
+            section.size = row_count
+                .checked_mul(COMPACT_UNWIND_ENTRY_SIZE)
+                .ok_or_else(|| AsmError("compact unwind section size overflows u64".into()))?;
+            sections.push(section);
+        }
+
+        if !self.eh_frame_rows.is_empty() {
+            let mut size = EH_FRAME_CIE_SIZE;
+            for row in &self.eh_frame_rows {
+                let fde_size = EH_FRAME_FDE_FIXED_SIZE
+                    .checked_add(row.instructions.len())
+                    .ok_or_else(|| AsmError("eh_frame FDE size overflows usize".into()))?;
+                u32::try_from(fde_size - 4)
+                    .map_err(|_| AsmError("eh_frame FDE exceeds u32".into()))?;
+                size = size
+                    .checked_add(
+                        u64::try_from(fde_size)
+                            .map_err(|_| AsmError("eh_frame FDE size exceeds u64".into()))?,
+                    )
+                    .ok_or_else(|| AsmError("eh_frame section size overflows u64".into()))?;
+            }
+            let mut section = Section::new("__TEXT", "__eh_frame", SectionKind::EhFrame);
+            section.align_pow2 = 3;
+            section.size = size;
+            sections.push(section);
+        }
+
+        Ok(sections)
+    }
+
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
         if self.active_cfi_proc.is_some() {
             return Err(AsmError(
@@ -2124,7 +2392,17 @@ impl Assembler {
         self.materialize_compact_unwind_section();
         self.materialize_eh_frame_section()?;
 
-        let section_bases = self.section_base_addresses();
+        let section_bases = self.section_base_addresses()?;
+        let section_layout: Vec<_> = self
+            .sections
+            .iter()
+            .map(SectionLayoutFingerprint::from)
+            .collect();
+        if section_bases != self.section_bases || section_layout != self.expected_section_layout {
+            return Err(AsmError(
+                "section layout changed between assembly passes".into(),
+            ));
+        }
         let absolute_symbols = self.absolute_symbols.clone();
         let mut symbols: Vec<Symbol> = Vec::new();
         let flags = self.metadata_flags();
@@ -2706,83 +2984,6 @@ impl Assembler {
         }
         Ok(data)
     }
-
-    fn resolve_absolute_symbols(&self) -> Result<BTreeMap<String, i64>, AsmError> {
-        let mut resolved = BTreeMap::new();
-        let mut visiting = Vec::new();
-        let names: Vec<_> = self.absolute_defs.keys().cloned().collect();
-        for name in names {
-            let value = self.resolve_absolute_symbol(&name, &mut resolved, &mut visiting)?;
-            resolved.insert(name, value);
-        }
-        Ok(resolved)
-    }
-
-    fn resolve_absolute_symbol(
-        &self,
-        name: &str,
-        resolved: &mut BTreeMap<String, i64>,
-        visiting: &mut Vec<String>,
-    ) -> Result<i64, AsmError> {
-        if let Some(value) = resolved.get(name) {
-            return Ok(*value);
-        }
-        if visiting.iter().any(|entry| entry == name) {
-            return Err(AsmError(format!(
-                "absolute symbol '{}' has a cyclic definition",
-                name
-            )));
-        }
-
-        let expr = self
-            .absolute_defs
-            .get(name)
-            .ok_or_else(|| AsmError(format!("missing absolute symbol definition '{}'", name)))?;
-
-        visiting.push(name.to_string());
-        let mut symbols = BTreeMap::new();
-        for referenced in expr::referenced_symbols(expr) {
-            if let Some(value) = resolved.get(&referenced) {
-                symbols.insert(referenced, SymbolValue::Absolute(*value));
-            } else if self.absolute_defs.contains_key(&referenced) {
-                let value = self.resolve_absolute_symbol(&referenced, resolved, visiting)?;
-                symbols.insert(referenced, SymbolValue::Absolute(value));
-            } else if let Some((section, offset)) = self.labels.get(&referenced) {
-                symbols.insert(
-                    referenced,
-                    SymbolValue::Defined {
-                        section: *section,
-                        value: (self.section_bases[*section] + offset) as i64,
-                    },
-                );
-            } else {
-                visiting.pop();
-                return Err(AsmError(format!(
-                    "absolute symbol '{}' references undefined symbol '{}'",
-                    name, referenced
-                )));
-            }
-        }
-
-        let value = match expr::classify(expr, &symbols) {
-            Ok(ClassifiedExpr::Absolute(value)) => value,
-            Ok(_) => {
-                visiting.pop();
-                return Err(AsmError(format!(
-                    "absolute symbol '{}' must resolve to an absolute value",
-                    name
-                )));
-            }
-            Err(err) => {
-                visiting.pop();
-                return Err(AsmError(format!("absolute symbol '{}': {}", name, err)));
-            }
-        };
-
-        visiting.pop();
-        resolved.insert(name.to_string(), value);
-        Ok(value)
-    }
 }
 
 fn emit_advance_loc(buf: &mut Vec<u8>, delta: u64) -> Result<(), AsmError> {
@@ -2855,9 +3056,31 @@ fn encode_uleb128(buf: &mut Vec<u8>, mut value: u64) {
     }
 }
 
-fn align_value(value: u64, power: u32) -> u64 {
-    let alignment = 1u64 << power;
-    (value + alignment - 1) & !(alignment - 1)
+fn checked_align_value(value: u64, power: u32) -> Option<u64> {
+    let alignment = 1u64.checked_shl(power)?;
+    value
+        .checked_add(alignment - 1)
+        .map(|value| value & !(alignment - 1))
+}
+
+fn checked_signed_data_bytes(value: i64, context: &str, bits: u8) -> Result<[u8; 8], AsmError> {
+    if !parse::signed_data_value_fits(value, bits) {
+        return Err(AsmError(format!(
+            "{} value {} is out of range for {}-bit data",
+            context, value, bits
+        )));
+    }
+    Ok(value.to_le_bytes())
+}
+
+fn checked_unsigned_data_bytes(value: u64, context: &str, bits: u8) -> Result<[u8; 8], AsmError> {
+    if !parse::unsigned_data_value_fits(value, bits) {
+        return Err(AsmError(format!(
+            "{} value {} is out of range for {}-bit data",
+            context, value, bits
+        )));
+    }
+    Ok(value.to_le_bytes())
 }
 
 fn section_allocation_order(sections: &[Section]) -> Vec<usize> {
@@ -3144,6 +3367,20 @@ mod tests {
     }
 
     #[test]
+    fn assemble_compiler_emitted_fused_multiply_subtract() {
+        let obj = assemble_source(
+            ".text\n\
+             fmsub s0, s1, s2, s3\n\
+             fnmsub d0, d1, d2, d3\n",
+        )
+        .unwrap();
+        assert_eq!(
+            text_bytes(&obj),
+            [0x20, 0x8C, 0x02, 0x1F, 0x20, 0x8C, 0x62, 0x1F]
+        );
+    }
+
+    #[test]
     fn assemble_unsigned_quad_bit_patterns_in_context() {
         let obj = assemble_source(
             ".data\n\
@@ -3170,6 +3407,53 @@ mod tests {
     fn assemble_multiple_instructions() {
         let obj = assemble_source(".text\nadd x0, x1, x2\nsub x3, x4, x5\nret\n").unwrap();
         assert_eq!(text_bytes(&obj).len(), 12); // 3 instructions × 4 bytes
+    }
+
+    #[test]
+    fn assemble_sp_register_arithmetic_preserves_sp() {
+        let obj = assemble_source(
+            ".text\n\
+             add x0, sp, x1\n\
+             add sp, x1, x2\n\
+             sub x3, sp, x4\n\
+             sub sp, x5, x6\n\
+             adds x7, sp, x8\n\
+             subs x9, sp, x10\n\
+             cmp sp, x11\n\
+             cmn sp, x12\n\
+             add x13, sp, x14, lsl #4\n\
+             sub sp, x15, x16, lsl #2\n\
+             add w0, wsp, w1\n\
+             add wsp, w1, w2\n\
+             sub w3, wsp, w4\n\
+             sub wsp, w5, w6\n\
+             adds w7, wsp, w8\n\
+             subs w9, wsp, w10\n\
+             cmp wsp, w11\n\
+             cmn wsp, w12\n\
+             add w13, wsp, w14, lsl #4\n\
+             sub wsp, w15, w16, lsl #2\n\
+             add w17, wsp, w18, uxtw #3\n\
+             sub wsp, w19, w20, sxtw #4\n\
+             sub sp, sp, x16\n\
+             add sp, sp, x16\n\
+             sub wsp, wsp, w16\n\
+             add wsp, wsp, w16\n",
+        )
+        .unwrap();
+        assert_eq!(
+            text_bytes(&obj),
+            [
+                0xE0, 0x63, 0x21, 0x8B, 0x3F, 0x60, 0x22, 0x8B, 0xE3, 0x63, 0x24, 0xCB, 0xBF, 0x60,
+                0x26, 0xCB, 0xE7, 0x63, 0x28, 0xAB, 0xE9, 0x63, 0x2A, 0xEB, 0xFF, 0x63, 0x2B, 0xEB,
+                0xFF, 0x63, 0x2C, 0xAB, 0xED, 0x73, 0x2E, 0x8B, 0xFF, 0x69, 0x30, 0xCB, 0xE0, 0x43,
+                0x21, 0x0B, 0x3F, 0x40, 0x22, 0x0B, 0xE3, 0x43, 0x24, 0x4B, 0xBF, 0x40, 0x26, 0x4B,
+                0xE7, 0x43, 0x28, 0x2B, 0xE9, 0x43, 0x2A, 0x6B, 0xFF, 0x43, 0x2B, 0x6B, 0xFF, 0x43,
+                0x2C, 0x2B, 0xED, 0x53, 0x2E, 0x0B, 0xFF, 0x49, 0x30, 0x4B, 0xF1, 0x4F, 0x32, 0x0B,
+                0x7F, 0xD2, 0x34, 0x4B, 0xFF, 0x63, 0x30, 0xCB, 0xFF, 0x63, 0x30, 0x8B, 0xFF, 0x43,
+                0x30, 0x4B, 0xFF, 0x43, 0x30, 0x0B,
+            ]
+        );
     }
 
     #[test]
@@ -3994,6 +4278,24 @@ mod tests {
     }
 
     #[test]
+    fn assemble_got_and_tlvp_page_addends_are_rejected() {
+        for source in [
+            ".text\nadrp x0, _value@GOTPAGE + 4\n",
+            ".text\nldr x0, [x0, _value@GOTPAGEOFF + 4]\n",
+            ".text\nadrp x0, _value@TLVPPAGE + 4\n",
+            ".text\nldr x0, [x0, _value@TLVPPAGEOFF + 4]\n",
+        ] {
+            let error = assemble_source(source).unwrap_err();
+            assert_eq!(
+                error.msg,
+                "GOT and TLVP page relocations do not support addends"
+            );
+            assert_eq!(error.line, Some(2));
+            assert_eq!(error.col, Some(1));
+        }
+    }
+
+    #[test]
     fn assemble_quad_local_symbol_creates_unsigned_relocation() {
         let obj = assemble_source(".data\nfoo: .byte 1\n.quad foo\n").unwrap();
         let relocs = data_relocs(&obj);
@@ -4032,6 +4334,25 @@ mod tests {
         assert!(relocs[0].pcrel);
         assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "_puts");
         assert_eq!(&text_bytes(&obj)[..4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn assemble_pointer_to_got_rejects_invalid_width_modes() {
+        let error = assemble_source(".data\n.long _puts@GOT\n").unwrap_err();
+        assert_eq!(
+            error.msg,
+            ".long pointer-to-GOT expression must be PC-relative"
+        );
+        assert_eq!(error.line, Some(2));
+        assert_eq!(error.col, Some(1));
+
+        let error = assemble_source(".data\n.quad _puts@GOT - .\n").unwrap_err();
+        assert_eq!(
+            error.msg,
+            ".quad pointer-to-GOT expression must not be PC-relative"
+        );
+        assert_eq!(error.line, Some(2));
+        assert_eq!(error.col, Some(1));
     }
 
     #[test]
@@ -4511,6 +4832,32 @@ mod tests {
         write_macho(&obj, &mut buf).unwrap();
         let written_names = file_symbol_names(&buf);
         assert_eq!(written_names, names, "written symbols: {:?}", written_names);
+    }
+
+    #[test]
+    fn finish_rejects_generated_section_size_drift() {
+        let stmts = parse::parse_with_locations(
+            ".text\n\
+             _f:\n\
+             .cfi_startproc\n\
+             ret\n\
+             .cfi_restore w29\n\
+             .cfi_endproc\n",
+        )
+        .unwrap();
+        let mut asm = Assembler::new();
+        asm.collect_layout(&stmts).unwrap();
+        asm.prepare_unwind_layout().unwrap();
+        asm.prepare_expression_state(&stmts).unwrap();
+        asm.reset_for_emission();
+        asm.process(&stmts).unwrap();
+        asm.resolve_fixups().unwrap();
+
+        asm.eh_frame_rows[0].instructions.push(0);
+        let error = asm
+            .finish()
+            .expect_err("generated section size drift unexpectedly passed");
+        assert_eq!(error.msg, "section layout changed between assembly passes");
     }
 
     #[test]

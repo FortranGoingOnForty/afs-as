@@ -193,6 +193,42 @@ fn parse_errors_include_file_line_source_and_caret() {
 }
 
 #[test]
+fn excessive_expression_depth_exits_with_a_located_error() {
+    let unary = format!(".data\n.quad {}1\n", "-".repeat(100_000));
+    let parenthesized = format!(
+        ".data\n.quad {}1{}\n",
+        "(".repeat(100_000),
+        ")".repeat(100_000)
+    );
+    let assignment = format!(".set X,{}1\n", "1+".repeat(100_000));
+
+    for (shape, source, expected_location) in [
+        ("unary", unary, "<stdin>:2:263:"),
+        ("parenthesized", parenthesized, "<stdin>:2:263:"),
+        ("assignment", assignment, "<stdin>:1:521:"),
+    ] {
+        let output = run_with_stdin(&["-", "-o", "-"], &source);
+
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "wrong exit status for {shape} expression"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(expected_location),
+            "wrong source location for {shape} expression:\n{}",
+            stderr
+        );
+        assert!(
+            stderr.contains("expression exceeds maximum depth of 256"),
+            "wrong diagnostic for {shape} expression:\n{}",
+            stderr
+        );
+    }
+}
+
+#[test]
 fn unsupported_directive_errors_include_file_line_source_and_caret() {
     let root = temp_root("afs_cli_unsupported_directive");
     let input = root.join("broken.s");

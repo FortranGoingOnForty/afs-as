@@ -3,6 +3,9 @@
 .globl _directive_inventory
 .set ABS_SET, 5
 .equ ABS_EQU, ABS_SET + 2
+.set ABS_ALL_ONES, 0xffffffffffffffff
+.equ ABS_ALL_ONES_ALIAS, ABS_ALL_ONES
+.set ABS_MIN, -9223372036854775808
 .p2align 2
 _directive_inventory:
     ret
@@ -14,6 +17,7 @@ data_start:
     .byte 0xaa
     .short 0x1234
     .quad _directive_inventory
+    .quad ABS_ALL_ONES, ABS_ALL_ONES_ALIAS, ABS_MIN
     .ascii "hi"
     .string "bye"
     .skip 2
