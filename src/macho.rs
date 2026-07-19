@@ -282,19 +282,29 @@ impl Default for ObjectFile {
 
 /// Write a Mach-O object file to the given writer.
 pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
-    let nsects = obj.sections.len() as u32;
+    let nsects = usize_to_u32(obj.sections.len(), "section count")?;
 
     // Compute layout.
-    let segment_cmdsize = SEGMENT_CMD_SIZE + nsects * SECTION_SIZE;
+    let segment_cmdsize = checked_add_u32(
+        SEGMENT_CMD_SIZE,
+        checked_mul_u32(nsects, SECTION_SIZE, "segment command size")?,
+        "segment command size",
+    )?;
     let has_loh = !obj.linker_optimization_hints.is_empty();
     let ncmds: u32 = 4 + has_loh as u32; // LC_SEGMENT_64, LC_BUILD_VERSION, optional LOH, LC_SYMTAB, LC_DYSYMTAB
-    let sizeofcmds = segment_cmdsize
-        + BUILD_VERSION_CMD_SIZE
-        + if has_loh { LINKEDIT_DATA_CMD_SIZE } else { 0 }
-        + SYMTAB_CMD_SIZE
-        + DYSYMTAB_CMD_SIZE;
+    let sizeofcmds = [
+        segment_cmdsize,
+        BUILD_VERSION_CMD_SIZE,
+        if has_loh { LINKEDIT_DATA_CMD_SIZE } else { 0 },
+        SYMTAB_CMD_SIZE,
+        DYSYMTAB_CMD_SIZE,
+    ]
+    .into_iter()
+    .try_fold(0u32, |size, command_size| {
+        checked_add_u32(size, command_size, "load command size")
+    })?;
 
-    let content_offset = HEADER_SIZE + sizeofcmds;
+    let content_offset = checked_add_u32(HEADER_SIZE, sizeofcmds, "section content offset")?;
     let mut layouts = vec![SectionLayout::default(); obj.sections.len()];
     let mut file_cursor = content_offset;
     let mut vm_cursor = 0u64;
@@ -304,7 +314,13 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
 
     for index in allocation_order {
         let section = &obj.sections[index];
-        if !section.kind.is_zerofill() && section.data.len() as u64 != section.size {
+        let data_len = u64::try_from(section.data.len()).map_err(|_| {
+            invalid_input(format!(
+                "section {},{} data length exceeds u64",
+                section.segment, section.name
+            ))
+        })?;
+        if !section.kind.is_zerofill() && data_len != section.size {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
@@ -334,8 +350,29 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         let offset = if section.kind.is_zerofill() {
             0
         } else {
-            let offset = content_offset.saturating_add(addr as u32);
-            file_cursor = file_cursor.max(offset.saturating_add(section.file_size() as u32));
+            let addr = u32::try_from(addr).map_err(|_| {
+                invalid_input(format!(
+                    "section {},{} file offset exceeds u32",
+                    section.segment, section.name
+                ))
+            })?;
+            let offset = content_offset.checked_add(addr).ok_or_else(|| {
+                invalid_input(format!(
+                    "section {},{} file offset exceeds u32",
+                    section.segment, section.name
+                ))
+            })?;
+            let file_size = u64_to_u32(
+                section.file_size(),
+                &format!("section {},{} file size", section.segment, section.name),
+            )?;
+            let end = offset.checked_add(file_size).ok_or_else(|| {
+                invalid_input(format!(
+                    "section {},{} file range exceeds u32",
+                    section.segment, section.name
+                ))
+            })?;
+            file_cursor = file_cursor.max(end);
             offset
         };
 
@@ -348,42 +385,54 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     }
 
     // Relocations follow section data (aligned to 8 bytes for relocation_info).
-    let reloc_offset = align_to(file_cursor, 8);
+    let reloc_offset = checked_align_u32(file_cursor, 8, "relocation offset")?;
     let mut reloc_cursor = reloc_offset;
     for (layout, section) in layouts.iter_mut().zip(&obj.sections) {
-        layout.nreloc = section.relocations.len() as u32;
+        layout.nreloc = usize_to_u32(section.relocations.len(), "section relocation count")?;
         if layout.nreloc > 0 {
             layout.reloff = reloc_cursor;
-            reloc_cursor += layout.nreloc * RELOC_SIZE;
+            let relocation_size =
+                checked_mul_u32(layout.nreloc, RELOC_SIZE, "relocation table size")?;
+            reloc_cursor = checked_add_u32(reloc_cursor, relocation_size, "relocation table end")?;
         }
     }
 
     // Linker optimization hints, when present, follow relocations.
     let lohoff = reloc_cursor;
-    let lohsize = obj.linker_optimization_hints.len() as u32;
+    let lohsize = usize_to_u32(
+        obj.linker_optimization_hints.len(),
+        "linker optimization hint size",
+    )?;
 
     // Symbol table follows linker optimization hints.
-    let symoff = lohoff + lohsize;
-    let nsyms = obj.symbols.len() as u32;
-    let sym_size = nsyms * NLIST_SIZE;
+    let symoff = checked_add_u32(lohoff, lohsize, "symbol table offset")?;
+    let nsyms = usize_to_u32(obj.symbols.len(), "symbol count")?;
+    let sym_size = checked_mul_u32(nsyms, NLIST_SIZE, "symbol table size")?;
 
     // String table follows symbol table.
-    let stroff = symoff + sym_size;
-    let strtab = build_string_table(&obj.symbols);
-    let strsize = strtab.bytes.len() as u32;
+    let stroff = checked_add_u32(symoff, sym_size, "string table offset")?;
+    let strtab = build_string_table(&obj.symbols)?;
+    let strsize = usize_to_u32(strtab.bytes.len(), "string table size")?;
+    checked_add_u32(stroff, strsize, "object file size")?;
 
     // Classify symbols for LC_DYSYMTAB.
     let nlocalsym = obj
         .symbols
         .iter()
         .filter(|s| !s.global && !s.undefined)
-        .count() as u32;
+        .count();
+    let nlocalsym = usize_to_u32(nlocalsym, "local symbol count")?;
     let nextdefsym = obj
         .symbols
         .iter()
         .filter(|s| s.global && !s.undefined)
-        .count() as u32;
-    let nundefsym = obj.symbols.iter().filter(|s| s.undefined).count() as u32;
+        .count();
+    let nextdefsym = usize_to_u32(nextdefsym, "defined external symbol count")?;
+    let nundefsym = usize_to_u32(
+        obj.symbols.iter().filter(|s| s.undefined).count(),
+        "undefined symbol count",
+    )?;
+    let iundefsym = checked_add_u32(nlocalsym, nextdefsym, "undefined symbol index")?;
 
     let segment_fileoff = layouts
         .iter()
@@ -391,14 +440,21 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
         .find(|(_, section)| !section.kind.is_zerofill())
         .map(|(layout, _)| layout.offset)
         .unwrap_or(content_offset);
-    let filesize = layouts
-        .iter()
-        .zip(&obj.sections)
-        .filter(|(_, section)| !section.kind.is_zerofill())
-        .map(|(layout, section)| layout.offset + section.file_size() as u32)
-        .max()
-        .unwrap_or(segment_fileoff)
-        .saturating_sub(segment_fileoff);
+    let mut segment_file_end = segment_fileoff;
+    for (layout, section) in layouts.iter().zip(&obj.sections) {
+        if section.kind.is_zerofill() {
+            continue;
+        }
+        let file_size = u64_to_u32(
+            section.file_size(),
+            &format!("section {},{} file size", section.segment, section.name),
+        )?;
+        let end = checked_add_u32(layout.offset, file_size, "segment file end")?;
+        segment_file_end = segment_file_end.max(end);
+    }
+    let filesize = segment_file_end
+        .checked_sub(segment_fileoff)
+        .ok_or_else(|| invalid_input("segment file range is invalid"))?;
     let vmsize = vm_cursor;
 
     // ---- Write header ----
@@ -472,7 +528,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     write_u32(w, nlocalsym)?;
     write_u32(w, nlocalsym)?; // iextdefsym
     write_u32(w, nextdefsym)?;
-    write_u32(w, nlocalsym + nextdefsym)?; // iundefsym
+    write_u32(w, iundefsym)?;
     write_u32(w, nundefsym)?;
     // Rest is zeros (12 more u32 fields).
     for _ in 0..12 {
@@ -480,19 +536,34 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
     }
 
     // ---- Section data ----
-    let mut written = HEADER_SIZE + sizeofcmds;
+    let mut written = content_offset;
     for (section, layout) in obj.sections.iter().zip(&layouts) {
         if section.kind.is_zerofill() {
             continue;
         }
-        let pad = layout.offset.saturating_sub(written) as usize;
+        let pad = layout.offset.checked_sub(written).ok_or_else(|| {
+            invalid_input(format!(
+                "section {},{} file offsets overlap",
+                section.segment, section.name
+            ))
+        })?;
+        let pad =
+            usize::try_from(pad).map_err(|_| invalid_input("section padding exceeds usize"))?;
         write_zeros(w, pad)?;
         w.write_all(&section.data)?;
-        written = layout.offset + section.file_size() as u32;
+        let file_size = u64_to_u32(
+            section.file_size(),
+            &format!("section {},{} file size", section.segment, section.name),
+        )?;
+        written = checked_add_u32(layout.offset, file_size, "section file end")?;
     }
 
     // ---- Padding to relocation alignment ----
-    let reloc_pad = reloc_offset.saturating_sub(written) as usize;
+    let reloc_pad = reloc_offset
+        .checked_sub(written)
+        .ok_or_else(|| invalid_input("relocation offset precedes section data"))?;
+    let reloc_pad = usize::try_from(reloc_pad)
+        .map_err(|_| invalid_input("relocation padding exceeds usize"))?;
     write_zeros(w, reloc_pad)?;
 
     // ---- Relocation entries (descending address order within each section) ----
@@ -561,7 +632,7 @@ struct StringTable {
     offsets: BTreeMap<String, u32>,
 }
 
-fn build_string_table(symbols: &[Symbol]) -> StringTable {
+fn build_string_table(symbols: &[Symbol]) -> io::Result<StringTable> {
     let mut names: Vec<&str> = symbols.iter().map(|sym| sym.name.as_str()).collect();
     names.sort_unstable();
     names.dedup();
@@ -574,11 +645,12 @@ fn build_string_table(symbols: &[Symbol]) -> StringTable {
     let mut offsets = BTreeMap::new();
     for name in names {
         let offset = suffix_string_offset(&bytes, name).unwrap_or_else(|| {
-            let offset = bytes.len() as u32;
+            let offset = bytes.len();
             bytes.extend_from_slice(name.as_bytes());
             bytes.push(0);
             offset
         });
+        let offset = usize_to_u32(offset, "string table symbol offset")?;
         offsets.insert(name.to_string(), offset);
     }
 
@@ -587,19 +659,20 @@ fn build_string_table(symbols: &[Symbol]) -> StringTable {
         bytes.push(0);
     }
 
-    StringTable { bytes, offsets }
+    Ok(StringTable { bytes, offsets })
 }
 
-fn suffix_string_offset(strtab: &[u8], name: &str) -> Option<u32> {
+fn suffix_string_offset(strtab: &[u8], name: &str) -> Option<usize> {
     let name_bytes = name.as_bytes();
-    if strtab.len() < name_bytes.len() + 1 {
+    let entry_len = name_bytes.len().checked_add(1)?;
+    if strtab.len() < entry_len {
         return None;
     }
 
-    for pos in 1..=strtab.len() - name_bytes.len() - 1 {
+    for pos in 1..=strtab.len().checked_sub(entry_len)? {
         if &strtab[pos..pos + name_bytes.len()] == name_bytes && strtab[pos + name_bytes.len()] == 0
         {
-            return Some(pos as u32);
+            return Some(pos);
         }
     }
 
@@ -607,24 +680,68 @@ fn suffix_string_offset(strtab: &[u8], name: &str) -> Option<u32> {
 }
 
 fn write_reloc<W: Write>(w: &mut W, rel: &Relocation) -> io::Result<()> {
+    if rel.symbol_idx > 0x00ff_ffff {
+        return Err(invalid_input(format!(
+            "relocation symbol index {} exceeds 24 bits",
+            rel.symbol_idx
+        )));
+    }
+    if rel.length > 3 {
+        return Err(invalid_input(format!(
+            "relocation length {} exceeds 2 bits",
+            rel.length
+        )));
+    }
+    if rel.reloc_type > 0xf {
+        return Err(invalid_input(format!(
+            "relocation type {} exceeds 4 bits",
+            rel.reloc_type
+        )));
+    }
+
     // Mach-O relocation_info:
     // r_address: i32 (offset in section)
     // r_symbolnum:24, r_pcrel:1, r_length:2, r_extern:1, r_type:4
     write_u32(w, rel.offset)?;
-    let info = (rel.symbol_idx & 0x00FFFFFF)
+    let info = rel.symbol_idx
         | ((rel.pcrel as u32) << 24)
-        | ((rel.length as u32 & 0x3) << 25)
+        | ((rel.length as u32) << 25)
         | ((rel.extern_ as u32) << 27)
-        | ((rel.reloc_type & 0xF) << 28);
+        | (rel.reloc_type << 28);
     write_u32(w, info)?;
     Ok(())
 }
 
-fn align_to(value: u32, align: u32) -> u32 {
+fn invalid_input(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message.into())
+}
+
+fn usize_to_u32(value: usize, context: &str) -> io::Result<u32> {
+    u32::try_from(value).map_err(|_| invalid_input(format!("{} exceeds u32", context)))
+}
+
+fn u64_to_u32(value: u64, context: &str) -> io::Result<u32> {
+    u32::try_from(value).map_err(|_| invalid_input(format!("{} exceeds u32", context)))
+}
+
+fn checked_add_u32(lhs: u32, rhs: u32, context: &str) -> io::Result<u32> {
+    lhs.checked_add(rhs)
+        .ok_or_else(|| invalid_input(format!("{} exceeds u32", context)))
+}
+
+fn checked_mul_u32(lhs: u32, rhs: u32, context: &str) -> io::Result<u32> {
+    lhs.checked_mul(rhs)
+        .ok_or_else(|| invalid_input(format!("{} exceeds u32", context)))
+}
+
+fn checked_align_u32(value: u32, align: u32, context: &str) -> io::Result<u32> {
     if align <= 1 {
-        return value;
+        return Ok(value);
     }
-    (value + align - 1) & !(align - 1)
+    value
+        .checked_add(align - 1)
+        .map(|value| value & !(align - 1))
+        .ok_or_else(|| invalid_input(format!("{} exceeds u32", context)))
 }
 
 fn checked_align_value(value: u64, power: u32) -> Option<u64> {
@@ -746,7 +863,7 @@ mod tests {
                 weak_def: false,
             },
         ];
-        let strtab = build_string_table(&syms);
+        let strtab = build_string_table(&syms).unwrap();
 
         assert_eq!(strtab.bytes[0], 0); // initial null
         assert_eq!(strtab.offsets["_main"], 1);
@@ -822,7 +939,7 @@ mod tests {
                 weak_def: false,
             },
         ];
-        let strtab = build_string_table(&syms);
+        let strtab = build_string_table(&syms).unwrap();
 
         assert_eq!(
             strtab.bytes,
@@ -878,7 +995,7 @@ mod tests {
                 weak_def: false,
             },
         ];
-        let strtab = build_string_table(&syms);
+        let strtab = build_string_table(&syms).unwrap();
 
         assert_eq!(strtab.bytes, b"\0_aaa\0ltmp0\0\0\0\0\0");
         assert_eq!(strtab.offsets["_aaa"], 1);
@@ -1182,11 +1299,12 @@ mod tests {
 
     #[test]
     fn align_to_works() {
-        assert_eq!(align_to(0, 4), 0);
-        assert_eq!(align_to(1, 4), 4);
-        assert_eq!(align_to(4, 4), 4);
-        assert_eq!(align_to(5, 4), 8);
-        assert_eq!(align_to(100, 1), 100);
+        assert_eq!(checked_align_u32(0, 4, "test").unwrap(), 0);
+        assert_eq!(checked_align_u32(1, 4, "test").unwrap(), 4);
+        assert_eq!(checked_align_u32(4, 4, "test").unwrap(), 4);
+        assert_eq!(checked_align_u32(5, 4, "test").unwrap(), 8);
+        assert_eq!(checked_align_u32(100, 1, "test").unwrap(), 100);
+        assert!(checked_align_u32(u32::MAX, 8, "test").is_err());
     }
 
     #[test]
@@ -1324,6 +1442,26 @@ mod tests {
         let error = write_macho(&obj, &mut Vec::new()).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(error.to_string(), "section layout alignment overflows u64");
+    }
+
+    #[test]
+    fn initialized_section_offset_must_fit_macho_u32() {
+        let mut obj = ObjectFile::new();
+        obj.text_section_mut().data.push(0);
+        obj.text_section_mut().size = 1;
+
+        let mut data = Section::new("__DATA", "__data", SectionKind::Data);
+        data.align_pow2 = 32;
+        data.data.push(0);
+        data.size = 1;
+        obj.sections.push(data);
+
+        let error = write_macho(&obj, &mut Vec::new()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "section __DATA,__data file offset exceeds u32"
+        );
     }
 
     #[test]
