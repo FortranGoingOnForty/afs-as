@@ -346,7 +346,7 @@ enum FixupKind {
     GotLoadPageOff12,
     TlvpLoadPageOff12,
     Data32,
-    Data64,
+    Data64(ClassifiedExpr),
 }
 
 struct PendingReloc {
@@ -1010,6 +1010,7 @@ impl Assembler {
             }
             Directive::Quad(vals) => {
                 for expr in vals {
+                    let classified = self.classify_expr(expr)?;
                     let offset = self.current_offset() as u32;
                     self.emit_initialized_bytes(&0u64.to_le_bytes(), ".quad")?;
                     self.fixups.push(Fixup {
@@ -1018,7 +1019,7 @@ impl Assembler {
                         line: self.current_line,
                         col: self.current_col,
                         expr: expr.clone(),
-                        kind: FixupKind::Data64,
+                        kind: FixupKind::Data64(classified),
                     });
                 }
             }
@@ -1466,7 +1467,7 @@ impl Assembler {
                     false,
                 ),
                 FixupKind::Data32 => self.resolve_data32_fixup(fixup),
-                FixupKind::Data64 => self.resolve_data64_fixup(fixup),
+                FixupKind::Data64(classified) => self.resolve_data64_fixup(fixup, classified),
             };
             result.map_err(|e| e.with_loc_if_absent(line, col))?;
         }
@@ -1613,8 +1614,12 @@ impl Assembler {
         Ok(())
     }
 
-    fn resolve_data64_fixup(&mut self, fixup: Fixup) -> Result<(), AsmError> {
-        match self.classify_expr(&fixup.expr)? {
+    fn resolve_data64_fixup(
+        &mut self,
+        fixup: Fixup,
+        classified: ClassifiedExpr,
+    ) -> Result<(), AsmError> {
+        match classified {
             ClassifiedExpr::Absolute(value) => {
                 self.patch_section_data(
                     fixup.section,

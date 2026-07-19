@@ -353,6 +353,42 @@ fn absolute_symbols_bind_to_the_earliest_visible_assignment() {
 }
 
 #[test]
+fn quad_absolute_symbols_use_the_value_visible_at_each_directive() {
+    let source = assemble_source(
+        ".quad X\n\
+         .set X,1\n\
+         .quad X\n\
+         .set X,2\n\
+         .quad X\n\
+         .set A,X\n\
+         .set X,3\n\
+         .quad A\n\
+         .quad X\n",
+    )
+    .expect("source absolute-symbol timeline unexpectedly rejected");
+
+    let direct = assemble_stmts(&[
+        Stmt::Directive(Directive::Quad(vec![Expr::Symbol("X".into())])),
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(1))),
+        Stmt::Directive(Directive::Quad(vec![Expr::Symbol("X".into())])),
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(2))),
+        Stmt::Directive(Directive::Quad(vec![Expr::Symbol("X".into())])),
+        Stmt::Directive(Directive::Set("A".into(), Expr::Symbol("X".into()))),
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(3))),
+        Stmt::Directive(Directive::Quad(vec![Expr::Symbol("A".into())])),
+        Stmt::Directive(Directive::Quad(vec![Expr::Symbol("X".into())])),
+    ])
+    .expect("preparsed absolute-symbol timeline unexpectedly rejected");
+
+    let expected: Vec<_> = [1_u64, 1, 2, 2, 3]
+        .into_iter()
+        .flat_map(u64::to_le_bytes)
+        .collect();
+    assert_eq!(source.text_section().data, expected);
+    assert_eq!(direct.text_section().data, source.text_section().data);
+}
+
+#[test]
 fn forward_absolute_aliases_work_in_parser_resolved_directives() {
     let fill = assemble_source(".set A,B\n.set B,2\n.data\n.fill 1,1,A\n")
         .expect("forward alias in .fill unexpectedly rejected");
