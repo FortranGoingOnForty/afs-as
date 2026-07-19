@@ -509,11 +509,15 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         }
         "p2align" => {
             // `.p2align pow[,fill[,max_skip]]`. GNU as truncates an explicit
-            // fill expression to one byte and treats an empty fill as zero.
+            // fill expression to one byte. A trailing empty fill means zero,
+            // while an empty placeholder before max-skip keeps default fill.
             let mut parts = args.split(',');
             let pow = parts.next().and_then(parse_int_opt);
-            let fill = match parts.next() {
+            let fill_arg = parts.next();
+            let max_skip_arg = parts.next();
+            let fill = match fill_arg {
                 None => None,
+                Some(s) if s.trim().is_empty() && max_skip_arg.is_some() => None,
                 Some(s) if s.trim().is_empty() => Some(0),
                 Some(s) => Some(
                     parse_int_opt(s)
@@ -521,7 +525,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                         as u8,
                 ),
             };
-            let max_skip = match parts.next() {
+            let max_skip = match max_skip_arg {
                 None => None,
                 Some(s) if s.trim().is_empty() => None,
                 Some(s) => Some(

@@ -53,3 +53,11 @@ fn explicit_fill_byte_is_preserved() {
         [0, 0, 0, 0, 1]
     );
 }
+
+#[test]
+fn empty_fill_before_max_skip_uses_default_text_nops() {
+    assert_eq!(
+        text_bytes(".text\n.byte 0\n.p2align 2,,3\n.byte 1\n"),
+        [0, 0x0f, 0x1f, 0, 1]
+    );
+}

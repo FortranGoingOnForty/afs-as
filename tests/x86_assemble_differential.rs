@@ -230,7 +230,7 @@ fn explicit_fill_bytes_match_gas() {
         return;
     };
     let tmp = celf::TempArtifacts::new("afs_x86_space_fill");
-    let src = ".text\n.globl f\nf:\n.byte 0\n.p2align 2,0xcc\n.space 4,0x90\n.skip 3,0xab\nret\n.data\nd:\n.byte 0\n.p2align 2,0x5a\n.space 4,0x7f\n";
+    let src = ".text\n.globl f\nf:\n.byte 0\n.p2align 2,,3\n.byte 0\n.p2align 2,0xcc\n.space 4,0x90\n.skip 3,0xab\nret\n.data\nd:\n.byte 0\n.p2align 2,0x5a\n.space 4,0x7f\n";
     if let Some(f) = diff_one("explicit_fill", src, &gas, &tmp) {
         panic!("{f}");
     }
