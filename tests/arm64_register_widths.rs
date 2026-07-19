@@ -55,11 +55,41 @@ fn gp_instruction_families_reject_mismatched_register_widths() {
         "madd x0, x1, w2, x3",
         "msub w0, w1, w2, x3",
         "mov x0, w1",
+        "mov wsp, x0",
+        "mov x0, wsp",
         "ubfiz x0, w1, #0, #1",
         "bfi w0, x1, #0, #1",
         "bfxil x0, w1, #0, #1",
     ] {
         assert_rejected(source, "width");
+    }
+}
+
+#[test]
+fn stack_pointer_move_aliases_preserve_register_width() {
+    for (source, expected) in [
+        ("mov wsp, w0", 0x1100_001F),
+        ("mov w1, wsp", 0x1100_03E1),
+        ("mov wsp, wsp", 0x1100_03FF),
+        ("mov sp, x0", 0x9100_001F),
+        ("mov x1, sp", 0x9100_03E1),
+        ("mov sp, sp", 0x9100_03FF),
+    ] {
+        assert_encoding(source, expected);
+    }
+}
+
+#[test]
+fn stack_pointer_move_aliases_reject_unrepresentable_operands() {
+    for source in [
+        "mov wsp, #0",
+        "mov sp, #0",
+        "mov wzr, wsp",
+        "mov wsp, wzr",
+        "mov xzr, sp",
+        "mov sp, xzr",
+    ] {
+        assert_rejected(source, "mov");
     }
 }
 

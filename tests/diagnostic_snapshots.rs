@@ -219,3 +219,26 @@ fn snapshot_invalid_arm64_immediates() {
         run_failure_snapshot(name, &format!(".text\n{}\n", instruction), expected);
     }
 }
+
+#[test]
+fn snapshot_arm64_register_errors_point_to_the_operand() {
+    for (name, instruction, expected) in [
+        (
+            "gp-register-width.s",
+            "and x0, w1, x2",
+            "<input>:2:9: error: and requires registers of the same width\nand x0, w1, x2\n        ^\n",
+        ),
+        (
+            "fixed-register-width.s",
+            "br w0",
+            "<input>:2:4: error: br requires an x-register\nbr w0\n   ^\n",
+        ),
+        (
+            "fp-register-width.s",
+            "fadd d0, s1, s2",
+            "<input>:2:10: error: fadd requires registers of the same width\nfadd d0, s1, s2\n         ^\n",
+        ),
+    ] {
+        run_failure_snapshot(name, &format!(".text\n{}\n", instruction), expected);
+    }
+}

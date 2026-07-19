@@ -1648,13 +1648,15 @@ impl<'a> Parser<'a> {
         required_64bit: bool,
         context: &str,
     ) -> Result<GpReg, ParseError> {
+        let start = self.pos;
         let (reg, is_64bit) = self.parse_gp_data_reg_with_size(context)?;
         if is_64bit != required_64bit {
-            return Err(self.err(format!(
-                "{} requires an {}-register",
-                context,
-                if required_64bit { "x" } else { "w" }
-            )));
+            let register = if required_64bit {
+                "an x-register"
+            } else {
+                "a w-register"
+            };
+            return Err(self.err_at(start, format!("{} requires {}", context, register)));
         }
         Ok(reg)
     }
@@ -1668,17 +1670,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_memory_base_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        let start = self.pos;
         let (reg, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
         if !is_64bit || kind == GpRegKind::Zr {
-            return Err(self.err(format!("{} requires an x-register or sp base", context)));
+            return Err(self.err_at(
+                start,
+                format!("{} requires an x-register or sp base", context),
+            ));
         }
         Ok(reg)
     }
 
     fn parse_gp_data_reg_with_size(&mut self, context: &str) -> Result<(GpReg, bool), ParseError> {
+        let start = self.pos;
         let (reg, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
         if kind == GpRegKind::Sp {
-            return Err(self.err(format!("{} does not allow sp as a data register", context)));
+            return Err(self.err_at(
+                start,
+                format!("{} does not allow sp as a data register", context),
+            ));
         }
         Ok((reg, is_64bit))
     }
@@ -1688,9 +1698,13 @@ impl<'a> Parser<'a> {
         expected_64bit: bool,
         context: &str,
     ) -> Result<GpReg, ParseError> {
+        let start = self.pos;
         let (reg, is_64bit) = self.parse_gp_data_reg_with_size(context)?;
         if is_64bit != expected_64bit {
-            return Err(self.err(format!("{} requires registers of the same width", context)));
+            return Err(self.err_at(
+                start,
+                format!("{} requires registers of the same width", context),
+            ));
         }
         Ok(reg)
     }
@@ -1747,9 +1761,10 @@ impl<'a> Parser<'a> {
         width: SimdLaneWidth,
         context: &str,
     ) -> Result<GpReg, ParseError> {
+        let start = self.pos;
         let (reg, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
         if kind == GpRegKind::Sp {
-            return Err(self.err(format!("{} does not allow SP", context)));
+            return Err(self.err_at(start, format!("{} does not allow SP", context)));
         }
         let needs_64bit = matches!(width, SimdLaneWidth::D64);
         if needs_64bit != is_64bit {
@@ -1758,7 +1773,7 @@ impl<'a> Parser<'a> {
             } else {
                 "w-register"
             };
-            return Err(self.err(format!("{} requires a {}", context, width_name)));
+            return Err(self.err_at(start, format!("{} requires a {}", context, width_name)));
         }
         Ok(reg)
     }
@@ -1784,9 +1799,13 @@ impl<'a> Parser<'a> {
         expected_double: bool,
         context: &str,
     ) -> Result<FpReg, ParseError> {
+        let start = self.pos;
         let (reg, is_double) = self.parse_fp_reg_with_size()?;
         if is_double != expected_double {
-            return Err(self.err(format!("{} requires registers of the same width", context)));
+            return Err(self.err_at(
+                start,
+                format!("{} requires registers of the same width", context),
+            ));
         }
         Ok(reg)
     }
@@ -2637,9 +2656,16 @@ impl<'a> Parser<'a> {
         if self.peek_is_scalar_fp_reg() {
             return self.parse_simd_lane_extract();
         }
-        let (rd, sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
+        let rd_start = self.pos;
+        let (rd, sf, rd_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
+            if rd_kind == GpRegKind::Sp {
+                return Err(self.err_at(
+                    rd_start,
+                    "mov immediate does not allow sp as a destination".into(),
+                ));
+            }
             let imm = self.parse_immediate_const_expr("mov immediate")?;
             if let Some(inst) = mov_alias_imm(rd, imm, sf) {
                 Ok(inst)
@@ -2650,12 +2676,23 @@ impl<'a> Parser<'a> {
                 )))
             }
         } else {
-            let (rm, rm_is_64bit, rm_kind) = self.parse_gp_reg_with_size_kind()?;
+            let rm_start = self.pos;
+            let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
             if rm_is_64bit != sf {
-                return Err(self.err("mov requires registers of the same width".into()));
+                return Err(
+                    self.err_at(rm_start, "mov requires registers of the same width".into())
+                );
+            }
+            if (rd_kind == GpRegKind::Sp && rm_kind == GpRegKind::Zr)
+                || (rd_kind == GpRegKind::Zr && rm_kind == GpRegKind::Sp)
+            {
+                return Err(self.err_at(
+                    rm_start,
+                    "mov cannot combine the stack pointer and zero register".into(),
+                ));
             }
             if rm_kind == GpRegKind::Sp || rd_kind == GpRegKind::Sp {
-                // MOV involving SP → ADD Xd, Xn, #0 (SP can't be used in ORR shifted reg)
+                // MOV involving SP uses ADD because SP is unavailable to ORR.
                 Ok(Inst::AddImm {
                     rd,
                     rn: rm,
