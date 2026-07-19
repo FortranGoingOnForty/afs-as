@@ -586,9 +586,9 @@ impl<'a> Parser<'a> {
             ".comm" => {
                 let sym = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
-                let size = self.parse_const_expr("common size expression")? as u64;
+                let size = self.parse_unsigned_const_expr::<u64>("common size expression")?;
                 let align_pow2 = if self.eat(&Tok::Comma) {
-                    self.parse_const_expr("common alignment expression")? as u8
+                    self.parse_unsigned_const_expr::<u8>("common alignment expression")?
                 } else {
                     0
                 };
@@ -668,19 +668,19 @@ impl<'a> Parser<'a> {
                 }
             }
             ".space" | ".skip" => {
-                let n = self.parse_const_expr("space expression")? as u64;
+                let n = self.parse_unsigned_const_expr::<u64>("space expression")?;
                 Directive::Space(n)
             }
             ".zero" => {
-                let n = self.parse_const_expr("zero expression")? as u64;
+                let n = self.parse_unsigned_const_expr::<u64>("zero expression")?;
                 Directive::Space(n)
             }
             ".fill" => {
-                let repeat = self.parse_const_expr("fill repeat expression")? as u64;
+                let repeat = self.parse_unsigned_const_expr::<u64>("fill repeat expression")?;
                 self.expect(&Tok::Comma)?;
-                let size = self.parse_const_expr("fill size expression")? as u8;
+                let size = self.parse_unsigned_const_expr::<u8>("fill size expression")?;
                 let value = if self.eat(&Tok::Comma) {
-                    self.parse_const_expr("fill value expression")? as u64
+                    self.parse_apple_fill_pattern()?
                 } else {
                     0
                 };
@@ -701,9 +701,9 @@ impl<'a> Parser<'a> {
                     None
                 };
                 self.expect(&Tok::Comma)?;
-                let size = self.parse_const_expr("zerofill size expression")? as u64;
+                let size = self.parse_unsigned_const_expr::<u64>("zerofill size expression")?;
                 let align_pow2 = if self.eat(&Tok::Comma) {
-                    self.parse_const_expr("zerofill alignment expression")? as u32
+                    self.parse_unsigned_const_expr::<u32>("zerofill alignment expression")?
                 } else {
                     0
                 };
@@ -718,9 +718,10 @@ impl<'a> Parser<'a> {
             ".tbss" => {
                 let symbol = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
-                let size = self.parse_const_expr("tbss size expression")? as u64;
+                let size = self.parse_unsigned_const_expr::<u64>("tbss size expression")?;
                 self.expect(&Tok::Comma)?;
-                let align_pow2 = self.parse_const_expr("tbss alignment expression")? as u32;
+                let align_pow2 =
+                    self.parse_unsigned_const_expr::<u32>("tbss alignment expression")?;
                 Directive::Zerofill {
                     segment: "__DATA".into(),
                     section: "__thread_bss".into(),
@@ -864,16 +865,17 @@ impl<'a> Parser<'a> {
     fn parse_alignment_directive_args(
         &mut self,
     ) -> Result<(u32, Option<u8>, Option<u64>), ParseError> {
-        let power = self.parse_const_expr("alignment expression")? as u32;
+        let power = self.parse_unsigned_const_expr::<u32>("alignment expression")?;
         let mut fill = None;
         let mut max_skip = None;
 
         if self.eat(&Tok::Comma) {
             if !self.at_end_of_stmt() && self.peek() != &Tok::Comma {
-                fill = Some(self.parse_const_expr("alignment fill expression")? as u8);
+                fill = Some(self.parse_truncated_byte_const_expr("alignment fill expression")?);
             }
             if self.eat(&Tok::Comma) {
-                max_skip = Some(self.parse_const_expr("alignment max-skip expression")? as u64);
+                max_skip =
+                    Some(self.parse_unsigned_const_expr::<u64>("alignment max-skip expression")?);
             }
         }
 
@@ -928,6 +930,39 @@ impl<'a> Parser<'a> {
                 context, err
             ))
         })
+    }
+
+    fn parse_unsigned_const_expr<T>(&mut self, context: &str) -> Result<T, ParseError>
+    where
+        T: TryFrom<i64>,
+    {
+        let start = self.pos;
+        let value = self.parse_const_expr(context)?;
+        T::try_from(value).map_err(|_| {
+            self.err_at(
+                start,
+                format!(
+                    "{} value {} does not fit in {}",
+                    context,
+                    value,
+                    std::any::type_name::<T>()
+                ),
+            )
+        })
+    }
+
+    fn parse_truncated_byte_const_expr(&mut self, context: &str) -> Result<u8, ParseError> {
+        Ok(self.parse_const_expr(context)?.to_le_bytes()[0])
+    }
+
+    fn parse_apple_fill_pattern(&mut self) -> Result<u64, ParseError> {
+        let bytes = self
+            .parse_const_expr("fill value expression")?
+            .to_le_bytes();
+        // Apple fill patterns are truncated to 32 bits, then zero-extended to the element width.
+        Ok(u64::from(u32::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3],
+        ])))
     }
 
     fn starts_const_expr(&self) -> bool {

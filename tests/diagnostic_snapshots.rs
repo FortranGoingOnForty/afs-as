@@ -79,6 +79,20 @@ fn snapshot_tabbed_trailing_arm64_token() {
 }
 
 #[test]
+fn snapshot_arm64_directive_conversion_ranges() {
+    run_failure_snapshot(
+        "negative-common-size.s",
+        ".comm _x,-1\n",
+        "<input>:1:10: error: common size expression value -1 does not fit in u64\n.comm _x,-1\n         ^\n",
+    );
+    run_failure_snapshot(
+        "oversized-fill-width.s",
+        ".data\n.byte 17\n.fill 1,256,170\n.byte 34\n",
+        "<input>:3:9: error: fill size expression value 256 does not fit in u8\n.fill 1,256,170\n        ^\n",
+    );
+}
+
+#[test]
 fn snapshot_unsupported_cfi_directive() {
     run_failure_snapshot(
         "unsupported-cfi.s",
