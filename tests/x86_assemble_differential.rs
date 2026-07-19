@@ -235,3 +235,20 @@ fn explicit_fill_bytes_match_gas() {
         panic!("{f}");
     }
 }
+
+#[test]
+fn default_common_alignment_matches_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "default_common_alignment_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_common_alignment");
+    let src = ".text\nret\n.comm c0,0\n.comm c1,1\n.comm c2,2\n.comm c3,3\n.comm c5,5\n.comm c9,9\n.comm c16,16\n.comm c32,32\n";
+    if let Some(f) = diff_one("default_common_alignment", src, &gas, &tmp) {
+        panic!("{f}");
+    }
+}

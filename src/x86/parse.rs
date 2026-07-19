@@ -585,7 +585,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                 .ok_or_else(|| err(format!("bad .comm size in '{}'", args)))?
                 as u64;
             let align = match it.next() {
-                None => 8,
+                None => size.clamp(1, 16).next_power_of_two(),
                 Some(a) => parse_int(a)
                     .filter(|v| *v > 0)
                     .ok_or_else(|| err(format!("bad .comm align in '{}'", args)))?
