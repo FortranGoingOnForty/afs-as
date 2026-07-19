@@ -647,21 +647,21 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         }
     }
 
-    // Symbols: file-local labels (.L*) stay out of the symtab; all
-    // other defined labels become symbols with recorded binding/type/
-    // size. Section symbols are synthesized on demand for local-label
-    // relocations.
+    // Symbols: unexported file-local labels (.L*) stay out of the symtab;
+    // explicitly global or weak definitions remain visible. All other
+    // defined labels carry their recorded binding/type/size. Section symbols
+    // are synthesized on demand for local-label relocations.
     let mut model_sym_index: HashMap<String, usize> = HashMap::new();
     let mut section_sym: HashMap<usize, usize> = HashMap::new();
 
     for (li, l) in laid.iter().enumerate() {
         // Deterministic: label_order from the build.
         for label in secs[li].1.label_order.iter() {
-            if label.starts_with(".L") {
+            let info = syminfo.get(label).cloned().unwrap_or_default();
+            if label.starts_with(".L") && !info.globl && !info.weak {
                 continue;
             }
             let off = l.labels[label];
-            let info = syminfo.get(label).cloned().unwrap_or_default();
             let bind = if info.weak {
                 STB_WEAK
             } else if info.globl {
@@ -800,7 +800,12 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     };
                     (ss, rt, r.addend + off as i64)
                 }
-                Some((_, _, false)) => (model_sym_index[&r.sym], r.r_type, r.addend),
+                Some((_, _, false)) => {
+                    let sym_idx = model_sym_index.get(&r.sym).copied().ok_or_else(|| {
+                        err(0, format!("missing symbol table entry for '{}'", r.sym))
+                    })?;
+                    (sym_idx, r.r_type, r.addend)
+                }
                 None => {
                     if let Some(&idx) = model_sym_index.get(&r.sym) {
                         // Defined elsewhere in the model (e.g. a

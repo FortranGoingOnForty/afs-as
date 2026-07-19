@@ -252,3 +252,41 @@ fn default_common_alignment_matches_gas() {
         panic!("{f}");
     }
 }
+
+#[test]
+fn exported_dot_l_symbols_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "exported_dot_l_symbols_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let cases = [
+        (
+            "global_dot_l_call",
+            ".text\n.globl .Lfoo\ncaller: call .Lfoo\n.Lfoo: ret\n",
+        ),
+        (
+            "global_dot_l_jmp",
+            ".text\n.globl .Lfoo\ncaller: jmp .Lfoo\n.Lfoo: ret\n",
+        ),
+        (
+            "weak_dot_l_call",
+            ".text\n.weak .Lfoo\ncaller: call .Lfoo\n.Lfoo: ret\n",
+        ),
+        (
+            "weak_dot_l_jmp",
+            ".text\n.weak .Lfoo\ncaller: jmp .Lfoo\n.Lfoo: ret\n",
+        ),
+    ];
+    let tmp = celf::TempArtifacts::new("afs_x86_exported_dot_l");
+    let mut failures = Vec::new();
+    for (name, src) in cases {
+        if let Some(failure) = diff_one(name, src, &gas, &tmp) {
+            failures.push(failure);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
