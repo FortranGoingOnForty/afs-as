@@ -285,6 +285,16 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "<input>:2:10: error: fadd requires registers of the same width\nfadd d0, s1, s2\n         ^\n",
         ),
         (
+            "fmsub-register-width.s",
+            "fmsub s0, s1, d2, s3",
+            "<input>:2:15: error: fmsub requires registers of the same width\nfmsub s0, s1, d2, s3\n              ^\n",
+        ),
+        (
+            "fnmsub-register-width.s",
+            "fnmsub d0, d1, d2, s3",
+            "<input>:2:20: error: fnmsub requires registers of the same width\nfnmsub d0, d1, d2, s3\n                   ^\n",
+        ),
+        (
             "add-immediate-base-width.s",
             "add x0, w1, #1",
             "<input>:2:9: error: add/sub immediate operands must have matching widths\nadd x0, w1, #1\n        ^\n",

@@ -5067,6 +5067,66 @@ fn sys_fmadd_d() {
         },
     );
 }
+#[test]
+fn sys_fmsub_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fmsub_d") {
+        return;
+    }
+    verify(
+        "fmsub d0, d1, d2, d3",
+        Inst::FmsubD {
+            rd: D0,
+            rn: D1,
+            rm: D2,
+            ra: D3,
+        },
+    );
+}
+#[test]
+fn sys_fnmsub_d() {
+    if !native_macho_host("verify_against_system_as", "sys_fnmsub_d") {
+        return;
+    }
+    verify(
+        "fnmsub d0, d1, d2, d3",
+        Inst::FnmsubD {
+            rd: D0,
+            rn: D1,
+            rm: D2,
+            ra: D3,
+        },
+    );
+}
+#[test]
+fn sys_fmsub_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fmsub_s") {
+        return;
+    }
+    verify(
+        "fmsub s0, s1, s2, s3",
+        Inst::FmsubS {
+            rd: S0,
+            rn: S1,
+            rm: S2,
+            ra: S3,
+        },
+    );
+}
+#[test]
+fn sys_fnmsub_s() {
+    if !native_macho_host("verify_against_system_as", "sys_fnmsub_s") {
+        return;
+    }
+    verify(
+        "fnmsub s0, s1, s2, s3",
+        Inst::FnmsubS {
+            rd: S0,
+            rn: S1,
+            rm: S2,
+            ra: S3,
+        },
+    );
+}
 
 // ---- FP / integer conversion ----
 

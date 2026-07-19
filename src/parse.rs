@@ -1938,7 +1938,7 @@ impl<'a> Parser<'a> {
             "fsqrt" => self.parse_fp_unary("fsqrt"),
             "fcmp" => self.parse_fcmp(),
             "fcsel" => self.parse_fcsel(),
-            "fmadd" => self.parse_fmadd(),
+            "fmadd" | "fmsub" | "fnmsub" => self.parse_fp_madd(mnemonic),
 
             // FP conversion
             "fcvt" => self.parse_fcvt(),
@@ -5424,19 +5424,23 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_fmadd(&mut self) -> Result<Inst, ParseError> {
+    fn parse_fp_madd(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let rn = self.parse_fp_reg_matching_width(is_double, "fmadd")?;
+        let rn = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let rm = self.parse_fp_reg_matching_width(is_double, "fmadd")?;
+        let rm = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let ra = self.parse_fp_reg_matching_width(is_double, "fmadd")?;
-        if is_double {
-            Ok(Inst::FmaddD { rd, rn, rm, ra })
-        } else {
-            Ok(Inst::FmaddS { rd, rn, rm, ra })
-        }
+        let ra = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
+        Ok(match (mnemonic, is_double) {
+            ("fmadd", true) => Inst::FmaddD { rd, rn, rm, ra },
+            ("fmadd", false) => Inst::FmaddS { rd, rn, rm, ra },
+            ("fmsub", true) => Inst::FmsubD { rd, rn, rm, ra },
+            ("fmsub", false) => Inst::FmsubS { rd, rn, rm, ra },
+            ("fnmsub", true) => Inst::FnmsubD { rd, rn, rm, ra },
+            ("fnmsub", false) => Inst::FnmsubS { rd, rn, rm, ra },
+            _ => unreachable!(),
+        })
     }
 
     fn parse_fcvtzs(&mut self) -> Result<Inst, ParseError> {
@@ -10966,6 +10970,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_fused_multiply_subtract_double() {
+        assert_eq!(
+            parse_inst("fmsub d0, d1, d2, d3"),
+            Inst::FmsubD {
+                rd: D0,
+                rn: D1,
+                rm: D2,
+                ra: D3
+            }
+        );
+        assert_eq!(
+            parse_inst("fnmsub d0, d1, d2, d3"),
+            Inst::FnmsubD {
+                rd: D0,
+                rn: D1,
+                rm: D2,
+                ra: D3
+            }
+        );
+    }
+
+    #[test]
     fn parse_fcvtzs_() {
         assert_eq!(
             parse_inst("fcvtzs x0, d1"),
@@ -11096,6 +11122,28 @@ mod tests {
         assert_eq!(
             parse_inst("fmadd s0, s1, s2, s3"),
             Inst::FmaddS {
+                rd: S0,
+                rn: S1,
+                rm: S2,
+                ra: S3
+            }
+        );
+    }
+
+    #[test]
+    fn parse_fused_multiply_subtract_single() {
+        assert_eq!(
+            parse_inst("fmsub s0, s1, s2, s3"),
+            Inst::FmsubS {
+                rd: S0,
+                rn: S1,
+                rm: S2,
+                ra: S3
+            }
+        );
+        assert_eq!(
+            parse_inst("fnmsub s0, s1, s2, s3"),
+            Inst::FnmsubS {
                 rd: S0,
                 rn: S1,
                 rm: S2,

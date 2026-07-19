@@ -1637,6 +1637,34 @@ pub enum Inst {
         rm: FpReg,
         ra: FpReg,
     },
+    /// FMSUB Dd, Dn, Dm, Da  (Dd = Da - Dn*Dm)
+    FmsubD {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+        ra: FpReg,
+    },
+    /// FMSUB Sd, Sn, Sm, Sa
+    FmsubS {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+        ra: FpReg,
+    },
+    /// FNMSUB Dd, Dn, Dm, Da  (Dd = Dn*Dm - Da)
+    FnmsubD {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+        ra: FpReg,
+    },
+    /// FNMSUB Sd, Sn, Sm, Sa
+    FnmsubS {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+        ra: FpReg,
+    },
 
     // ---- FP / integer conversion ----
     /// FCVTZS Wd/Xd, Sn/Dn (truncate floating point to signed integer)
@@ -2955,8 +2983,12 @@ impl Inst {
             Inst::FmovImmS { rd, imm8 } => fp_imm(0b00, *imm8, *rd),
             Inst::FcselD { rd, rn, rm, cond } => fp_csel(0b01, *rm, *cond, *rn, *rd),
             Inst::FcselS { rd, rn, rm, cond } => fp_csel(0b00, *rm, *cond, *rn, *rd),
-            Inst::FmaddD { rd, rn, rm, ra } => fp_madd(0b01, *rd, *rn, *rm, *ra),
-            Inst::FmaddS { rd, rn, rm, ra } => fp_madd(0b00, *rd, *rn, *rm, *ra),
+            Inst::FmaddD { rd, rn, rm, ra } => fp_madd(0b01, false, false, *rd, *rn, *rm, *ra),
+            Inst::FmaddS { rd, rn, rm, ra } => fp_madd(0b00, false, false, *rd, *rn, *rm, *ra),
+            Inst::FmsubD { rd, rn, rm, ra } => fp_madd(0b01, false, true, *rd, *rn, *rm, *ra),
+            Inst::FmsubS { rd, rn, rm, ra } => fp_madd(0b00, false, true, *rd, *rn, *rm, *ra),
+            Inst::FnmsubD { rd, rn, rm, ra } => fp_madd(0b01, true, true, *rd, *rn, *rm, *ra),
+            Inst::FnmsubS { rd, rn, rm, ra } => fp_madd(0b00, true, true, *rd, *rn, *rm, *ra),
 
             // ---- FP / integer conversion ----
             Inst::Fcvtzs {
@@ -3417,12 +3449,22 @@ fn fp_csel(ftype: u32, rm: FpReg, cond: Cond, rn: FpReg, rd: FpReg) -> u32 {
         | rd.enc()
 }
 
-/// FMADD Rd, Rn, Rm, Ra.
-/// Format: 0|00|11111|ftype(2)|0|Rm(5)|0|Ra(5)|Rn(5)|Rd(5)
-fn fp_madd(ftype: u32, rd: FpReg, rn: FpReg, rm: FpReg, ra: FpReg) -> u32 {
+/// Scalar fused multiply-add family.
+/// Format: 0|00|11111|ftype(2)|negated|Rm(5)|subtract|Ra(5)|Rn(5)|Rd(5)
+fn fp_madd(
+    ftype: u32,
+    negated: bool,
+    subtract: bool,
+    rd: FpReg,
+    rn: FpReg,
+    rm: FpReg,
+    ra: FpReg,
+) -> u32 {
     (0b000_11111 << 24)
         | (ftype << 22)
+        | ((negated as u32) << 21)
         | (rm.enc() << 16)
+        | ((subtract as u32) << 15)
         | (ra.enc() << 10)
         | (rn.enc() << 5)
         | rd.enc()
@@ -8587,6 +8629,29 @@ mod tests {
             0x1F420C20
         );
     }
+    #[test]
+    fn fused_multiply_subtract_double() {
+        assert_eq!(
+            Inst::FmsubD {
+                rd: D0,
+                rn: D1,
+                rm: D2,
+                ra: D3
+            }
+            .encode(),
+            0x1F428C20
+        );
+        assert_eq!(
+            Inst::FnmsubD {
+                rd: D0,
+                rn: D1,
+                rm: D2,
+                ra: D3
+            }
+            .encode(),
+            0x1F628C20
+        );
+    }
 
     // Single-precision FP unary/compare/fmadd
     #[test]
@@ -8633,6 +8698,29 @@ mod tests {
             }
             .encode(),
             0x1F020C20
+        );
+    }
+    #[test]
+    fn fused_multiply_subtract_single() {
+        assert_eq!(
+            Inst::FmsubS {
+                rd: S0,
+                rn: S1,
+                rm: S2,
+                ra: S3
+            }
+            .encode(),
+            0x1F028C20
+        );
+        assert_eq!(
+            Inst::FnmsubS {
+                rd: S0,
+                rn: S1,
+                rm: S2,
+                ra: S3
+            }
+            .encode(),
+            0x1F228C20
         );
     }
 

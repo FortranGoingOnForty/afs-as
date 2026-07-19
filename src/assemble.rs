@@ -3367,6 +3367,20 @@ mod tests {
     }
 
     #[test]
+    fn assemble_compiler_emitted_fused_multiply_subtract() {
+        let obj = assemble_source(
+            ".text\n\
+             fmsub s0, s1, s2, s3\n\
+             fnmsub d0, d1, d2, d3\n",
+        )
+        .unwrap();
+        assert_eq!(
+            text_bytes(&obj),
+            [0x20, 0x8C, 0x02, 0x1F, 0x20, 0x8C, 0x62, 0x1F]
+        );
+    }
+
+    #[test]
     fn assemble_unsigned_quad_bit_patterns_in_context() {
         let obj = assemble_source(
             ".data\n\

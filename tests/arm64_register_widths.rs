@@ -343,6 +343,8 @@ fn scalar_fp_instruction_families_reject_mismatched_register_widths() {
         "fcmp d0, s1",
         "fcsel d0, s1, d2, eq",
         "fmadd s0, s1, d2, s3",
+        "fmsub d0, d1, d2, s3",
+        "fnmsub s0, s1, d2, s3",
     ] {
         assert_rejected(source, "width");
     }
