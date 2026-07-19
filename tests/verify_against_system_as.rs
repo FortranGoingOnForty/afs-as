@@ -249,6 +249,13 @@ fn sys_cmp_ext_reg() {
     );
 }
 #[test]
+fn sys_sxtw() {
+    if !native_macho_host("verify_against_system_as", "sys_sxtw") {
+        return;
+    }
+    verify("sxtw x6, w7", Inst::Sxtw { rd: X6, rn: W7 });
+}
+#[test]
 fn sys_mul() {
     if !native_macho_host("verify_against_system_as", "sys_mul") {
         return;

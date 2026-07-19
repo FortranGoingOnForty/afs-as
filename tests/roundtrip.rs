@@ -174,6 +174,13 @@ fn rt_cmp_ext_reg() {
     roundtrip(".text\ncmp x0, w1, sxtw\n");
 }
 #[test]
+fn rt_sxtw() {
+    if !native_macho_host("roundtrip", "rt_sxtw") {
+        return;
+    }
+    roundtrip(".text\nsxtw x6, w7\n");
+}
+#[test]
 fn rt_add_imm() {
     if !native_macho_host("roundtrip", "rt_add_imm") {
         return;
