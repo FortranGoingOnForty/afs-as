@@ -1783,18 +1783,19 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_fp_reg_with_size(&mut self) -> Result<(FpReg, bool), ParseError> {
+        let start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         if lower.starts_with('d') {
             let reg = parse_fp_reg_name(&lower)
-                .ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
+                .ok_or_else(|| self.err_at(start, format!("bad FP register '{}'", name)))?;
             Ok((reg, true)) // double
         } else if lower.starts_with('s') {
             let reg = parse_fp_reg_name(&lower)
-                .ok_or_else(|| self.err(format!("bad FP register '{}'", name)))?;
+                .ok_or_else(|| self.err_at(start, format!("bad FP register '{}'", name)))?;
             Ok((reg, false)) // single
         } else {
-            Err(self.err(format!("expected FP register, got '{}'", name)))
+            Err(self.err_at(start, format!("expected FP register, got '{}'", name)))
         }
     }
 
@@ -1815,6 +1816,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_fp_mem_reg_with_width(&mut self) -> Result<(FpReg, FpMemWidth), ParseError> {
+        let start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         let width = if lower.starts_with('b') {
@@ -1828,13 +1830,12 @@ impl<'a> Parser<'a> {
         } else if lower.starts_with('q') {
             FpMemWidth::Q128
         } else {
-            return Err(self.err(format!("expected FP/SIMD register, got '{}'", name)));
+            return Err(self.err_at(start, format!("expected FP/SIMD register, got '{}'", name)));
         };
-        let num: u8 = lower[1..]
-            .parse()
-            .map_err(|_| self.err(format!("bad FP/SIMD register '{}'", name)))?;
+        let num = parse_canonical_register_number(&lower[1..])
+            .ok_or_else(|| self.err_at(start, format!("bad FP/SIMD register '{}'", name)))?;
         if num > 31 {
-            return Err(self.err(format!("bad FP/SIMD register '{}'", name)));
+            return Err(self.err_at(start, format!("bad FP/SIMD register '{}'", name)));
         }
         let reg = FpReg::new(num);
         Ok((reg, width))
@@ -4349,11 +4350,13 @@ impl<'a> Parser<'a> {
     fn parse_ldp_stp_fp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
         let (rt1, width) = self.parse_fp_mem_reg_with_width()?;
         self.expect(&Tok::Comma)?;
+        let rt2_start = self.pos;
         let (rt2, second_width) = self.parse_fp_mem_reg_with_width()?;
         if width != second_width {
-            return Err(
-                self.err("ldp/stp FP register pair must use matching register widths".into())
-            );
+            return Err(self.err_at(
+                rt2_start,
+                "ldp/stp FP register pair must use matching register widths".into(),
+            ));
         }
         if matches!(width, FpMemWidth::B8 | FpMemWidth::H16) {
             return Err(self.err("ldp/stp does not support b/h FP register pairs".into()));
@@ -5160,7 +5163,7 @@ impl<'a> Parser<'a> {
 
         if lower.starts_with('d') || lower.starts_with('s') {
             let rd = parse_fp_reg_name(&lower)
-                .ok_or_else(|| self.err(format!("bad FP reg '{}'", name)))?;
+                .ok_or_else(|| self.err_at(rd_start, format!("bad FP register '{}'", name)))?;
             let is_double = lower.starts_with('d');
             match self.peek() {
                 Tok::Integer(_) | Tok::UnsignedInteger(_) | Tok::Float(_) => {
@@ -5171,7 +5174,7 @@ impl<'a> Parser<'a> {
                         Ok(Inst::FmovImmS { rd, imm8 })
                     }
                 }
-                Tok::Ident(src) if looks_like_fp_register_name(src) => {
+                Tok::Ident(src) if looks_like_fp_register_spelling(src) => {
                     let (rn, src_is_double) = self.parse_fp_reg_with_size()?;
                     if src_is_double != is_double {
                         Err(self.err_at(
@@ -5231,35 +5234,24 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_simd_reg(&mut self) -> Result<FpReg, ParseError> {
+        let start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         parse_simd_reg_name(&lower)
-            .ok_or_else(|| self.err(format!("expected vector register, got '{}'", name)))
+            .ok_or_else(|| self.err_at(start, format!("expected vector register, got '{}'", name)))
     }
 
     fn peek_is_gp_reg(&self) -> bool {
-        match self.peek() {
-            Tok::Ident(name) => classify_gp_reg_name(&name.to_lowercase()).is_some(),
-            _ => false,
-        }
+        !self.starts_absolute_symbol_expr()
+            && matches!(self.peek(), Tok::Ident(name) if looks_like_gp_register_name(name))
     }
 
     fn peek_is_simd_reg(&self) -> bool {
-        match self.peek() {
-            Tok::Ident(name) => parse_simd_reg_name(&name.to_lowercase()).is_some(),
-            _ => false,
-        }
+        matches!(self.peek(), Tok::Ident(name) if looks_like_simd_register_spelling(name))
     }
 
     fn peek_is_scalar_fp_reg(&self) -> bool {
-        match self.peek() {
-            Tok::Ident(name) => {
-                let lower = name.to_lowercase();
-                (lower.starts_with('s') || lower.starts_with('d'))
-                    && parse_fp_reg_name(&lower).is_some()
-            }
-            _ => false,
-        }
+        matches!(self.peek(), Tok::Ident(name) if looks_like_scalar_fp_register_spelling(name))
     }
 
     fn parse_fp_modified_immediate(&mut self, is_double: bool) -> Result<u8, ParseError> {
@@ -5779,7 +5771,7 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_fp_register_like_operand(&self) -> bool {
-        matches!(self.peek(), Tok::Ident(name) if looks_like_fp_register_name(name))
+        matches!(self.peek(), Tok::Ident(name) if looks_like_fp_register_spelling(name))
     }
 
     fn parse_reg_offset_operand(
@@ -5883,7 +5875,7 @@ fn classify_gp_reg_name(lower: &str) -> Option<(GpReg, bool, GpRegKind)> {
     } else {
         return None;
     };
-    let num: u8 = num_str.parse().ok()?;
+    let num = parse_canonical_register_number(num_str)?;
     (num <= 30).then(|| (GpReg::new(num), is_64bit, GpRegKind::Reg))
 }
 
@@ -5909,7 +5901,7 @@ fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
     } else {
         return None;
     };
-    let num: u8 = num_str.parse().ok()?;
+    let num = parse_canonical_register_number(num_str)?;
     if num > 31 {
         return None;
     }
@@ -5920,7 +5912,7 @@ fn parse_fp_reg_name(name: &str) -> Option<FpReg> {
 fn parse_simd_reg_name(name: &str) -> Option<FpReg> {
     let lower = name.to_lowercase();
     let num_str = lower.strip_prefix('v')?;
-    let num: u8 = num_str.parse().ok()?;
+    let num = parse_canonical_register_number(num_str)?;
     if num > 31 {
         return None;
     }
@@ -5929,6 +5921,37 @@ fn parse_simd_reg_name(name: &str) -> Option<FpReg> {
 
 fn looks_like_fp_register_name(name: &str) -> bool {
     parse_fp_reg_name(name).is_some()
+}
+
+fn parse_canonical_register_number(suffix: &str) -> Option<u8> {
+    if suffix.is_empty() || (suffix.len() > 1 && suffix.starts_with('0')) {
+        return None;
+    }
+    suffix.parse().ok()
+}
+
+fn looks_like_fp_register_spelling(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let mut chars = lower.chars();
+    matches!(chars.next(), Some('b' | 'h' | 'd' | 's' | 'q'))
+        && chars.clone().next().is_some()
+        && chars.all(|ch| ch.is_ascii_digit())
+}
+
+fn looks_like_scalar_fp_register_spelling(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let mut chars = lower.chars();
+    matches!(chars.next(), Some('d' | 's'))
+        && chars.clone().next().is_some()
+        && chars.all(|ch| ch.is_ascii_digit())
+}
+
+fn looks_like_simd_register_spelling(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    let Some(suffix) = lower.strip_prefix('v') else {
+        return false;
+    };
+    !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn parse_condition(s: &str) -> Option<Cond> {

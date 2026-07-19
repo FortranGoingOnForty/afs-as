@@ -433,6 +433,41 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "lsl x0, x32, #1",
             "<input>:2:9: error: bad register 'x32'\nlsl x0, x32, #1\n        ^\n",
         ),
+        (
+            "malformed-fp-arithmetic-register.s",
+            "fadd d0, d32, d2",
+            "<input>:2:10: error: bad FP register 'd32'\nfadd d0, d32, d2\n         ^\n",
+        ),
+        (
+            "malformed-fp-conversion-register.s",
+            "fcvtzs x0, d32",
+            "<input>:2:12: error: bad FP register 'd32'\nfcvtzs x0, d32\n           ^\n",
+        ),
+        (
+            "malformed-fp-memory-register.s",
+            "ldr d32, [x0]",
+            "<input>:2:5: error: bad FP/SIMD register 'd32'\nldr d32, [x0]\n    ^\n",
+        ),
+        (
+            "malformed-fmov-register.s",
+            "fmov d0, d32",
+            "<input>:2:10: error: bad FP register 'd32'\nfmov d0, d32\n         ^\n",
+        ),
+        (
+            "malformed-fmov-destination.s",
+            "fmov d32, d0",
+            "<input>:2:6: error: bad FP register 'd32'\nfmov d32, d0\n     ^\n",
+        ),
+        (
+            "fp-pair-register-width.s",
+            "ldp d0, s1, [x2]",
+            "<input>:2:9: error: ldp/stp FP register pair must use matching register widths\nldp d0, s1, [x2]\n        ^\n",
+        ),
+        (
+            "malformed-simd-register.s",
+            "ld1.s { v32 }[0], [x0]",
+            "<input>:2:9: error: expected vector register, got 'v32'\nld1.s { v32 }[0], [x0]\n        ^\n",
+        ),
     ] {
         run_failure_snapshot(name, &format!(".text\n{}\n", instruction), expected);
     }

@@ -154,6 +154,39 @@ fn register_shaped_absolute_symbols_remain_immediate_operands() {
 }
 
 #[test]
+fn leading_zero_register_shaped_symbols_remain_immediate_operands() {
+    for (symbol, value, source, canonical) in [
+        ("x01", 1, "add x0, x1, x01", "add x0, x1, #1"),
+        ("w01", 1, "sub w0, w1, w01", "sub w0, w1, #1"),
+        ("x01", 8, "ldr x0, [x1, x01]", "ldr x0, [x1, #8]"),
+        ("w01", 4, "str w0, [x1, w01]", "str w0, [x1, #4]"),
+        ("d01", 1, "add x0, x1, d01", "add x0, x1, #1"),
+        ("v01", 1, "sub x0, x1, v01", "sub x0, x1, #1"),
+    ] {
+        let with_symbol = format!(".set {symbol}, {value}\n{source}");
+        assert_eq!(
+            parse_inst(&with_symbol).encode(),
+            parse_inst(canonical).encode(),
+            "source: {source}; canonical: {canonical}"
+        );
+    }
+}
+
+#[test]
+fn leading_zero_register_spellings_are_rejected() {
+    for source in [
+        "add x0, x01, x2",
+        "sub w0, w1, w01",
+        "fadd d01, d1, d2",
+        "fadd s0, s01, s2",
+        "ldr q01, [x0]",
+        "ld1.s { v01 }[0], [x0]",
+    ] {
+        assert_rejected(source, "register");
+    }
+}
+
+#[test]
 fn architectural_register_names_take_priority_over_absolute_symbols() {
     for source in [
         ".set sp, 1\nadd x0, x1, sp",
