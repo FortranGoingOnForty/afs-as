@@ -220,18 +220,18 @@ fn large_bss_space_matches_gas_without_materializing() {
 }
 
 #[test]
-fn space_and_skip_fill_bytes_match_gas() {
+fn explicit_fill_bytes_match_gas() {
     let Some(gas) = celf::gas_path() else {
         celf::skip(
             "x86_assemble_differential",
-            "space_and_skip_fill_bytes_match_gas",
+            "explicit_fill_bytes_match_gas",
             "no GNU assembler on this host",
         );
         return;
     };
     let tmp = celf::TempArtifacts::new("afs_x86_space_fill");
-    let src = ".text\n.globl f\nf:\n.space 4,0x90\n.skip 3,0xab\nret\n.data\nd:\n.space 4,0x7f\n";
-    if let Some(f) = diff_one("space_skip_fill", src, &gas, &tmp) {
+    let src = ".text\n.globl f\nf:\n.byte 0\n.p2align 2,0xcc\n.space 4,0x90\n.skip 3,0xab\nret\n.data\nd:\n.byte 0\n.p2align 2,0x5a\n.space 4,0x7f\n";
+    if let Some(f) = diff_one("explicit_fill", src, &gas, &tmp) {
         panic!("{f}");
     }
 }

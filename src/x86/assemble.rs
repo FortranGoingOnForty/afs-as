@@ -56,10 +56,13 @@ enum Item {
     Fill { size: u64, byte: u8 },
     /// Relaxable branch to a section-local label.
     Branch { kind: BranchKind, label: String },
-    /// .p2align: pad to 1<<p2, but skip the alignment entirely when the
-    /// padding would exceed the optional max-skip (`.p2align N,,M`). Text
-    /// sections fill with NOPs, data with zeros.
-    Align(u32, Option<u64>),
+    /// `.p2align`: pad to `1 << pow`, subject to an optional maximum skip.
+    /// An omitted fill selects text NOPs or data zeros.
+    Align {
+        pow: u32,
+        fill: Option<u8>,
+        max_skip: Option<u64>,
+    },
     /// `.size sym, .-base`: records the dot position at the
     /// directive so the size is exact even with padding or local
     /// labels after the body. Zero width.
@@ -170,13 +173,21 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     commons.push((sym.clone(), *size, *align, line))
                 }
                 Directive::File(_) => {}
-                Directive::P2Align { pow, max_skip } => {
+                Directive::P2Align {
+                    pow,
+                    fill,
+                    max_skip,
+                } => {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
                     let sb = &mut secs[current].1;
                     sb.max_align = sb.max_align.max(1u64 << pow);
-                    sb.items.push(Item::Align(*pow, *max_skip));
+                    sb.items.push(Item::Align {
+                        pow: *pow,
+                        fill: *fill,
+                        max_skip: *max_skip,
+                    });
                 }
                 Directive::Byte(items)
                 | Directive::Short(items)
@@ -374,7 +385,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             branch_len(*kind, true)
                         }
                     }
-                    Item::Align(p2, max_skip) => align_pad(pos, *p2, *max_skip),
+                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip),
                     Item::SizeDot(_) => 0,
                 };
             }
@@ -421,7 +432,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             branch_len(*kind, true)
                         }
                     }
-                    Item::Align(p2, max_skip) => align_pad(pos, *p2, *max_skip),
+                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip),
                     Item::SizeDot(_) => 0,
                 };
             }
@@ -526,13 +537,19 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         pos += head.len() as u64 + 4;
                     }
                 }
-                Item::Align(p2, max_skip) => {
-                    let pad = align_pad(pos, *p2, *max_skip);
+                Item::Align {
+                    pow,
+                    fill,
+                    max_skip,
+                } => {
+                    let pad = align_pad(pos, *pow, *max_skip);
                     if !is_bss {
                         let len = usize::try_from(pad)
                             .map_err(|_| err(0, format!("alignment fill too large: {}", pad)))?;
                         let here = bytes.len();
-                        if is_text {
+                        if let Some(byte) = fill {
+                            bytes.resize(here + len, *byte);
+                        } else if is_text {
                             fill_nops(&mut bytes, len);
                         } else {
                             bytes.resize(here + len, 0);

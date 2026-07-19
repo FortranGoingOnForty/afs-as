@@ -1,20 +1,18 @@
-//! Audit A6: `.p2align N,,M` carries a max-skip — gcc emits it — and gas
-//! omits the alignment padding entirely when it would exceed M. The x86
-//! assembler dropped the third argument, so it always padded and the layout
-//! (offsets, section size) diverged from gas.
-//!
-//! Keyed on the layout decision (`.text` length) rather than the exact NOP
-//! fill bytes, which are a separate cosmetic detail.
+//! `.p2align` layout and fill regression coverage.
 
 use afs_as::x86::assemble::assemble_x86;
 
 fn text_len(src: &str) -> usize {
+    text_bytes(src).len()
+}
+
+fn text_bytes(src: &str) -> Vec<u8> {
     let obj = assemble_x86(src, 0).unwrap_or_else(|e| panic!("{src:?}: {}", e.msg));
     obj.sections
         .iter()
         .find(|s| s.name == ".text")
-        .map(|s| s.data.len())
-        .unwrap_or(0)
+        .map(|s| s.data.clone())
+        .unwrap_or_default()
 }
 
 #[test]
@@ -38,4 +36,20 @@ fn no_max_skip_always_aligns() {
     // Without the third argument the alignment is unconditional.
     assert_eq!(text_len(".text\n.byte 1\n.p2align 4\n.byte 2\n"), 17);
     assert_eq!(text_len(".text\n.byte 1\n.p2align 3\n.byte 2\n"), 9);
+}
+
+#[test]
+fn explicit_fill_byte_is_preserved() {
+    assert_eq!(
+        text_bytes(".text\n.byte 0\n.p2align 2,0xcc\n.byte 1\n"),
+        [0, 0xcc, 0xcc, 0xcc, 1]
+    );
+    assert_eq!(
+        text_bytes(".text\n.byte 0\n.p2align 2,511\n.byte 1\n"),
+        [0, 0xff, 0xff, 0xff, 1]
+    );
+    assert_eq!(
+        text_bytes(".text\n.byte 0\n.p2align 2,\n.byte 1\n"),
+        [0, 0, 0, 0, 1]
+    );
 }
