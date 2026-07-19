@@ -308,20 +308,106 @@ fn dash_dash_64_writes_elf64_object() {
 }
 
 #[test]
-fn dash_dash_64_errors_carry_input_path_and_line() {
+fn dash_dash_64_errors_meet_diagnostic_contract() {
     let root = temp_root("afs_as_cli_elf_err");
-    let src_path = root.join("bad.s");
-    fs::write(&src_path, ".text\n    frobnicate %rax\n").expect("write source");
+    let half = 9_223_372_036_854_775_807u64;
+    let cases = [
+        (
+            "parse",
+            ".text\n    .unknown_directive\n".to_string(),
+            2,
+            "    .unknown_directive",
+        ),
+        (
+            "semantic",
+            ".text\n    frobnicate %rax\n".to_string(),
+            2,
+            "    frobnicate %rax",
+        ),
+        (
+            "layout",
+            format!(".bss\n.space {half}\n.space {half}\n    .zero 3\n"),
+            4,
+            "    .zero 3",
+        ),
+    ];
 
-    let output = afs_as()
-        .args(["--64", "-o"])
-        .arg(root.join("bad.o"))
-        .arg(&src_path)
-        .output()
-        .expect("run afs-as --64");
+    for (name, source, line, snippet) in cases {
+        let src_path = root.join(format!("{name}.s"));
+        fs::write(&src_path, source).expect("write source");
+
+        let output = afs_as()
+            .args(["--64", "-o"])
+            .arg(root.join(format!("{name}.o")))
+            .arg(&src_path)
+            .output()
+            .expect("run afs-as --64");
+        assert_eq!(output.status.code(), Some(1), "case {name}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("{}:{line}:5: error:", src_path.display())),
+            "case {name} stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.lines().any(|rendered| rendered == snippet),
+            "case {name} stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.lines().any(|rendered| rendered == "    ^"),
+            "case {name} stderr:\n{stderr}"
+        );
+    }
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn dash_dash_64_stdin_errors_use_stdin_source_name() {
+    let output = run_with_stdin(&["--64", "-", "-o", "-"], ".text\n\tfrobnicate %rax\n");
+
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("bad.s"), "stderr: {}", stderr);
-    assert!(stderr.contains("line 2"), "stderr: {}", stderr);
+    assert!(stderr.contains("<stdin>:2:2: error:"), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("\tfrobnicate %rax\n\t^"),
+        "stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn dash_dash_64_oversized_initialized_sections_report_errors() {
+    let root = temp_root("afs_as_cli_elf_materialization");
+    let size = i64::MAX;
+
+    for (name, directive) in [("zero", ".zero"), ("space", ".space"), ("skip", ".skip")] {
+        let src_path = root.join(format!("{name}.s"));
+        let obj_path = root.join(format!("{name}.o"));
+        let source = format!(".data\n.byte 1\n    {directive} {size}\n");
+        fs::write(&src_path, &source).expect("write source");
+
+        let output = afs_as()
+            .args(["--64", "-o"])
+            .arg(&obj_path)
+            .arg(&src_path)
+            .output()
+            .expect("run afs-as --64");
+        assert_eq!(output.status.code(), Some(1), "case {name}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("{}:3:5: error:", src_path.display())),
+            "case {name} stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "initialized section is too large to materialize (1 + {size} bytes)"
+            )),
+            "case {name} stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!("    {directive} {size}\n    ^")),
+            "case {name} stderr:\n{stderr}"
+        );
+        assert!(!obj_path.exists(), "case {name} left an output object");
+    }
+
     fs::remove_dir_all(&root).ok();
 }

@@ -51,10 +51,11 @@ impl fmt::Display for X86ParseError {
     }
 }
 
-/// One parsed statement with its 1-based source line.
+/// One parsed statement with its 1-based source location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Located {
     pub line: u32,
+    pub col: u32,
     pub stmt: Stmt,
 }
 
@@ -94,11 +95,12 @@ pub enum Directive {
     Data,
     Bss,
     /// `.section name` (only bare names the backend emits: `.rodata`,
-    /// `.note.GNU-stack` with optional `"",@progbits` args).
+    /// `.note.GNU-stack` with optional flags and `@progbits` type.
     Section {
         name: String,
     },
     Globl(String),
+    Extern(String),
     Local(String),
     Weak(String),
     Type {
@@ -133,8 +135,9 @@ pub enum Directive {
         align: u64,
     },
     File(String),
-    /// Recognized and ignored (writer synthesizes the real thing).
-    NoteGnuStack,
+    NoteGnuStack {
+        executable: bool,
+    },
 }
 
 pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
@@ -151,6 +154,7 @@ pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
             if let Some((label, rest)) = split_label(line) {
                 out.push(Located {
                     line: line_no,
+                    col: col_of(raw, line),
                     stmt: Stmt::Label(label.to_string()),
                 });
                 line = rest;
@@ -163,6 +167,7 @@ pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
             };
             out.push(Located {
                 line: line_no,
+                col: col_of(raw, line),
                 stmt,
             });
             break;
@@ -472,9 +477,31 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         "data" => Directive::Data,
         "bss" => Directive::Bss,
         "section" => {
-            let sec = args.split(',').next().unwrap_or("").trim().to_string();
+            let mut fields = args.split(',').map(str::trim);
+            let sec = fields.next().unwrap_or("").to_string();
             if sec == ".note.GNU-stack" {
-                Directive::NoteGnuStack
+                let executable = match fields.next() {
+                    None | Some("\"\"") => false,
+                    Some("\"x\"") => true,
+                    Some(flags) => {
+                        return Err(err(format!(
+                            "unsupported .note.GNU-stack flags '{}'",
+                            flags
+                        )))
+                    }
+                };
+                if let Some(kind) = fields.next() {
+                    if kind != "@progbits" && kind != "%progbits" {
+                        return Err(err(format!("unsupported .note.GNU-stack type '{}'", kind)));
+                    }
+                }
+                if let Some(extra) = fields.next() {
+                    return Err(err(format!(
+                        "unexpected .note.GNU-stack argument '{}'",
+                        extra
+                    )));
+                }
+                Directive::NoteGnuStack { executable }
             } else if sec == ".rodata" || sec == ".text" || sec == ".data" || sec == ".bss" {
                 Directive::Section { name: sec }
             } else {
@@ -482,6 +509,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
             }
         }
         "globl" | "global" => Directive::Globl(one_sym(args)?),
+        "extern" => Directive::Extern(one_sym(args)?),
         "local" => Directive::Local(one_sym(args)?),
         "weak" => Directive::Weak(one_sym(args)?),
         "type" => {
@@ -742,9 +770,10 @@ mod tests {
 
     #[test]
     fn directive_forms() {
-        let stmts =
-            parse(".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8\n.asciz \"hi\\n\"\n.p2align 4\n")
-                .unwrap();
+        let stmts = parse(
+            ".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8\n.asciz \"hi\\n\"\n.p2align 4\n.extern ext\n",
+        )
+        .unwrap();
         assert_eq!(
             stmts[0].stmt,
             Stmt::Directive(Directive::Comm {
@@ -771,6 +800,40 @@ mod tests {
             stmts[3].stmt,
             Stmt::Directive(Directive::Asciz(b"hi\n".to_vec()))
         );
+        assert_eq!(
+            stmts[5].stmt,
+            Stmt::Directive(Directive::Extern("ext".into()))
+        );
+    }
+
+    #[test]
+    fn gnu_stack_section_flags_are_preserved() {
+        let stmts = parse(
+            ".section .note.GNU-stack\n\
+             .section .note.GNU-stack,\"\",@progbits\n\
+             .section .note.GNU-stack,\"x\",%progbits\n",
+        )
+        .unwrap();
+        assert_eq!(
+            stmts[0].stmt,
+            Stmt::Directive(Directive::NoteGnuStack { executable: false })
+        );
+        assert_eq!(
+            stmts[1].stmt,
+            Stmt::Directive(Directive::NoteGnuStack { executable: false })
+        );
+        assert_eq!(
+            stmts[2].stmt,
+            Stmt::Directive(Directive::NoteGnuStack { executable: true })
+        );
+
+        for source in [
+            ".section .note.GNU-stack,\"w\",@progbits\n",
+            ".section .note.GNU-stack,\"x\",@nobits\n",
+            ".section .note.GNU-stack,\"x\",@progbits,extra\n",
+        ] {
+            assert!(parse(source).is_err(), "must reject {source:?}");
+        }
     }
 
     #[test]

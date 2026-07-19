@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::fs;
 use std::hint::black_box;
 use std::path::Path;
@@ -102,6 +103,53 @@ fn measure_library_pass(src: &str, rounds: usize) -> Duration {
     best_duration(samples)
 }
 
+fn relocation_source(count: usize) -> String {
+    let mut src = String::with_capacity(count * 48);
+    src.push_str(".data\n");
+    for index in 0..count {
+        if index % 2 == 0 {
+            writeln!(src, ".extern _reloc_{index:05}").unwrap();
+        }
+        writeln!(src, ".quad _reloc_{index:05}").unwrap();
+    }
+    src
+}
+
+fn measure_relocation_resolution(src: &str, rounds: usize) -> Duration {
+    let mut samples = Vec::with_capacity(rounds);
+    for _ in 0..rounds {
+        let start = Instant::now();
+        let obj = assemble::assemble_source(src).expect("assemble relocation source");
+        black_box(obj);
+        samples.push(start.elapsed());
+    }
+    best_duration(samples)
+}
+
+fn calibrated_relocation_count() -> usize {
+    let mut count = 2_000;
+    loop {
+        let src = relocation_source(count);
+        let elapsed = measure_relocation_resolution(&src, 1);
+        if elapsed >= Duration::from_millis(50) || count >= 64_000 {
+            return count;
+        }
+        count *= 2;
+    }
+}
+
+fn calibrated_object_count() -> usize {
+    let mut count = 1_000;
+    loop {
+        let src = relocation_source(count);
+        let elapsed = measure_library_pass(&src, 1);
+        if elapsed >= Duration::from_millis(50) || count >= 32_000 {
+            return count;
+        }
+        count *= 2;
+    }
+}
+
 fn run_cli(bin: &Path, input: &Path, output: &Path) -> Duration {
     let start = Instant::now();
     let status = Command::new(bin)
@@ -153,6 +201,48 @@ fn native_macho_host(suite: &str, test: &str) -> bool {
         suite, test
     );
     false
+}
+
+#[test]
+fn relocation_resolution_scales_near_linearly() {
+    let medium_count = calibrated_relocation_count();
+    let medium = relocation_source(medium_count);
+    let large = relocation_source(medium_count * 2);
+
+    let _ = measure_relocation_resolution(&large, 1);
+
+    let medium_time = measure_relocation_resolution(&medium, 3);
+    let large_time = measure_relocation_resolution(&large, 3);
+    let ratio_ceiling = medium_time.mul_f64(3.0) + Duration::from_millis(5);
+
+    assert!(
+        large_time <= ratio_ceiling,
+        "relocation resolution scaling regressed: medium {:?}, large {:?}, ceiling {:?}",
+        medium_time,
+        large_time,
+        ratio_ceiling
+    );
+}
+
+#[test]
+fn relocation_object_pipeline_scales_near_linearly() {
+    let medium_count = calibrated_object_count();
+    let medium = relocation_source(medium_count);
+    let large = relocation_source(medium_count * 2);
+
+    let _ = measure_library_pass(&large, 1);
+
+    let medium_time = measure_library_pass(&medium, 3);
+    let large_time = measure_library_pass(&large, 3);
+    let ratio_ceiling = medium_time.mul_f64(3.0) + Duration::from_millis(5);
+
+    assert!(
+        large_time <= ratio_ceiling,
+        "relocation object scaling regressed: medium {:?}, large {:?}, ceiling {:?}",
+        medium_time,
+        large_time,
+        ratio_ceiling
+    );
 }
 
 #[test]

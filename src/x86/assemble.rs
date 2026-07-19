@@ -18,6 +18,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::assemble::AsmError;
+
 use super::super::elf::{
     self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, EM_X86_64, SHF_ALLOC,
     SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK, STT_FUNC,
@@ -27,17 +29,7 @@ use super::encode::{encode, InsnReloc};
 use super::parse::{parse, DataItem, Directive, SizeArg, Stmt, SymKind};
 use super::Operand;
 
-#[derive(Debug)]
-pub struct AsmX86Error {
-    pub line: u32,
-    pub msg: String,
-}
-
-impl std::fmt::Display for AsmX86Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "line {}: {}", self.line, self.msg)
-    }
-}
+pub type AsmX86Error = AsmError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BranchKind {
@@ -69,13 +61,33 @@ enum Item {
     SizeDot(String),
 }
 
+#[derive(Debug)]
+struct LocatedItem {
+    line: u32,
+    col: u32,
+    item: Item,
+}
+
+#[derive(Debug)]
+struct LocatedReloc {
+    line: u32,
+    col: u32,
+    reloc: InsnReloc,
+}
+
 #[derive(Debug, Default)]
 struct SecBuild {
-    items: Vec<Item>,
+    items: Vec<LocatedItem>,
     /// label -> item index it precedes.
     labels: HashMap<String, usize>,
     label_order: Vec<String>,
     max_align: u64,
+}
+
+impl SecBuild {
+    fn push(&mut self, line: u32, col: u32, item: Item) {
+        self.items.push(LocatedItem { line, col, item });
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -86,21 +98,21 @@ struct SymInfo {
     typ: Option<u8>,
     size: Option<SizeArg>,
     size_line: u32,
+    size_col: u32,
+    size_section: Option<usize>,
 }
 
 pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
-    let stmts = parse(src).map_err(|e| AsmX86Error {
-        line: e.line,
-        msg: e.render_with_source(src),
-    })?;
+    let stmts = parse(src).map_err(|e| AsmError::at(e.line, e.col, e.msg))?;
 
     // ---- Pass 1: build sections -----------------------------------
     let mut secs: Vec<(String, SecBuild)> = Vec::new();
     let mut sec_index: HashMap<String, usize> = HashMap::new();
     let mut current: usize = usize::MAX;
     let mut syminfo: HashMap<String, SymInfo> = HashMap::new();
-    // (sym, size, align, line)
-    let mut commons: Vec<(String, u64, u64, u32)> = Vec::new();
+    let mut gnu_stack_flags: Option<u64> = None;
+    // (sym, size, align, line, column)
+    let mut commons: Vec<(String, u64, u64, u32, u32)> = Vec::new();
     let mut common_names: HashSet<String> = HashSet::new();
     // label -> section index (for cross-section checks + reloc targets)
     let mut label_section: HashMap<String, usize> = HashMap::new();
@@ -117,7 +129,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         secs.len() - 1
     };
 
-    let err = |line: u32, msg: String| AsmX86Error { line, msg };
+    let err = |line: u32, col: u32, msg: String| AsmError::at(line, col, msg);
 
     // gas always creates .text/.data/.bss even when empty; match it so
     // objects diff clean against the system assembler.
@@ -127,17 +139,22 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
 
     for located in &stmts {
         let line = located.line;
+        let col = located.col;
         match &located.stmt {
             Stmt::Label(name) => {
                 if common_names.contains(name) {
-                    return Err(err(line, format!("symbol '{}' is already defined", name)));
+                    return Err(err(
+                        line,
+                        col,
+                        format!("symbol '{}' is already defined", name),
+                    ));
                 }
                 if current == usize::MAX {
                     current = ensure_sec(".text", &mut secs, &mut sec_index);
                 }
                 let sb = &mut secs[current].1;
                 if label_section.insert(name.clone(), current).is_some() {
-                    return Err(err(line, format!("duplicate label '{}'", name)));
+                    return Err(err(line, col, format!("duplicate label '{}'", name)));
                 }
                 sb.labels.insert(name.clone(), sb.items.len());
                 sb.label_order.push(name.clone());
@@ -149,8 +166,13 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 Directive::Section { name } => {
                     current = ensure_sec(name, &mut secs, &mut sec_index)
                 }
-                Directive::NoteGnuStack => { /* writer synthesizes */ }
+                Directive::NoteGnuStack { executable } => {
+                    gnu_stack_flags.get_or_insert(if *executable { SHF_EXECINSTR } else { 0 });
+                }
                 Directive::Globl(s) => syminfo.entry(s.clone()).or_default().globl = true,
+                Directive::Extern(s) => {
+                    syminfo.entry(s.clone()).or_default();
+                }
                 Directive::Weak(s) => syminfo.entry(s.clone()).or_default().weak = true,
                 Directive::Local(s) => syminfo.entry(s.clone()).or_default().local = true,
                 Directive::Type { sym, kind } => {
@@ -160,25 +182,32 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     })
                 }
                 Directive::Size { sym, arg } => {
+                    if matches!(arg, SizeArg::DotMinus(_)) && current == usize::MAX {
+                        return Err(err(
+                            line,
+                            col,
+                            format!(".size {}, .-... before any section", sym),
+                        ));
+                    }
                     let e = syminfo.entry(sym.clone()).or_default();
                     e.size = Some(arg.clone());
                     e.size_line = line;
+                    e.size_col = col;
+                    e.size_section = matches!(arg, SizeArg::DotMinus(_)).then_some(current);
                     if matches!(arg, SizeArg::DotMinus(_)) {
-                        if current == usize::MAX {
-                            return Err(err(
-                                line,
-                                format!(".size {}, .-... before any section", sym),
-                            ));
-                        }
-                        secs[current].1.items.push(Item::SizeDot(sym.clone()));
+                        secs[current].1.push(line, col, Item::SizeDot(sym.clone()));
                     }
                 }
                 Directive::Comm { sym, size, align } => {
                     if label_section.contains_key(sym) {
-                        return Err(err(line, format!("symbol '{}' is already defined", sym)));
+                        return Err(err(
+                            line,
+                            col,
+                            format!("symbol '{}' is already defined", sym),
+                        ));
                     }
                     common_names.insert(sym.clone());
-                    commons.push((sym.clone(), *size, *align, line))
+                    commons.push((sym.clone(), *size, *align, line, col))
                 }
                 Directive::File(_) => {}
                 Directive::P2Align {
@@ -191,11 +220,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     }
                     let sb = &mut secs[current].1;
                     sb.max_align = sb.max_align.max(1u64 << pow);
-                    sb.items.push(Item::Align {
-                        pow: *pow,
-                        fill: *fill,
-                        max_skip: *max_skip,
-                    });
+                    sb.push(
+                        line,
+                        col,
+                        Item::Align {
+                            pow: *pow,
+                            fill: *fill,
+                            max_skip: *max_skip,
+                        },
+                    );
                 }
                 Directive::Byte(items)
                 | Directive::Short(items)
@@ -219,6 +252,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                                 if width != 8 {
                                     return Err(err(
                                         line,
+                                        col,
                                         format!(
                                             "symbolic data item '{}' only supported in .quad",
                                             name
@@ -240,13 +274,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     {
                         return Err(err(
                             line,
+                            col,
                             "attempt to store non-zero value in section `.bss'".into(),
                         ));
                     }
                     if secs[current].0 == ".bss" {
-                        secs[current].1.items.push(Item::Zero(bytes.len() as u64));
+                        secs[current]
+                            .1
+                            .push(line, col, Item::Zero(bytes.len() as u64));
                     } else {
-                        secs[current].1.items.push(Item::Bytes(bytes, relocs));
+                        secs[current].1.push(line, col, Item::Bytes(bytes, relocs));
                     }
                 }
                 Directive::Ascii(b) => {
@@ -256,13 +293,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
                         return Err(err(
                             line,
+                            col,
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
                     if secs[current].0 == ".bss" {
-                        secs[current].1.items.push(Item::Zero(b.len() as u64));
+                        secs[current].1.push(line, col, Item::Zero(b.len() as u64));
                     } else {
-                        secs[current].1.items.push(Item::Bytes(b.clone(), vec![]));
+                        secs[current]
+                            .1
+                            .push(line, col, Item::Bytes(b.clone(), vec![]));
                     }
                 }
                 Directive::Asciz(b) => {
@@ -272,15 +312,18 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
                         return Err(err(
                             line,
+                            col,
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
                     if secs[current].0 == ".bss" {
-                        secs[current].1.items.push(Item::Zero(b.len() as u64 + 1));
+                        secs[current]
+                            .1
+                            .push(line, col, Item::Zero(b.len() as u64 + 1));
                     } else {
                         let mut v = b.clone();
                         v.push(0);
-                        secs[current].1.items.push(Item::Bytes(v, vec![]));
+                        secs[current].1.push(line, col, Item::Bytes(v, vec![]));
                     }
                 }
                 Directive::Space { size, fill } => {
@@ -290,26 +333,24 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     if secs[current].0 == ".bss" && *fill != 0 {
                         return Err(err(
                             line,
+                            col,
                             "attempt to store non-zero value in section `.bss'".into(),
                         ));
                     }
-                    secs[current].1.items.push(Item::Fill {
-                        size: *size,
-                        byte: *fill,
-                    });
+                    secs[current].1.push(
+                        line,
+                        col,
+                        Item::Fill {
+                            size: *size,
+                            byte: *fill,
+                        },
+                    );
                 }
                 Directive::Zero(n) => {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
-                    if secs[current].0 == ".bss" {
-                        secs[current].1.items.push(Item::Zero(*n));
-                    } else {
-                        secs[current]
-                            .1
-                            .items
-                            .push(Item::Bytes(vec![0u8; *n as usize], vec![]));
-                    }
+                    secs[current].1.push(line, col, Item::Zero(*n));
                 }
             },
             Stmt::Insn { mnemonic, operands } => {
@@ -330,18 +371,25 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     _ => None,
                 };
                 if let Some((kind, label)) = branch {
-                    secs[current].1.items.push(Item::Branch { kind, label });
+                    secs[current]
+                        .1
+                        .push(line, col, Item::Branch { kind, label });
                     continue;
                 }
                 let enc = encode(mnemonic, operands)
-                    .map_err(|e| err(line, format!("{}: {}", mnemonic, e)))?;
+                    .map_err(|e| err(line, col, format!("{}: {}", mnemonic, e)))?;
                 if enc.label_fix.is_some() {
-                    return Err(err(line, format!("unexpected label fix for {}", mnemonic)));
+                    return Err(err(
+                        line,
+                        col,
+                        format!("unexpected label fix for {}", mnemonic),
+                    ));
                 }
-                secs[current]
-                    .1
-                    .items
-                    .push(Item::Bytes(enc.bytes, enc.reloc.into_iter().collect()));
+                secs[current].1.push(
+                    line,
+                    col,
+                    Item::Bytes(enc.bytes, enc.reloc.into_iter().collect()),
+                );
             }
         }
     }
@@ -351,7 +399,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         name: String,
         size: u64,
         bytes: Vec<u8>,
-        relocs: Vec<InsnReloc>, // section-relative offsets
+        relocs: Vec<LocatedReloc>, // section-relative offsets
         labels: HashMap<String, u64>,
         /// sym -> dot position at its `.size sym, .-base` directive.
         size_dot: HashMap<String, u64>,
@@ -380,9 +428,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             // Compute offsets under current sizing.
             let mut offsets: Vec<u64> = Vec::with_capacity(sb.items.len() + 1);
             let mut pos: u64 = 0;
-            for (i, item) in sb.items.iter().enumerate() {
+            for (i, located) in sb.items.iter().enumerate() {
                 offsets.push(pos);
-                pos += match item {
+                let item = &located.item;
+                let size = match item {
                     Item::Bytes(b, _) => b.len() as u64,
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
@@ -393,22 +442,31 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             branch_len(*kind, true)
                         }
                     }
-                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip),
+                    Item::Align { pow, max_skip, .. } => {
+                        align_pad(pos, *pow, *max_skip, located.line, located.col)?
+                    }
                     Item::SizeDot(_) => 0,
                 };
+                pos = checked_layout_add(pos, size, located.line, located.col)?;
             }
             offsets.push(pos);
             // Grow any short branch whose displacement overflows i8.
             let mut grew = false;
-            for (i, item) in sb.items.iter().enumerate() {
+            for (i, located) in sb.items.iter().enumerate() {
+                let item = &located.item;
                 if let Item::Branch { kind, label } = item {
                     if long[i] || !is_local_branch(label) {
                         continue;
                     }
                     let target_item = sb.labels[label];
                     let target_off = offsets[target_item];
-                    let end = offsets[i] + branch_len(*kind, false);
-                    let disp = target_off as i64 - end as i64;
+                    let end = checked_layout_add(
+                        offsets[i],
+                        branch_len(*kind, false),
+                        located.line,
+                        located.col,
+                    )?;
+                    let disp = i128::from(target_off) - i128::from(end);
                     if i8::try_from(disp).is_err() {
                         long[i] = true;
                         grew = true;
@@ -422,14 +480,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
 
         // Materialize.
         let mut bytes: Vec<u8> = Vec::new();
-        let mut relocs: Vec<InsnReloc> = Vec::new();
+        let mut relocs: Vec<LocatedReloc> = Vec::new();
         let mut item_offsets: Vec<u64> = Vec::with_capacity(sb.items.len());
         // First recompute final offsets (same walk as above).
         {
             let mut pos = 0u64;
-            for (i, item) in sb.items.iter().enumerate() {
+            for (i, located) in sb.items.iter().enumerate() {
                 item_offsets.push(pos);
-                pos += match item {
+                let item = &located.item;
+                let size = match item {
                     Item::Bytes(b, _) => b.len() as u64,
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
@@ -440,63 +499,70 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             branch_len(*kind, true)
                         }
                     }
-                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip),
+                    Item::Align { pow, max_skip, .. } => {
+                        align_pad(pos, *pow, *max_skip, located.line, located.col)?
+                    }
                     Item::SizeDot(_) => 0,
                 };
+                pos = checked_layout_add(pos, size, located.line, located.col)?;
             }
             item_offsets.push(pos);
         }
         let mut size_dot: HashMap<String, u64> = HashMap::new();
         let is_bss = name == ".bss";
         let mut pos = 0u64;
-        let reloc_offset = |offset: u64| -> Result<u32, AsmX86Error> {
-            u32::try_from(offset)
-                .map_err(|_| err(0, format!("relocation offset {} exceeds u32", offset)))
+        let reloc_offset = |offset: u64, line: u32, col: u32| -> Result<u32, AsmX86Error> {
+            u32::try_from(offset).map_err(|_| {
+                err(
+                    line,
+                    col,
+                    format!("relocation offset {} exceeds u32", offset),
+                )
+            })
         };
-        for (i, item) in sb.items.iter().enumerate() {
+        for (i, located) in sb.items.iter().enumerate() {
+            let line = located.line;
+            let col = located.col;
+            let item = &located.item;
             match item {
                 Item::Bytes(b, rs) => {
-                    let base = reloc_offset(pos)?;
+                    let base = reloc_offset(pos, line, col)?;
                     for r in rs {
                         let offset = base.checked_add(r.offset).ok_or_else(|| {
                             err(
-                                0,
+                                line,
+                                col,
                                 format!("relocation offset {} + {} overflows u32", base, r.offset),
                             )
                         })?;
-                        relocs.push(InsnReloc {
-                            offset,
-                            ..r.clone()
+                        relocs.push(LocatedReloc {
+                            line,
+                            col,
+                            reloc: InsnReloc {
+                                offset,
+                                ..r.clone()
+                            },
                         });
                     }
                     if !is_bss {
+                        reserve_materialized_bytes(&mut bytes, b.len() as u64, line, col)?;
                         bytes.extend_from_slice(b);
                     }
-                    pos += b.len() as u64;
+                    pos = checked_layout_add(pos, b.len() as u64, line, col)?;
                 }
                 Item::Zero(n) => {
                     if !is_bss {
-                        let len = usize::try_from(*n)
-                            .map_err(|_| err(0, format!("zero fill too large: {}", n)))?;
-                        let new_len = bytes
-                            .len()
-                            .checked_add(len)
-                            .ok_or_else(|| err(0, format!("zero fill too large: {}", n)))?;
+                        let new_len = reserve_materialized_bytes(&mut bytes, *n, line, col)?;
                         bytes.resize(new_len, 0);
                     }
-                    pos += *n;
+                    pos = checked_layout_add(pos, *n, line, col)?;
                 }
                 Item::Fill { size, byte } => {
                     if !is_bss {
-                        let len = usize::try_from(*size)
-                            .map_err(|_| err(0, format!("space fill too large: {}", size)))?;
-                        let new_len = bytes
-                            .len()
-                            .checked_add(len)
-                            .ok_or_else(|| err(0, format!("space fill too large: {}", size)))?;
+                        let new_len = reserve_materialized_bytes(&mut bytes, *size, line, col)?;
                         bytes.resize(new_len, *byte);
                     }
-                    pos += *size;
+                    pos = checked_layout_add(pos, *size, line, col)?;
                 }
                 Item::Branch { kind, label } => {
                     if is_local_branch(label) {
@@ -508,16 +574,29 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                                 BranchKind::Jmp => (5u64, vec![0xe9]),
                                 BranchKind::Jcc(cc) => (6u64, vec![0x0f, 0x80 + cc]),
                             };
-                            let disp = target as i64 - (here + len) as i64;
+                            let end = checked_layout_add(here, len, line, col)?;
+                            let disp = i128::from(target) - i128::from(end);
+                            let encoded = i32::try_from(disp).map_err(|_| {
+                                err(
+                                    line,
+                                    col,
+                                    format!("branch displacement to '{}' exceeds i32", label),
+                                )
+                            })?;
                             if !is_bss {
+                                reserve_materialized_bytes(&mut bytes, len, line, col)?;
                                 bytes.append(&mut head);
-                                bytes.extend_from_slice(&(disp as i32).to_le_bytes());
+                                bytes.extend_from_slice(&encoded.to_le_bytes());
                             }
-                            pos += len;
+                            pos = end;
                         } else {
-                            let disp = target as i64 - (here + 2) as i64;
-                            let d8 = i8::try_from(disp).expect("relaxation fixed-point violated");
+                            let end = checked_layout_add(here, 2, line, col)?;
+                            let disp = i128::from(target) - i128::from(end);
+                            let d8 = i8::try_from(disp).map_err(|_| {
+                                err(line, col, "relaxed branch displacement exceeds i8".into())
+                            })?;
                             if !is_bss {
+                                reserve_materialized_bytes(&mut bytes, 2, line, col)?;
                                 match kind {
                                     BranchKind::Jmp => bytes.extend_from_slice(&[0xeb, d8 as u8]),
                                     BranchKind::Jcc(cc) => {
@@ -525,24 +604,35 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                                     }
                                 }
                             }
-                            pos += 2;
+                            pos = end;
                         }
                     } else {
                         let (head, disp_offset): (&[u8], u64) = match kind {
                             BranchKind::Jmp => (&[0xe9], 1),
                             BranchKind::Jcc(cc) => (&[0x0f, 0x80 + cc], 2),
                         };
-                        relocs.push(InsnReloc {
-                            offset: reloc_offset(pos + disp_offset)?,
-                            sym: label.clone(),
-                            r_type: R_X86_64_PLT32,
-                            addend: -4,
+                        let relocation_pos = checked_layout_add(pos, disp_offset, line, col)?;
+                        relocs.push(LocatedReloc {
+                            line,
+                            col,
+                            reloc: InsnReloc {
+                                offset: reloc_offset(relocation_pos, line, col)?,
+                                sym: label.clone(),
+                                r_type: R_X86_64_PLT32,
+                                addend: -4,
+                            },
                         });
                         if !is_bss {
+                            reserve_materialized_bytes(
+                                &mut bytes,
+                                head.len() as u64 + 4,
+                                line,
+                                col,
+                            )?;
                             bytes.extend_from_slice(head);
                             bytes.extend_from_slice(&0i32.to_le_bytes());
                         }
-                        pos += head.len() as u64 + 4;
+                        pos = checked_layout_add(pos, head.len() as u64 + 4, line, col)?;
                     }
                 }
                 Item::Align {
@@ -550,20 +640,20 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     fill,
                     max_skip,
                 } => {
-                    let pad = align_pad(pos, *pow, *max_skip);
+                    let pad = align_pad(pos, *pow, *max_skip, line, col)?;
+                    let section_end = checked_layout_add(pos, pad, line, col)?;
                     if !is_bss {
-                        let len = usize::try_from(pad)
-                            .map_err(|_| err(0, format!("alignment fill too large: {}", pad)))?;
-                        let here = bytes.len();
+                        let end = reserve_materialized_bytes(&mut bytes, pad, line, col)?;
+                        let len = end - bytes.len();
                         if let Some(byte) = fill {
-                            bytes.resize(here + len, *byte);
+                            bytes.resize(end, *byte);
                         } else if is_text {
                             fill_nops(&mut bytes, len);
                         } else {
-                            bytes.resize(here + len, 0);
+                            bytes.resize(end, 0);
                         }
                     }
-                    pos += pad;
+                    pos = section_end;
                 }
                 Item::SizeDot(sym) => {
                     size_dot.insert(sym.clone(), pos);
@@ -590,15 +680,19 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
 
     // ---- Build the ELF model ---------------------------------------
     let mut obj = ObjectFile::new(EM_X86_64, osabi);
+    obj.gnu_stack_flags = gnu_stack_flags;
     let mut model_sec_index: HashMap<String, usize> = HashMap::new();
-    for l in &laid {
+    for l in &mut laid {
         let (sh_flags, align_default) = match l.name.as_str() {
             ".text" => (SHF_ALLOC | SHF_EXECINSTR, 1),
             ".data" => (SHF_ALLOC | SHF_WRITE, 1),
             ".bss" => (SHF_ALLOC | SHF_WRITE, 1),
             ".rodata" => (SHF_ALLOC, 1),
             other => {
-                return Err(err(0, format!("unsupported section '{}'", other)));
+                return Err(AsmError::new(format!(
+                    "internal unsupported section '{}'",
+                    other
+                )));
             }
         };
         let sh_type = if l.name == ".bss" {
@@ -615,7 +709,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             data: if sh_type == SHT_NOBITS {
                 Vec::new()
             } else {
-                l.bytes.clone()
+                std::mem::take(&mut l.bytes)
             },
             relas: Vec::new(),
         });
@@ -627,7 +721,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let mut local_bss: HashMap<String, (u64, u64)> = HashMap::new(); // sym -> (offset, size)
     {
         let mut bss_needed = false;
-        for (sym, _, _, _) in &commons {
+        for (sym, _, _, _, _) in &commons {
             if syminfo.get(sym).is_some_and(|i| i.local) {
                 bss_needed = true;
             }
@@ -636,11 +730,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             obj.sections.push(Section::bss());
             model_sec_index.insert(".bss".into(), obj.sections.len() - 1);
         }
-        for (sym, size, align, _) in &commons {
+        for (sym, size, align, line, col) in &commons {
             if syminfo.get(sym).is_some_and(|i| i.local) {
                 let bss = &mut obj.sections[model_sec_index[".bss"]];
-                let off = bss.nobits_size.next_multiple_of((*align).max(1));
-                bss.nobits_size = off + size;
+                let off = checked_align_up(bss.nobits_size, (*align).max(1)).ok_or_else(|| {
+                    err(*line, *col, "local COMMON alignment overflows u64".into())
+                })?;
+                bss.nobits_size = off
+                    .checked_add(*size)
+                    .ok_or_else(|| err(*line, *col, "local COMMON size overflows u64".into()))?;
                 bss.sh_addralign = bss.sh_addralign.max(*align);
                 local_bss.insert(sym.clone(), (off, *size));
             }
@@ -653,6 +751,50 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     // are synthesized on demand for local-label relocations.
     let mut model_sym_index: HashMap<String, usize> = HashMap::new();
     let mut section_sym: HashMap<usize, usize> = HashMap::new();
+    let symbol_size = |symbol: &str,
+                       info: &SymInfo,
+                       defined_section: Option<usize>|
+     -> Result<u64, AsmX86Error> {
+        match &info.size {
+            None => Ok(0),
+            Some(SizeArg::Const(size)) => Ok(*size),
+            Some(SizeArg::DotMinus(base)) => {
+                let size_section = info.size_section.ok_or_else(|| {
+                    err(
+                        info.size_line,
+                        info.size_col,
+                        format!(".size {}: directive has no section", symbol),
+                    )
+                })?;
+                if defined_section.is_some_and(|section| section != size_section) {
+                    return Err(err(
+                        info.size_line,
+                        info.size_col,
+                        format!(".size {}: directive not in the symbol's section", symbol),
+                    ));
+                }
+                let section = &laid[size_section];
+                let dot = section.size_dot.get(symbol).copied().ok_or_else(|| {
+                    err(
+                        info.size_line,
+                        info.size_col,
+                        format!(".size {}: directive has no recorded position", symbol),
+                    )
+                })?;
+                let start = section.labels.get(base).copied().ok_or_else(|| {
+                    err(
+                        info.size_line,
+                        info.size_col,
+                        format!(
+                            ".size {}: base '{}' not defined in this section",
+                            symbol, base
+                        ),
+                    )
+                })?;
+                Ok(dot.wrapping_sub(start))
+            }
+        }
+    };
 
     for (li, l) in laid.iter().enumerate() {
         // Deterministic: label_order from the build.
@@ -671,28 +813,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             };
             // `.size sym, .-base`: dot recorded at the directive, so
             // padding and local labels after the body don't skew it.
-            let size = match &info.size {
-                None => 0,
-                Some(SizeArg::Const(c)) => *c,
-                Some(SizeArg::DotMinus(base)) => {
-                    let dot = l.size_dot.get(label).copied().ok_or_else(|| {
-                        err(
-                            info.size_line,
-                            format!(".size {}: directive not in the symbol's section", label),
-                        )
-                    })?;
-                    let start = l.labels.get(base).copied().ok_or_else(|| {
-                        err(
-                            info.size_line,
-                            format!(
-                                ".size {}: base '{}' not defined in this section",
-                                label, base
-                            ),
-                        )
-                    })?;
-                    dot.saturating_sub(start)
-                }
-            };
+            let size = symbol_size(label, &info, Some(li))?;
             model_sym_index.insert(label.clone(), obj.symbols.len());
             obj.symbols.push(Symbol {
                 name: label.clone(),
@@ -706,7 +827,22 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         }
     }
     // Local .comm allocations.
-    for (sym, (off, size)) in &local_bss {
+    for located in &stmts {
+        let sym = match &located.stmt {
+            Stmt::Directive(Directive::Globl(sym))
+            | Stmt::Directive(Directive::Local(sym))
+            | Stmt::Directive(Directive::Weak(sym)) => sym,
+            Stmt::Directive(Directive::Type { sym, .. })
+            | Stmt::Directive(Directive::Size { sym, .. })
+            | Stmt::Directive(Directive::Comm { sym, .. }) => sym,
+            _ => continue,
+        };
+        let Some(&(off, size)) = local_bss.get(sym) else {
+            continue;
+        };
+        if model_sym_index.contains_key(sym) {
+            continue;
+        }
         let info = syminfo.get(sym).cloned().unwrap_or_default();
         model_sym_index.insert(sym.clone(), obj.symbols.len());
         obj.symbols.push(Symbol {
@@ -715,12 +851,12 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             typ: info.typ.unwrap_or(STT_OBJECT),
             vis: STV_DEFAULT,
             place: SymbolPlace::Section(model_sec_index[".bss"]),
-            value: *off,
-            size: *size,
+            value: off,
+            size,
         });
     }
     // Global commons.
-    for (sym, size, align, _) in &commons {
+    for (sym, size, align, _, _) in &commons {
         if local_bss.contains_key(sym) {
             continue;
         }
@@ -736,6 +872,39 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         });
     }
 
+    // GNU as retains strong undefined declarations even when no relocation
+    // references them. Walk the parsed directives to preserve source order;
+    // an unreferenced weak declaration is intentionally omitted.
+    for located in &stmts {
+        let symbol = match &located.stmt {
+            Stmt::Directive(Directive::Globl(symbol))
+            | Stmt::Directive(Directive::Extern(symbol))
+            | Stmt::Directive(Directive::Local(symbol))
+            | Stmt::Directive(Directive::Weak(symbol)) => symbol,
+            Stmt::Directive(Directive::Type { sym, .. })
+            | Stmt::Directive(Directive::Size { sym, .. }) => sym,
+            _ => continue,
+        };
+        if model_sym_index.contains_key(symbol) {
+            continue;
+        }
+        let info = &syminfo[symbol];
+        if info.weak || !(info.globl || info.typ.is_some() || info.size.is_some()) {
+            continue;
+        }
+        let size = symbol_size(symbol, info, None)?;
+        model_sym_index.insert(symbol.clone(), obj.symbols.len());
+        obj.symbols.push(Symbol {
+            name: symbol.clone(),
+            bind: STB_GLOBAL,
+            typ: info.typ.unwrap_or(STT_NOTYPE),
+            vis: STV_DEFAULT,
+            place: SymbolPlace::Undef,
+            value: 0,
+            size,
+        });
+    }
+
     // Relocations. gas's rules for defined LOCAL targets (.L*,
     // non-.globl labels, .local commons): a PC-relative fixup whose
     // target lives in the same section resolves at assembly time and
@@ -746,7 +915,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     // keep their symbol relocation.
     for l in &laid {
         let sec_idx = model_sec_index[&l.name];
-        for r in &l.relocs {
+        for located in &l.relocs {
+            let line = located.line;
+            let col = located.col;
+            let r = &located.reloc;
             // (model section, offset, local?) when defined here.
             let target = if let Some(&tsec) = label_section.get(&r.sym) {
                 let tmodel = model_sec_index[&secs[tsec].0];
@@ -763,14 +935,19 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     let pc_rel = r.r_type == R_X86_64_PC32 || r.r_type == R_X86_64_PLT32;
                     if pc_rel && tmodel == sec_idx {
                         // Same-section local PC-rel: patch in place.
-                        let disp = off as i64 + r.addend - r.offset as i64;
+                        let disp = i128::from(off) + i128::from(r.addend) - i128::from(r.offset);
                         let d = i32::try_from(disp).map_err(|_| {
-                            err(0, format!("displacement to '{}' overflows i32", r.sym))
+                            err(
+                                line,
+                                col,
+                                format!("displacement to '{}' overflows i32", r.sym),
+                            )
                         })?;
                         let start = r.offset as usize;
                         if start + 4 > obj.sections[sec_idx].data.len() {
                             return Err(err(
-                                0,
+                                line,
+                                col,
                                 format!(
                                     "cannot resolve PC-relative reference to '{}' inside NOBITS section '{}'",
                                     r.sym, obj.sections[sec_idx].name
@@ -798,11 +975,18 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     } else {
                         r.r_type
                     };
-                    (ss, rt, r.addend + off as i64)
+                    // ELF64 RELA addends are signed, but relocation arithmetic
+                    // preserves the section offset modulo 2^64. GNU as emits
+                    // the same two's-complement representation above i64::MAX.
+                    (ss, rt, (off as i64).wrapping_add(r.addend))
                 }
                 Some((_, _, false)) => {
                     let sym_idx = model_sym_index.get(&r.sym).copied().ok_or_else(|| {
-                        err(0, format!("missing symbol table entry for '{}'", r.sym))
+                        err(
+                            line,
+                            col,
+                            format!("missing symbol table entry for '{}'", r.sym),
+                        )
                     })?;
                     (sym_idx, r.r_type, r.addend)
                 }
@@ -814,22 +998,32 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     } else {
                         // Undefined external.
                         let info = syminfo.get(&r.sym).cloned().unwrap_or_default();
-                        let idx = *model_sym_index.entry(r.sym.clone()).or_insert_with(|| {
-                            obj.symbols.push(Symbol {
-                                name: r.sym.clone(),
-                                bind: if info.weak { STB_WEAK } else { STB_GLOBAL },
-                                typ: STT_NOTYPE,
-                                vis: STV_DEFAULT,
-                                place: SymbolPlace::Undef,
-                                value: 0,
-                                size: 0,
-                            });
-                            obj.symbols.len() - 1
+                        let size = symbol_size(&r.sym, &info, None)?;
+                        let idx = obj.symbols.len();
+                        model_sym_index.insert(r.sym.clone(), idx);
+                        obj.symbols.push(Symbol {
+                            name: r.sym.clone(),
+                            bind: if info.weak { STB_WEAK } else { STB_GLOBAL },
+                            typ: info.typ.unwrap_or(STT_NOTYPE),
+                            vis: STV_DEFAULT,
+                            place: SymbolPlace::Undef,
+                            value: 0,
+                            size,
                         });
                         (idx, r.r_type, r.addend)
                     }
                 }
             };
+            if obj.sections[sec_idx].sh_type == SHT_NOBITS {
+                return Err(err(
+                    line,
+                    col,
+                    format!(
+                        "cannot emit relocation to '{}' inside NOBITS section '{}'",
+                        r.sym, obj.sections[sec_idx].name
+                    ),
+                ));
+            }
             obj.sections[sec_idx].relas.push(Rela {
                 offset: r.offset as u64,
                 symbol: sym_idx,
@@ -839,25 +1033,76 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         }
     }
 
-    elf::validate(&obj).map_err(|e| err(0, e.to_string()))?;
+    elf::validate(&obj).map_err(|e| AsmError::new(e.to_string()))?;
     Ok(obj)
+}
+
+fn checked_layout_add(pos: u64, size: u64, line: u32, col: u32) -> Result<u64, AsmX86Error> {
+    pos.checked_add(size)
+        .ok_or_else(|| AsmError::at(line, col, "section layout size overflows u64".into()))
+}
+
+fn reserve_materialized_bytes(
+    bytes: &mut Vec<u8>,
+    additional: u64,
+    line: u32,
+    col: u32,
+) -> Result<usize, AsmX86Error> {
+    let current = bytes.len();
+    let too_large = || {
+        AsmError::at(
+            line,
+            col,
+            format!(
+                "initialized section is too large to materialize ({} + {} bytes)",
+                current, additional
+            ),
+        )
+    };
+    let additional = usize::try_from(additional).map_err(|_| too_large())?;
+    let end = current.checked_add(additional).ok_or_else(&too_large)?;
+    bytes.try_reserve(additional).map_err(|_| too_large())?;
+    Ok(end)
+}
+
+fn checked_align_up(value: u64, alignment: u64) -> Option<u64> {
+    let remainder = value % alignment;
+    if remainder == 0 {
+        Some(value)
+    } else {
+        value.checked_add(alignment - remainder)
+    }
+}
+
+/// Padding a `.p2align pow` inserts at `pos`, honoring a `.p2align N,,M`
+/// max-skip: gas emits no padding at all when it would exceed `max_skip`.
+fn align_pad(
+    pos: u64,
+    pow: u32,
+    max_skip: Option<u64>,
+    line: u32,
+    col: u32,
+) -> Result<u64, AsmX86Error> {
+    let alignment = 1u64
+        .checked_shl(pow)
+        .ok_or_else(|| AsmError::at(line, col, "section alignment exceeds u64".into()))?;
+    let remainder = pos & (alignment - 1);
+    let pad = if remainder == 0 {
+        0
+    } else {
+        alignment - remainder
+    };
+    Ok(if max_skip.is_some_and(|m| pad > m) {
+        0
+    } else {
+        pad
+    })
 }
 
 /// gas-style multi-byte NOP fill for text alignment. Single NOPs run
 /// up to 11 bytes (66/2e-prefixed nopw forms), longer fills go
 /// longest-first. Table measured from gas 2.44 output for every fill
 /// size 1..=15.
-/// Padding a `.p2align pow` inserts at `pos`, honoring a `.p2align N,,M`
-/// max-skip: gas emits no padding at all when it would exceed `max_skip`.
-fn align_pad(pos: u64, pow: u32, max_skip: Option<u64>) -> u64 {
-    let pad = pos.next_multiple_of(1u64 << pow) - pos;
-    if max_skip.is_some_and(|m| pad > m) {
-        0
-    } else {
-        pad
-    }
-}
-
 fn fill_nops(out: &mut Vec<u8>, mut n: usize) {
     const NOPS: [&[u8]; 11] = [
         &[0x90],

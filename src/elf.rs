@@ -519,6 +519,10 @@ pub struct ObjectFile {
     /// ELFOSABI_FREEBSD on FreeBSD targets, ELFOSABI_NONE on Linux —
     /// gas brands relocatables per OS and the differential compares it.
     pub osabi: u8,
+    /// `.note.GNU-stack` flags. `None` preserves an absent marker;
+    /// `Some(0)` requests a non-executable stack and
+    /// `Some(SHF_EXECINSTR)` requests an executable stack.
+    pub gnu_stack_flags: Option<u64>,
     pub sections: Vec<Section>,
     pub symbols: Vec<Symbol>,
 }
@@ -528,6 +532,7 @@ impl ObjectFile {
         Self {
             machine,
             osabi,
+            gnu_stack_flags: Some(0),
             sections: Vec::new(),
             symbols: Vec::new(),
         }
@@ -623,8 +628,18 @@ fn align_up(v: u64, align: u64) -> u64 {
 /// File layout: ehdr, section contents (model order, 8-byte aligned,
 /// NOBITS consuming no bytes but taking the current offset like gas),
 /// symtab, strtab, rela bodies, shstrtab, then the section header
-/// table: [null, contents..., .note.GNU-stack, .symtab, .strtab,
-/// .rela.X..., .shstrtab].
+/// table: [null, contents..., optional .note.GNU-stack, .symtab,
+/// .strtab, .rela.X..., .shstrtab].
+fn reserve_elf_bytes(bytes: &mut Vec<u8>, additional: usize) -> Result<(), ElfError> {
+    let current = bytes.len();
+    bytes.try_reserve(additional).map_err(|_| {
+        ElfError::new(format!(
+            "ELF output is too large to materialize ({} + {} bytes)",
+            current, additional
+        ))
+    })
+}
+
 pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     validate(obj)?;
 
@@ -685,12 +700,11 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     // --- Section header list assembly. Order:
     // [0] null
     // [1..=n] content sections (model order)
-    // [n+1] .note.GNU-stack
-    // [n+2] .symtab, [n+3] .strtab
+    // [n+1] optional .note.GNU-stack
+    // then .symtab, .strtab
     // then one .rela.X per relocated content section, then .shstrtab.
     let n_contents = obj.sections.len();
-    let note_idx = 1 + n_contents;
-    let symtab_idx = note_idx + 1;
+    let symtab_idx = 1 + n_contents + usize::from(obj.gnu_stack_flags.is_some());
     let strtab_idx = symtab_idx + 1;
     let relocated: Vec<usize> = (0..n_contents)
         .filter(|&i| !obj.sections[i].relas.is_empty())
@@ -716,13 +730,17 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
         sh_entsize: 0,
     });
 
-    let place = |body: &mut Vec<u8>, align: u64, bytes: &[u8]| -> u64 {
+    let place = |body: &mut Vec<u8>, align: u64, bytes: &[u8]| -> Result<u64, ElfError> {
         let here = base + body.len() as u64;
         let aligned = align_up(here, align.max(1));
-        body.resize(body.len() + (aligned - here) as usize, 0);
+        let padding = usize::try_from(aligned - here)
+            .map_err(|_| ElfError::new("ELF section padding exceeds usize"))?;
+        reserve_elf_bytes(body, padding)?;
+        body.resize(body.len() + padding, 0);
         let off = base + body.len() as u64;
+        reserve_elf_bytes(body, bytes.len())?;
         body.extend_from_slice(bytes);
-        off
+        Ok(off)
     };
 
     for sec in &obj.sections {
@@ -733,7 +751,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
             let here = align_up(base + body.len() as u64, sec.sh_addralign.max(1));
             (here, sec.nobits_size)
         } else {
-            let off = place(&mut body, sec.sh_addralign, &sec.data);
+            let off = place(&mut body, sec.sh_addralign, &sec.data)?;
             (off, sec.data.len() as u64)
         };
         shdrs.push(Elf64Shdr {
@@ -750,25 +768,25 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
         });
     }
 
-    // .note.GNU-stack: empty PROGBITS, no flags — absence makes GNU ld
-    // warn about executable stacks.
-    let note_name = shstrtab.intern(".note.GNU-stack");
-    let note_off = base + body.len() as u64;
-    shdrs.push(Elf64Shdr {
-        sh_name: note_name,
-        sh_type: SHT_PROGBITS,
-        sh_flags: 0,
-        sh_addr: 0,
-        sh_offset: note_off,
-        sh_size: 0,
-        sh_link: 0,
-        sh_info: 0,
-        sh_addralign: 1,
-        sh_entsize: 0,
-    });
+    if let Some(flags) = obj.gnu_stack_flags {
+        let note_name = shstrtab.intern(".note.GNU-stack");
+        let note_off = base + body.len() as u64;
+        shdrs.push(Elf64Shdr {
+            sh_name: note_name,
+            sh_type: SHT_PROGBITS,
+            sh_flags: flags,
+            sh_addr: 0,
+            sh_offset: note_off,
+            sh_size: 0,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+    }
 
     let symtab_name = shstrtab.intern(".symtab");
-    let symtab_off = place(&mut body, 8, &symtab_body);
+    let symtab_off = place(&mut body, 8, &symtab_body)?;
     shdrs.push(Elf64Shdr {
         sh_name: symtab_name,
         sh_type: SHT_SYMTAB,
@@ -783,7 +801,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     });
 
     let strtab_name = shstrtab.intern(".strtab");
-    let strtab_off = place(&mut body, 1, strtab.bytes());
+    let strtab_off = place(&mut body, 1, strtab.bytes())?;
     shdrs.push(Elf64Shdr {
         sh_name: strtab_name,
         sh_type: SHT_STRTAB,
@@ -809,7 +827,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
             }
             .write(&mut rela_body);
         }
-        let off = place(&mut body, 8, &rela_body);
+        let off = place(&mut body, 8, &rela_body)?;
         shdrs.push(Elf64Shdr {
             sh_name: rela_name,
             sh_type: SHT_RELA,
@@ -826,7 +844,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
 
     let shstr_name = shstrtab.intern(".shstrtab");
     let shstr_bytes = shstrtab.bytes().to_vec();
-    let shstr_off = place(&mut body, 1, &shstr_bytes);
+    let shstr_off = place(&mut body, 1, &shstr_bytes)?;
     shdrs.push(Elf64Shdr {
         sh_name: shstr_name,
         sh_type: SHT_STRTAB,
@@ -843,17 +861,27 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     // Section header table, 8-aligned.
     let here = base + body.len() as u64;
     let sh_off = align_up(here, 8);
-    body.resize(body.len() + (sh_off - here) as usize, 0);
+    let padding = usize::try_from(sh_off - here)
+        .map_err(|_| ElfError::new("ELF section-header padding exceeds usize"))?;
+    reserve_elf_bytes(&mut body, padding)?;
+    body.resize(body.len() + padding, 0);
     let e_shoff = base + body.len() as u64;
     debug_assert_eq!(e_shoff, sh_off);
+    let shdr_bytes = shdrs
+        .len()
+        .checked_mul(SHDR_SIZE)
+        .ok_or_else(|| ElfError::new("ELF section-header table size overflows usize"))?;
+    reserve_elf_bytes(&mut body, shdr_bytes)?;
     for sh in &shdrs {
-        let mut tmp = Vec::with_capacity(SHDR_SIZE);
-        sh.write(&mut tmp);
-        body.extend_from_slice(&tmp);
+        sh.write(&mut body);
     }
     debug_assert_eq!(shdrs.len(), e_shnum as usize);
 
-    let mut out = Vec::with_capacity(EHDR_SIZE + body.len());
+    let output_size = EHDR_SIZE
+        .checked_add(body.len())
+        .ok_or_else(|| ElfError::new("ELF output size overflows usize"))?;
+    let mut out = Vec::new();
+    reserve_elf_bytes(&mut out, output_size)?;
     Elf64Ehdr {
         osabi: obj.osabi,
         abiversion: 0,
@@ -921,7 +949,7 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
 
     // First pass: identify symtab/strtab and content sections. Content
     // = everything that is not NULL/SYMTAB/STRTAB/RELA and not
-    // .note.GNU-stack (synthesized by the writer).
+    // .note.GNU-stack is represented separately from content sections.
     let mut symtab: Option<(usize, &Elf64Shdr)> = None;
     for (i, sh) in shdrs.iter().enumerate() {
         if sh.sh_type == SHT_SYMTAB {
@@ -947,13 +975,24 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
     // Map file section index -> model content index.
     let mut file_to_model: HashMap<usize, usize> = HashMap::new();
     let mut sections: Vec<Section> = Vec::new();
+    let mut gnu_stack_flags: Option<u64> = None;
     for (i, sh) in shdrs.iter().enumerate() {
         let keep = !matches!(sh.sh_type, SHT_NULL | SHT_SYMTAB | SHT_STRTAB | SHT_RELA);
         if !keep {
             continue;
         }
         let name = sec_name(sh)?;
-        if name == ".note.GNU-stack" || name == ".comment" || name.starts_with(".note.gnu") {
+        if name == ".note.GNU-stack" {
+            if sh.sh_type != SHT_PROGBITS {
+                return Err(ElfError::new(format!(
+                    ".note.GNU-stack has unexpected section type {}",
+                    sh.sh_type
+                )));
+            }
+            gnu_stack_flags.get_or_insert(sh.sh_flags);
+            continue;
+        }
+        if name == ".comment" || name.starts_with(".note.gnu") {
             continue;
         }
         let data = if sh.sh_type == SHT_NOBITS {
@@ -1093,6 +1132,7 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
     Ok(ObjectFile {
         machine: ehdr.e_machine,
         osabi: ehdr.osabi,
+        gnu_stack_flags,
         sections,
         symbols,
     })
@@ -1283,6 +1323,15 @@ mod tests {
     }
 
     #[test]
+    fn output_reservation_failure_is_reported() {
+        let mut bytes = Vec::new();
+        let err = reserve_elf_bytes(&mut bytes, usize::MAX)
+            .expect_err("impossible output reservation unexpectedly succeeded");
+
+        assert!(err.message.contains("too large to materialize"));
+    }
+
+    #[test]
     fn whole_file_model_roundtrip() {
         let obj = sample_object();
         let bytes = write_elf(&obj).unwrap();
@@ -1316,6 +1365,25 @@ mod tests {
         assert_eq!(cmn.place, SymbolPlace::Common);
         assert_eq!(cmn.value, 8);
         assert_eq!(cmn.size, 128);
+    }
+
+    #[test]
+    fn gnu_stack_intent_roundtrips() {
+        for flags in [None, Some(0), Some(SHF_EXECINSTR)] {
+            let mut obj = sample_object();
+            obj.gnu_stack_flags = flags;
+            let bytes = write_elf(&obj).unwrap();
+            let back = parse_elf(&bytes).unwrap();
+            assert_eq!(back.gnu_stack_flags, flags);
+        }
+    }
+
+    #[test]
+    fn new_object_defaults_to_non_executable_stack() {
+        let obj = ObjectFile::new(EM_X86_64, ELFOSABI_NONE);
+        assert_eq!(obj.gnu_stack_flags, Some(0));
+        let back = parse_elf(&write_elf(&obj).unwrap()).unwrap();
+        assert_eq!(back.gnu_stack_flags, Some(0));
     }
 
     #[test]

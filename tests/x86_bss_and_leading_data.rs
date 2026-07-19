@@ -72,6 +72,15 @@ fn zero_fill_in_bss_is_accepted() {
 }
 
 #[test]
+fn zero_fill_in_data_emits_exact_bytes() {
+    let obj = assemble_x86(".data\n.byte 0xaa\n.zero 3\n.byte 0xbb\n", 0)
+        .expect("initialized zero fill should assemble");
+    let data = obj.section_by_name(".data").expect("data section");
+
+    assert_eq!(data.data, [0xaa, 0, 0, 0, 0xbb]);
+}
+
+#[test]
 fn large_bss_space_tracks_virtual_size_without_materializing() {
     let size = 4_294_967_299u64;
     let expected_tail = 4_294_967_312u64;

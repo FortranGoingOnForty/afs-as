@@ -10,7 +10,10 @@
 #[path = "common/elf.rs"]
 mod celf;
 
-use afs_as::elf::{parse_elf, ELFOSABI_FREEBSD, ELFOSABI_NONE};
+use afs_as::elf::{
+    parse_elf, SymbolPlace, ELFOSABI_FREEBSD, ELFOSABI_NONE, SHF_EXECINSTR, STB_GLOBAL, STB_WEAK,
+    STT_FUNC, STT_NOTYPE, STT_OBJECT,
+};
 use afs_as::x86::assemble::assemble_x86;
 
 fn host_osabi() -> u8 {
@@ -284,6 +287,139 @@ fn exported_dot_l_symbols_match_gas() {
     let tmp = celf::TempArtifacts::new("afs_x86_exported_dot_l");
     let mut failures = Vec::new();
     for (name, src) in cases {
+        if let Some(failure) = diff_one(name, src, &gas, &tmp) {
+            failures.push(failure);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+const UNDEFINED_SYMBOL_METADATA: &str = ".text
+.globl globl_only
+.globl ext_func
+.type ext_func,@function
+call ext_func
+.extern extern_used
+.extern extern_unused
+call extern_used
+.type typed_only,@function
+.size sized_only,7
+base:
+.byte 1
+.globl dotted
+.type dotted,@function
+.size dotted,.-base
+.globl wrapped
+.size wrapped,.-later
+.byte 1
+later:
+.data
+.weak ext_obj
+.type ext_obj,@object
+.size ext_obj,16
+.quad ext_obj
+.weak weak_unused
+.type weak_unused,@object
+.size weak_unused,8
+";
+
+#[test]
+fn undefined_symbol_metadata_is_preserved() {
+    let obj = assemble_x86(UNDEFINED_SYMBOL_METADATA, host_osabi()).expect("assemble metadata");
+    let symbol = |name: &str| {
+        obj.symbols
+            .iter()
+            .find(|symbol| symbol.name == name)
+            .unwrap_or_else(|| panic!("missing symbol '{name}'"))
+    };
+
+    for (name, bind, typ, size) in [
+        ("globl_only", STB_GLOBAL, STT_NOTYPE, 0),
+        ("ext_func", STB_GLOBAL, STT_FUNC, 0),
+        ("extern_used", STB_GLOBAL, STT_NOTYPE, 0),
+        ("typed_only", STB_GLOBAL, STT_FUNC, 0),
+        ("sized_only", STB_GLOBAL, STT_NOTYPE, 7),
+        ("dotted", STB_GLOBAL, STT_FUNC, 1),
+        ("wrapped", STB_GLOBAL, STT_NOTYPE, u64::MAX),
+        ("ext_obj", STB_WEAK, STT_OBJECT, 16),
+    ] {
+        let actual = symbol(name);
+        assert_eq!(actual.bind, bind, "binding for {name}");
+        assert_eq!(actual.typ, typ, "type for {name}");
+        assert_eq!(actual.place, SymbolPlace::Undef, "placement for {name}");
+        assert_eq!(actual.value, 0, "value for {name}");
+        assert_eq!(actual.size, size, "size for {name}");
+    }
+
+    for name in ["extern_unused", "weak_unused"] {
+        assert!(
+            obj.symbols.iter().all(|symbol| symbol.name != name),
+            "GNU as omits unreferenced {name} declarations"
+        );
+    }
+}
+
+#[test]
+fn undefined_symbol_metadata_matches_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "undefined_symbol_metadata_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_undefined_metadata");
+    if let Some(failure) = diff_one(
+        "undefined_symbol_metadata",
+        UNDEFINED_SYMBOL_METADATA,
+        &gas,
+        &tmp,
+    ) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
+fn gnu_stack_intent_matches_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "gnu_stack_intent_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let cases = [
+        ("absent", ".text\nret\n", None),
+        (
+            "non_executable",
+            ".text\nret\n.section .note.GNU-stack,\"\",@progbits\n",
+            Some(0),
+        ),
+        (
+            "executable",
+            ".text\nret\n.section .note.GNU-stack,\"x\",@progbits\n",
+            Some(SHF_EXECINSTR),
+        ),
+        (
+            "first_non_executable",
+            ".section .note.GNU-stack,\"\",@progbits\n\
+             .section .note.GNU-stack,\"x\",@progbits\n",
+            Some(0),
+        ),
+        (
+            "first_executable",
+            ".section .note.GNU-stack,\"x\",@progbits\n\
+             .section .note.GNU-stack,\"\",@progbits\n",
+            Some(SHF_EXECINSTR),
+        ),
+    ];
+    let tmp = celf::TempArtifacts::new("afs_x86_gnu_stack");
+    let mut failures = Vec::new();
+    for (name, src, expected) in cases {
+        let ours = assemble_x86(src, host_osabi()).expect("assemble GNU-stack case");
+        assert_eq!(ours.gnu_stack_flags, expected, "stack intent for {name}");
         if let Some(failure) = diff_one(name, src, &gas, &tmp) {
             failures.push(failure);
         }
