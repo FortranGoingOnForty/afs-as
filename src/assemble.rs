@@ -640,8 +640,17 @@ impl Assembler {
         self.current_col = col;
     }
 
-    fn prepare_expression_state(&mut self, _stmts: &[LocatedStmt]) -> Result<(), AsmError> {
-        self.section_bases = self.section_base_addresses()?;
+    fn prepare_expression_state(&mut self, stmts: &[LocatedStmt]) -> Result<(), AsmError> {
+        self.section_bases = match self.section_base_addresses() {
+            Ok(bases) => bases,
+            Err(error) => {
+                let error = match Self::section_layout_error_location(stmts) {
+                    Some((line, col)) => error.with_loc_if_absent(line, col),
+                    None => error,
+                };
+                return Err(error);
+            }
+        };
         self.absolute_symbols = self.resolve_absolute_symbols()?;
         Ok(())
     }
@@ -650,35 +659,51 @@ impl Assembler {
         self.section = 0;
 
         for stmt in stmts {
-            match &stmt.stmt {
-                Stmt::Label(name) => {
-                    if self.common_symbols.contains_key(name) {
-                        return Err(AsmError(format!("duplicate symbol '{}'", name))
-                            .with_loc_if_absent(stmt.line, stmt.col));
-                    }
-                    self.note_symbol(name);
-                    let offset = self.current_offset();
-                    if self
-                        .labels
-                        .insert(name.clone(), (self.section, offset))
-                        .is_some()
-                    {
-                        return Err(AsmError(format!("duplicate label '{}'", name))
-                            .with_loc_if_absent(stmt.line, stmt.col));
-                    }
-                }
-                Stmt::Directive(dir) => {
-                    self.collect_directive_layout(dir)
-                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
-                }
-                Stmt::Instruction(_) | Stmt::InstructionWithReloc(_, _) => {
-                    self.reserve_initialized_bytes(4, "instruction")
-                        .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
-                }
-            }
+            self.collect_layout_stmt(stmt)?;
         }
 
         Ok(())
+    }
+
+    fn collect_layout_stmt(&mut self, stmt: &LocatedStmt) -> Result<(), AsmError> {
+        match &stmt.stmt {
+            Stmt::Label(name) => {
+                if self.common_symbols.contains_key(name) {
+                    return Err(AsmError(format!("duplicate symbol '{}'", name))
+                        .with_loc_if_absent(stmt.line, stmt.col));
+                }
+                self.note_symbol(name);
+                let offset = self.current_offset();
+                if self
+                    .labels
+                    .insert(name.clone(), (self.section, offset))
+                    .is_some()
+                {
+                    return Err(AsmError(format!("duplicate label '{}'", name))
+                        .with_loc_if_absent(stmt.line, stmt.col));
+                }
+            }
+            Stmt::Directive(dir) => {
+                self.collect_directive_layout(dir)
+                    .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
+            }
+            Stmt::Instruction(_) | Stmt::InstructionWithReloc(_, _) => {
+                self.reserve_initialized_bytes(4, "instruction")
+                    .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn section_layout_error_location(stmts: &[LocatedStmt]) -> Option<(u32, u32)> {
+        let mut probe = Self::new();
+        for stmt in stmts {
+            probe.collect_layout_stmt(stmt).ok()?;
+            if probe.section_base_addresses().is_err() {
+                return Some((stmt.line, stmt.col));
+            }
+        }
+        None
     }
 
     fn process(&mut self, stmts: &[LocatedStmt]) -> Result<(), AsmError> {
@@ -1218,7 +1243,8 @@ impl Assembler {
         if byte_count == 0 {
             return Ok(());
         }
-        let pattern = value.to_le_bytes();
+        // Darwin truncates the pattern to 32 bits before extending it to the element width.
+        let pattern = u64::from(value as u32).to_le_bytes();
         for _ in 0..repeat {
             self.emit_initialized_bytes(&pattern[..byte_count], ".fill")?;
         }

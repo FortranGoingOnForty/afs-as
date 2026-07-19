@@ -205,6 +205,18 @@ fn aggregate_zerofill_alignment_reports_overflow() {
 }
 
 #[test]
+fn cross_section_zerofill_overflow_reports_the_triggering_directive() {
+    let error = assemble_source(
+        ".zerofill __DATA,__bss,_a,9223372036854775807,0\n\
+         .zerofill __DATA,__bss,_b,9223372036854775807,0\n\
+         .zerofill __DATA,__thread_bss,_c,1,2\n",
+    )
+    .expect_err("cross-section zerofill overflow unexpectedly assembled");
+    assert_eq!((error.line, error.col), (Some(3), Some(1)));
+    assert_eq!(error.msg, "section layout alignment overflows u64");
+}
+
+#[test]
 fn preparsed_directives_enforce_the_same_range_contract() {
     let error = assemble_stmts(&[
         Stmt::Directive(Directive::Data),
@@ -229,4 +241,25 @@ fn preparsed_directives_enforce_the_same_range_contract() {
         object.section("__DATA", "__data").unwrap().data,
         [0x44, 0x33, 0x22, 0x11, 0, 0, 0, 0]
     );
+
+    for value in [0x1122334455667788, u64::MAX] {
+        let object = assemble_stmts(&[
+            Stmt::Directive(Directive::Data),
+            Stmt::Directive(Directive::Fill {
+                repeat: 1,
+                size: 8,
+                value,
+            }),
+        ])
+        .expect("preparsed Apple fill pattern unexpectedly rejected");
+        assert_eq!(
+            object.section("__DATA", "__data").unwrap().data,
+            (value as u32)
+                .to_le_bytes()
+                .into_iter()
+                .chain([0; 4])
+                .collect::<Vec<_>>(),
+            "fill value: {value:#x}"
+        );
+    }
 }
