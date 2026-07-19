@@ -372,3 +372,42 @@ fn dash_dash_64_stdin_errors_use_stdin_source_name() {
         "stderr:\n{stderr}"
     );
 }
+
+#[test]
+fn dash_dash_64_oversized_initialized_sections_report_errors() {
+    let root = temp_root("afs_as_cli_elf_materialization");
+    let size = i64::MAX;
+
+    for (name, directive) in [("zero", ".zero"), ("space", ".space"), ("skip", ".skip")] {
+        let src_path = root.join(format!("{name}.s"));
+        let obj_path = root.join(format!("{name}.o"));
+        let source = format!(".data\n.byte 1\n    {directive} {size}\n");
+        fs::write(&src_path, &source).expect("write source");
+
+        let output = afs_as()
+            .args(["--64", "-o"])
+            .arg(&obj_path)
+            .arg(&src_path)
+            .output()
+            .expect("run afs-as --64");
+        assert_eq!(output.status.code(), Some(1), "case {name}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("{}:3:5: error:", src_path.display())),
+            "case {name} stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "initialized section is too large to materialize (1 + {size} bytes)"
+            )),
+            "case {name} stderr:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!("    {directive} {size}\n    ^")),
+            "case {name} stderr:\n{stderr}"
+        );
+        assert!(!obj_path.exists(), "case {name} left an output object");
+    }
+
+    fs::remove_dir_all(&root).ok();
+}

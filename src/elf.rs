@@ -630,6 +630,16 @@ fn align_up(v: u64, align: u64) -> u64 {
 /// symtab, strtab, rela bodies, shstrtab, then the section header
 /// table: [null, contents..., optional .note.GNU-stack, .symtab,
 /// .strtab, .rela.X..., .shstrtab].
+fn reserve_elf_bytes(bytes: &mut Vec<u8>, additional: usize) -> Result<(), ElfError> {
+    let current = bytes.len();
+    bytes.try_reserve(additional).map_err(|_| {
+        ElfError::new(format!(
+            "ELF output is too large to materialize ({} + {} bytes)",
+            current, additional
+        ))
+    })
+}
+
 pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     validate(obj)?;
 
@@ -720,13 +730,17 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
         sh_entsize: 0,
     });
 
-    let place = |body: &mut Vec<u8>, align: u64, bytes: &[u8]| -> u64 {
+    let place = |body: &mut Vec<u8>, align: u64, bytes: &[u8]| -> Result<u64, ElfError> {
         let here = base + body.len() as u64;
         let aligned = align_up(here, align.max(1));
-        body.resize(body.len() + (aligned - here) as usize, 0);
+        let padding = usize::try_from(aligned - here)
+            .map_err(|_| ElfError::new("ELF section padding exceeds usize"))?;
+        reserve_elf_bytes(body, padding)?;
+        body.resize(body.len() + padding, 0);
         let off = base + body.len() as u64;
+        reserve_elf_bytes(body, bytes.len())?;
         body.extend_from_slice(bytes);
-        off
+        Ok(off)
     };
 
     for sec in &obj.sections {
@@ -737,7 +751,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
             let here = align_up(base + body.len() as u64, sec.sh_addralign.max(1));
             (here, sec.nobits_size)
         } else {
-            let off = place(&mut body, sec.sh_addralign, &sec.data);
+            let off = place(&mut body, sec.sh_addralign, &sec.data)?;
             (off, sec.data.len() as u64)
         };
         shdrs.push(Elf64Shdr {
@@ -772,7 +786,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     }
 
     let symtab_name = shstrtab.intern(".symtab");
-    let symtab_off = place(&mut body, 8, &symtab_body);
+    let symtab_off = place(&mut body, 8, &symtab_body)?;
     shdrs.push(Elf64Shdr {
         sh_name: symtab_name,
         sh_type: SHT_SYMTAB,
@@ -787,7 +801,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     });
 
     let strtab_name = shstrtab.intern(".strtab");
-    let strtab_off = place(&mut body, 1, strtab.bytes());
+    let strtab_off = place(&mut body, 1, strtab.bytes())?;
     shdrs.push(Elf64Shdr {
         sh_name: strtab_name,
         sh_type: SHT_STRTAB,
@@ -813,7 +827,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
             }
             .write(&mut rela_body);
         }
-        let off = place(&mut body, 8, &rela_body);
+        let off = place(&mut body, 8, &rela_body)?;
         shdrs.push(Elf64Shdr {
             sh_name: rela_name,
             sh_type: SHT_RELA,
@@ -830,7 +844,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
 
     let shstr_name = shstrtab.intern(".shstrtab");
     let shstr_bytes = shstrtab.bytes().to_vec();
-    let shstr_off = place(&mut body, 1, &shstr_bytes);
+    let shstr_off = place(&mut body, 1, &shstr_bytes)?;
     shdrs.push(Elf64Shdr {
         sh_name: shstr_name,
         sh_type: SHT_STRTAB,
@@ -847,17 +861,27 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     // Section header table, 8-aligned.
     let here = base + body.len() as u64;
     let sh_off = align_up(here, 8);
-    body.resize(body.len() + (sh_off - here) as usize, 0);
+    let padding = usize::try_from(sh_off - here)
+        .map_err(|_| ElfError::new("ELF section-header padding exceeds usize"))?;
+    reserve_elf_bytes(&mut body, padding)?;
+    body.resize(body.len() + padding, 0);
     let e_shoff = base + body.len() as u64;
     debug_assert_eq!(e_shoff, sh_off);
+    let shdr_bytes = shdrs
+        .len()
+        .checked_mul(SHDR_SIZE)
+        .ok_or_else(|| ElfError::new("ELF section-header table size overflows usize"))?;
+    reserve_elf_bytes(&mut body, shdr_bytes)?;
     for sh in &shdrs {
-        let mut tmp = Vec::with_capacity(SHDR_SIZE);
-        sh.write(&mut tmp);
-        body.extend_from_slice(&tmp);
+        sh.write(&mut body);
     }
     debug_assert_eq!(shdrs.len(), e_shnum as usize);
 
-    let mut out = Vec::with_capacity(EHDR_SIZE + body.len());
+    let output_size = EHDR_SIZE
+        .checked_add(body.len())
+        .ok_or_else(|| ElfError::new("ELF output size overflows usize"))?;
+    let mut out = Vec::new();
+    reserve_elf_bytes(&mut out, output_size)?;
     Elf64Ehdr {
         osabi: obj.osabi,
         abiversion: 0,
@@ -1296,6 +1320,15 @@ mod tests {
     fn writer_is_deterministic() {
         let obj = sample_object();
         assert_eq!(write_elf(&obj).unwrap(), write_elf(&obj).unwrap());
+    }
+
+    #[test]
+    fn output_reservation_failure_is_reported() {
+        let mut bytes = Vec::new();
+        let err = reserve_elf_bytes(&mut bytes, usize::MAX)
+            .expect_err("impossible output reservation unexpectedly succeeded");
+
+        assert!(err.message.contains("too large to materialize"));
     }
 
     #[test]

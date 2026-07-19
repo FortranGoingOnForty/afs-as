@@ -1,4 +1,7 @@
 use afs_as::x86::assemble::assemble_x86;
+use std::process::Command;
+
+const OVERSIZED_SECTION_CHILD: &str = "AFS_AS_OVERSIZED_SECTION_CHILD";
 
 #[test]
 fn semantic_errors_preserve_post_label_location() {
@@ -58,4 +61,37 @@ fn oversized_relocation_offsets_point_to_the_instruction() {
         err.msg.contains("relocation offset") && err.msg.contains("exceeds u32"),
         "unexpected error: {err}"
     );
+}
+
+#[test]
+fn oversized_initialized_sections_point_to_the_directive() {
+    if let Ok(directive) = std::env::var(OVERSIZED_SECTION_CHILD) {
+        let src = format!(".data\n    {directive} {}\n", i64::MAX);
+        let err = assemble_x86(&src, 0).expect_err("oversized section unexpectedly assembled");
+
+        assert_eq!(err.line, Some(2), "directive {directive}");
+        assert_eq!(err.col, Some(5), "directive {directive}");
+        assert!(
+            err.msg
+                .contains("initialized section is too large to materialize"),
+            "directive {directive}: {err}"
+        );
+        return;
+    }
+
+    for directive in [".zero", ".space", ".skip"] {
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .arg("oversized_initialized_sections_point_to_the_directive")
+            .args(["--exact", "--nocapture"])
+            .env(OVERSIZED_SECTION_CHILD, directive)
+            .output()
+            .expect("run isolated assembler API test");
+        assert!(
+            output.status.success(),
+            "directive {directive} exited {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

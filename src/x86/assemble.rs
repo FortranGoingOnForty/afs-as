@@ -350,15 +350,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
-                    if secs[current].0 == ".bss" {
-                        secs[current].1.push(line, col, Item::Zero(*n));
-                    } else {
-                        secs[current].1.push(
-                            line,
-                            col,
-                            Item::Bytes(vec![0u8; *n as usize], vec![]),
-                        );
-                    }
+                    secs[current].1.push(line, col, Item::Zero(*n));
                 }
             },
             Stmt::Insn { mnemonic, operands } => {
@@ -553,30 +545,21 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         });
                     }
                     if !is_bss {
+                        reserve_materialized_bytes(&mut bytes, b.len() as u64, line, col)?;
                         bytes.extend_from_slice(b);
                     }
                     pos = checked_layout_add(pos, b.len() as u64, line, col)?;
                 }
                 Item::Zero(n) => {
                     if !is_bss {
-                        let len = usize::try_from(*n)
-                            .map_err(|_| err(line, col, format!("zero fill too large: {}", n)))?;
-                        let new_len = bytes
-                            .len()
-                            .checked_add(len)
-                            .ok_or_else(|| err(line, col, format!("zero fill too large: {}", n)))?;
+                        let new_len = reserve_materialized_bytes(&mut bytes, *n, line, col)?;
                         bytes.resize(new_len, 0);
                     }
                     pos = checked_layout_add(pos, *n, line, col)?;
                 }
                 Item::Fill { size, byte } => {
                     if !is_bss {
-                        let len = usize::try_from(*size).map_err(|_| {
-                            err(line, col, format!("space fill too large: {}", size))
-                        })?;
-                        let new_len = bytes.len().checked_add(len).ok_or_else(|| {
-                            err(line, col, format!("space fill too large: {}", size))
-                        })?;
+                        let new_len = reserve_materialized_bytes(&mut bytes, *size, line, col)?;
                         bytes.resize(new_len, *byte);
                     }
                     pos = checked_layout_add(pos, *size, line, col)?;
@@ -601,6 +584,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                                 )
                             })?;
                             if !is_bss {
+                                reserve_materialized_bytes(&mut bytes, len, line, col)?;
                                 bytes.append(&mut head);
                                 bytes.extend_from_slice(&encoded.to_le_bytes());
                             }
@@ -612,6 +596,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                                 err(line, col, "relaxed branch displacement exceeds i8".into())
                             })?;
                             if !is_bss {
+                                reserve_materialized_bytes(&mut bytes, 2, line, col)?;
                                 match kind {
                                     BranchKind::Jmp => bytes.extend_from_slice(&[0xeb, d8 as u8]),
                                     BranchKind::Jcc(cc) => {
@@ -638,6 +623,12 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             },
                         });
                         if !is_bss {
+                            reserve_materialized_bytes(
+                                &mut bytes,
+                                head.len() as u64 + 4,
+                                line,
+                                col,
+                            )?;
                             bytes.extend_from_slice(head);
                             bytes.extend_from_slice(&0i32.to_le_bytes());
                         }
@@ -650,15 +641,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     max_skip,
                 } => {
                     let pad = align_pad(pos, *pow, *max_skip, line, col)?;
-                    let end = checked_layout_add(pos, pad, line, col)?;
+                    let section_end = checked_layout_add(pos, pad, line, col)?;
                     if !is_bss {
-                        let len = usize::try_from(pad).map_err(|_| {
-                            err(line, col, format!("alignment fill too large: {}", pad))
-                        })?;
-                        let here = bytes.len();
-                        let end = here.checked_add(len).ok_or_else(|| {
-                            err(line, col, format!("alignment fill too large: {}", pad))
-                        })?;
+                        let end = reserve_materialized_bytes(&mut bytes, pad, line, col)?;
+                        let len = end - bytes.len();
                         if let Some(byte) = fill {
                             bytes.resize(end, *byte);
                         } else if is_text {
@@ -667,7 +653,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             bytes.resize(end, 0);
                         }
                     }
-                    pos = end;
+                    pos = section_end;
                 }
                 Item::SizeDot(sym) => {
                     size_dot.insert(sym.clone(), pos);
@@ -696,7 +682,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let mut obj = ObjectFile::new(EM_X86_64, osabi);
     obj.gnu_stack_flags = gnu_stack_flags;
     let mut model_sec_index: HashMap<String, usize> = HashMap::new();
-    for l in &laid {
+    for l in &mut laid {
         let (sh_flags, align_default) = match l.name.as_str() {
             ".text" => (SHF_ALLOC | SHF_EXECINSTR, 1),
             ".data" => (SHF_ALLOC | SHF_WRITE, 1),
@@ -723,7 +709,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             data: if sh_type == SHT_NOBITS {
                 Vec::new()
             } else {
-                l.bytes.clone()
+                std::mem::take(&mut l.bytes)
             },
             relas: Vec::new(),
         });
@@ -1054,6 +1040,29 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
 fn checked_layout_add(pos: u64, size: u64, line: u32, col: u32) -> Result<u64, AsmX86Error> {
     pos.checked_add(size)
         .ok_or_else(|| AsmError::at(line, col, "section layout size overflows u64".into()))
+}
+
+fn reserve_materialized_bytes(
+    bytes: &mut Vec<u8>,
+    additional: u64,
+    line: u32,
+    col: u32,
+) -> Result<usize, AsmX86Error> {
+    let current = bytes.len();
+    let too_large = || {
+        AsmError::at(
+            line,
+            col,
+            format!(
+                "initialized section is too large to materialize ({} + {} bytes)",
+                current, additional
+            ),
+        )
+    };
+    let additional = usize::try_from(additional).map_err(|_| too_large())?;
+    let end = current.checked_add(additional).ok_or_else(&too_large)?;
+    bytes.try_reserve(additional).map_err(|_| too_large())?;
+    Ok(end)
 }
 
 fn checked_align_up(value: u64, alignment: u64) -> Option<u64> {
