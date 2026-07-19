@@ -16,7 +16,7 @@
 //! the addend. Global and weak symbols always keep a symbol
 //! relocation (they can be preempted).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::super::elf::{
     self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, EM_X86_64, SHF_ALLOC,
@@ -101,6 +101,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let mut syminfo: HashMap<String, SymInfo> = HashMap::new();
     // (sym, size, align, line)
     let mut commons: Vec<(String, u64, u64, u32)> = Vec::new();
+    let mut common_names: HashSet<String> = HashSet::new();
     // label -> section index (for cross-section checks + reloc targets)
     let mut label_section: HashMap<String, usize> = HashMap::new();
 
@@ -128,6 +129,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         let line = located.line;
         match &located.stmt {
             Stmt::Label(name) => {
+                if common_names.contains(name) {
+                    return Err(err(line, format!("symbol '{}' is already defined", name)));
+                }
                 if current == usize::MAX {
                     current = ensure_sec(".text", &mut secs, &mut sec_index);
                 }
@@ -170,6 +174,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     }
                 }
                 Directive::Comm { sym, size, align } => {
+                    if label_section.contains_key(sym) {
+                        return Err(err(line, format!("symbol '{}' is already defined", sym)));
+                    }
+                    common_names.insert(sym.clone());
                     commons.push((sym.clone(), *size, *align, line))
                 }
                 Directive::File(_) => {}
