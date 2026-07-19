@@ -1217,16 +1217,20 @@ impl<'a> Parser<'a> {
         if let Some(symbol) = self.parse_numeric_label_ref()? {
             Ok(symbol)
         } else {
-            let start = self.pos;
-            let symbol = self.expect_ident()?;
-            if is_canonical_register_name(&symbol) {
-                Err(self.err_at(
-                    start,
-                    format!("expected label, got architectural register '{}'", symbol),
-                ))
-            } else {
-                Ok(symbol)
-            }
+            self.expect_ident()
+        }
+    }
+
+    fn parse_branch_label_reference(&mut self) -> Result<String, ParseError> {
+        let start = self.pos;
+        let symbol = self.parse_label_reference()?;
+        if is_canonical_register_name(&symbol) {
+            Err(self.err_at(
+                start,
+                format!("expected label, got architectural register '{}'", symbol),
+            ))
+        } else {
+            Ok(symbol)
         }
     }
 
@@ -1273,7 +1277,14 @@ impl<'a> Parser<'a> {
             return false;
         }
         match self.peek() {
-            Tok::Ident(name) => !looks_like_gp_register_name(name),
+            Tok::Ident(name) => {
+                let has_reloc_modifier = matches!(
+                    self.tokens.get(self.pos + 1).map(|token| &token.kind),
+                    Some(Tok::At)
+                );
+                !is_canonical_register_name(name)
+                    && (!looks_like_gp_register_name(name) || has_reloc_modifier)
+            }
             _ => false,
         }
     }
@@ -1286,9 +1297,7 @@ impl<'a> Parser<'a> {
             return false;
         }
         match self.peek() {
-            Tok::Ident(name) => {
-                !looks_like_gp_register_name(name) && !looks_like_fp_register_name(name)
-            }
+            Tok::Ident(name) => !is_canonical_register_name(name),
             _ => false,
         }
     }
@@ -3082,7 +3091,7 @@ impl<'a> Parser<'a> {
             let offset = self.parse_i32_signed_scaled_immediate("branch offset", 26, 2)?;
             Ok(Stmt::Instruction(Inst::B { offset }))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::B { offset: 0 },
@@ -3100,7 +3109,7 @@ impl<'a> Parser<'a> {
             let offset = self.parse_i32_signed_scaled_immediate("branch offset", 26, 2)?;
             Ok(Stmt::Instruction(Inst::Bl { offset }))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::Bl { offset: 0 },
@@ -3121,7 +3130,7 @@ impl<'a> Parser<'a> {
                 self.parse_i32_signed_scaled_immediate("conditional branch offset", 19, 2)?;
             Ok(Stmt::Instruction(Inst::BCond { cond, offset }))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             Ok(Stmt::InstructionWithReloc(
                 Inst::BCond { cond, offset: 0 },
@@ -3146,7 +3155,7 @@ impl<'a> Parser<'a> {
             };
             Ok(Stmt::Instruction(inst))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             let inst = if is_nz {
                 Inst::Cbnz { rt, offset: 0, sf }
@@ -3195,7 +3204,7 @@ impl<'a> Parser<'a> {
             };
             Ok(Stmt::Instruction(inst))
         } else {
-            let label = self.parse_label_reference()?;
+            let label = self.parse_branch_label_reference()?;
             let addend = self.parse_optional_symbol_addend()?;
             let inst = if is_nz {
                 Inst::Tbnz {
@@ -5882,10 +5891,6 @@ fn parse_simd_reg_name(name: &str) -> Option<FpReg> {
         return None;
     }
     Some(FpReg::new(num))
-}
-
-fn looks_like_fp_register_name(name: &str) -> bool {
-    parse_fp_reg_name(name).is_some()
 }
 
 fn is_canonical_register_name(name: &str) -> bool {

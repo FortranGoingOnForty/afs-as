@@ -278,6 +278,34 @@ fn noncanonical_register_shaped_symbols_remain_branch_offsets() {
 }
 
 #[test]
+fn canonical_register_names_remain_labels_in_address_generation_operands() {
+    for register in [
+        "x0", "w0", "sp", "wsp", "xzr", "wzr", "x31", "w31", "b0", "h0", "s0", "d0", "q0", "v0",
+    ] {
+        assemble_source(&format!("{register}:\nnop\nadr x8, {register}"))
+            .expect("canonical register name should remain an ADR label");
+        assemble_source(&format!("{register}:\nnop\nadrp x8, {register}@PAGE"))
+            .expect("canonical register name should remain an ADRP label");
+    }
+}
+
+#[test]
+fn noncanonical_gp_register_shaped_symbols_remain_relocation_operands() {
+    for source in [
+        "ldr x0, x01\nnop\nx01:\nnop",
+        "x32:\nnop\nldr x0, x32",
+        "add x0, x0, x01@PAGEOFF",
+        "x32:\nnop\nadd x0, x0, x32@PAGEOFF",
+        "ldr x0, [x0, x01@PAGEOFF]",
+        "ldr x0, [x0, w01@PAGEOFF]",
+    ] {
+        assemble_source(source).unwrap_or_else(|error| {
+            panic!("noncanonical register-shaped symbol was rejected: {source}: {error}")
+        });
+    }
+}
+
+#[test]
 fn architectural_register_names_take_priority_over_absolute_symbols() {
     for source in [
         ".set sp, 1\nadd x0, x1, sp",
