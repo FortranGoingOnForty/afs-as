@@ -171,3 +171,41 @@ fn snapshot_branch_target_must_be_in_range() {
         "<input>:2:1: error: branch offset 1048580 is out of range for 19-bit immediate\ncbz x0, done\n^\n",
     );
 }
+
+#[test]
+fn snapshot_invalid_arm64_immediates() {
+    for (name, instruction, expected) in [
+        (
+            "add-immediate-out-of-range.s",
+            "add x0, x1, #4097",
+            "<input>:2:13: error: add/sub immediate 4097 is not encodable; expected magnitude 0..=4095 or a multiple of 4096 through 16773120\nadd x0, x1, #4097\n            ^\n",
+        ),
+        (
+            "movz-immediate-out-of-range.s",
+            "movz x0, #65536",
+            "<input>:2:10: error: mov wide immediate must be in the range 0..=65535, got 65536\nmovz x0, #65536\n         ^\n",
+        ),
+        (
+            "ldur-offset-out-of-range.s",
+            "ldur x0, [x1, #256]",
+            "<input>:2:15: error: memory offset 256 is out of range for a signed 9-bit immediate with scale 1\nldur x0, [x1, #256]\n              ^\n",
+        ),
+        (
+            "branch-offset-out-of-range.s",
+            "b #4294967296",
+            "<input>:2:3: error: branch offset 4294967296 is out of range for a signed 26-bit immediate with scale 4\nb #4294967296\n  ^\n",
+        ),
+        (
+            "svc-immediate-out-of-range.s",
+            "svc #65536",
+            "<input>:2:5: error: svc immediate must be in the range 0..=65535, got 65536\nsvc #65536\n    ^\n",
+        ),
+        (
+            "logical-immediate-out-of-range.s",
+            "and w0, w1, #8589934590",
+            "<input>:2:13: error: 32-bit logical immediate must be in the range -2147483648..=4294967295, got 8589934590\nand w0, w1, #8589934590\n            ^\n",
+        ),
+    ] {
+        run_failure_snapshot(name, &format!(".text\n{}\n", instruction), expected);
+    }
+}

@@ -1900,16 +1900,21 @@ impl Inst {
             Inst::Uxtw { rd, rn } => bitfield(true, 0b10, 0, 31, *rn, *rd),
             Inst::LslImm { rd, rn, amount, sf } => {
                 let bits = if *sf { 64u8 } else { 32u8 };
-                let immr = bits.wrapping_sub(*amount) & (bits - 1);
+                assert!(*amount < bits, "LSL immediate exceeds the register width");
+                let immr = (bits - *amount) & (bits - 1);
                 let imms = bits - 1 - *amount;
                 bitfield(*sf, 0b10, immr, imms, *rn, *rd)
             }
             Inst::LsrImm { rd, rn, amount, sf } => {
-                let imms = if *sf { 63u8 } else { 31u8 };
+                let bits = if *sf { 64u8 } else { 32u8 };
+                assert!(*amount < bits, "LSR immediate exceeds the register width");
+                let imms = bits - 1;
                 bitfield(*sf, 0b10, *amount, imms, *rn, *rd)
             }
             Inst::AsrImm { rd, rn, amount, sf } => {
-                let imms = if *sf { 63u8 } else { 31u8 };
+                let bits = if *sf { 64u8 } else { 32u8 };
+                assert!(*amount < bits, "ASR immediate exceeds the register width");
+                let imms = bits - 1;
                 bitfield(*sf, 0b00, *amount, imms, *rn, *rd)
             }
             Inst::Ubfiz {
@@ -1920,8 +1925,9 @@ impl Inst {
                 sf,
             } => {
                 let bits = if *sf { 64u8 } else { 32u8 };
-                let immr = bits.wrapping_sub(*lsb) & (bits - 1);
-                bitfield(*sf, 0b10, immr, width.wrapping_sub(1), *rn, *rd)
+                assert_bitfield_alias(*lsb, *width, bits);
+                let immr = (bits - *lsb) & (bits - 1);
+                bitfield(*sf, 0b10, immr, *width - 1, *rn, *rd)
             }
             Inst::Bfi {
                 rd,
@@ -1931,8 +1937,9 @@ impl Inst {
                 sf,
             } => {
                 let bits = if *sf { 64u8 } else { 32u8 };
-                let immr = bits.wrapping_sub(*lsb) & (bits - 1);
-                bitfield(*sf, 0b01, immr, width.wrapping_sub(1), *rn, *rd)
+                assert_bitfield_alias(*lsb, *width, bits);
+                let immr = (bits - *lsb) & (bits - 1);
+                bitfield(*sf, 0b01, immr, *width - 1, *rn, *rd)
             }
             Inst::Bfxil {
                 rd,
@@ -1940,34 +1947,41 @@ impl Inst {
                 lsb,
                 width,
                 sf,
-            } => bitfield(
-                *sf,
-                0b01,
-                *lsb,
-                lsb.wrapping_add(*width).wrapping_sub(1),
-                *rn,
-                *rd,
-            ),
+            } => {
+                let bits = if *sf { 64u8 } else { 32u8 };
+                assert_bitfield_alias(*lsb, *width, bits);
+                bitfield(*sf, 0b01, *lsb, *lsb + *width - 1, *rn, *rd)
+            }
 
             // ---- Branches ----
             Inst::B { offset } => {
+                assert_signed_scaled_immediate(i64::from(*offset), 26, 2, "branch offset");
                 let imm26 = ((*offset >> 2) as u32) & 0x03FF_FFFF;
                 (0b000101 << 26) | imm26
             }
             Inst::Bl { offset } => {
+                assert_signed_scaled_immediate(i64::from(*offset), 26, 2, "branch offset");
                 let imm26 = ((*offset >> 2) as u32) & 0x03FF_FFFF;
                 (0b100101 << 26) | imm26
             }
             Inst::BCond { cond, offset } => {
+                assert_signed_scaled_immediate(
+                    i64::from(*offset),
+                    19,
+                    2,
+                    "conditional branch offset",
+                );
                 let imm19 = ((*offset >> 2) as u32) & 0x7FFFF;
                 (0b01010100 << 24) | (imm19 << 5) | cond.enc()
             }
             Inst::Cbz { rt, offset, sf } => {
+                assert_signed_scaled_immediate(i64::from(*offset), 19, 2, "CBZ offset");
                 let s = (*sf as u32) << 31;
                 let imm19 = ((*offset >> 2) as u32) & 0x7FFFF;
                 s | (0b011010_0 << 24) | (imm19 << 5) | rt.enc()
             }
             Inst::Cbnz { rt, offset, sf } => {
+                assert_signed_scaled_immediate(i64::from(*offset), 19, 2, "CBNZ offset");
                 let s = (*sf as u32) << 31;
                 let imm19 = ((*offset >> 2) as u32) & 0x7FFFF;
                 s | (0b011010_1 << 24) | (imm19 << 5) | rt.enc()
@@ -1976,8 +1990,11 @@ impl Inst {
                 rt,
                 bit,
                 offset,
-                sf: _,
+                sf,
             } => {
+                let bits = if *sf { 64 } else { 32 };
+                assert!(*bit < bits, "TBZ bit exceeds the register width");
+                assert_signed_scaled_immediate(i64::from(*offset), 14, 2, "TBZ offset");
                 let b5 = ((*bit >> 5) as u32) & 0x1;
                 let b40 = (*bit as u32) & 0x1F;
                 let imm14 = ((*offset >> 2) as u32) & 0x3FFF;
@@ -1987,8 +2004,11 @@ impl Inst {
                 rt,
                 bit,
                 offset,
-                sf: _,
+                sf,
             } => {
+                let bits = if *sf { 64 } else { 32 };
+                assert!(*bit < bits, "TBNZ bit exceeds the register width");
+                assert_signed_scaled_immediate(i64::from(*offset), 14, 2, "TBNZ offset");
                 let b5 = ((*bit >> 5) as u32) & 0x1;
                 let b40 = (*bit as u32) & 0x1F;
                 let imm14 = ((*offset >> 2) as u32) & 0x3FFF;
@@ -2042,11 +2062,13 @@ impl Inst {
 
             // ---- Address generation ----
             Inst::Adr { rd, imm } => {
+                assert_signed_scaled_immediate(i64::from(*imm), 21, 0, "ADR immediate");
                 let immlo = (*imm as u32) & 0x3;
                 let immhi = ((*imm as u32) >> 2) & 0x7FFFF;
                 (immlo << 29) | (0b10000 << 24) | (immhi << 5) | rd.enc()
             }
             Inst::Adrp { rd, imm } => {
+                assert_signed_scaled_immediate(*imm, 21, 12, "ADRP immediate");
                 let page = (*imm >> 12) as u64;
                 let immlo = (page & 0x3) as u32;
                 let immhi = ((page >> 2) & 0x7FFFF) as u32;
@@ -2055,19 +2077,19 @@ impl Inst {
 
             // ---- Load/Store (unsigned offset) ----
             Inst::LdrImm64 { rt, rn, offset } => {
-                let uoff = (*offset / 8) as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 3, "64-bit load offset");
                 (0b11_111_0_01_01 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::LdrImm32 { rt, rn, offset } => {
-                let uoff = (*offset / 4) as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 2, "32-bit load offset");
                 (0b10_111_0_01_01 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::StrImm64 { rt, rn, offset } => {
-                let uoff = (*offset / 8) as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 3, "64-bit store offset");
                 (0b11_111_0_01_00 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::StrImm32 { rt, rn, offset } => {
-                let uoff = (*offset / 4) as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 2, "32-bit store offset");
                 (0b10_111_0_01_00 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldur64 { rt, rn, offset } => ldst_idx(0b11, 0b01, *offset, 0b00, *rn, *rt),
@@ -2103,23 +2125,23 @@ impl Inst {
                 shift,
             } => ldst_reg(0b10, 0b00, *rm, *extend, *shift, *rn, *rt),
             Inst::Ldrb { rt, rn, offset } => {
-                let uoff = *offset as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 0, "byte load offset");
                 (0b00_111_0_01_01 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldrsb32 { rt, rn, offset } => {
-                let uoff = *offset as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 0, "signed byte load offset");
                 (0b111_001 << 24) | (0b11 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldrsb64 { rt, rn, offset } => {
-                let uoff = *offset as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 0, "signed byte load offset");
                 (0b111_001 << 24) | (0b10 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldrh { rt, rn, offset } => {
-                let uoff = (*offset / 2) as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 1, "halfword load offset");
                 (0b01_111_0_01_01 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldrsh32 { rt, rn, offset } => {
-                let uoff = (*offset / 2) as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 1, "signed halfword load offset");
                 (0b01 << 30)
                     | (0b111_001 << 24)
                     | (0b11 << 22)
@@ -2128,7 +2150,7 @@ impl Inst {
                     | rt.enc()
             }
             Inst::Ldrsh64 { rt, rn, offset } => {
-                let uoff = (*offset / 2) as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 1, "signed halfword load offset");
                 (0b01 << 30)
                     | (0b111_001 << 24)
                     | (0b10 << 22)
@@ -2137,15 +2159,15 @@ impl Inst {
                     | rt.enc()
             }
             Inst::Strb { rt, rn, offset } => {
-                let uoff = *offset as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 0, "byte store offset");
                 (0b00_111_0_01_00 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Strh { rt, rn, offset } => {
-                let uoff = (*offset / 2) as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 1, "halfword store offset");
                 (0b01_111_0_01_00 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::Ldrsw { rt, rn, offset } => {
-                let uoff = (*offset / 4) as u32;
+                let uoff = unsigned_scaled_field(*offset, 12, 2, "LDRSW offset");
                 (0b10_111_0_01_10 << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
             }
             Inst::LdrbReg {
@@ -2942,6 +2964,11 @@ fn dp_reg(
     rn: GpReg,
     rd: GpReg,
 ) -> u32 {
+    let bits = if sf { 64 } else { 32 };
+    assert!(
+        imm6 < bits,
+        "shifted-register immediate exceeds the register width"
+    );
     ((sf as u32) << 31)
         | (opc << 29)
         | (fixed << 24)
@@ -2967,11 +2994,51 @@ fn variable_shift(base32: u32, base64: u32, sf: bool, rm: GpReg, rn: GpReg, rd: 
     base | (rm.enc() << 16) | (rn.enc() << 5) | rd.enc()
 }
 
+fn assert_signed_scaled_immediate(value: i64, bits: u8, scale: u8, context: &str) {
+    let alignment = 1i64 << scale;
+    assert!(
+        value % alignment == 0,
+        "{} {} must be {}-byte aligned",
+        context,
+        value,
+        alignment
+    );
+    let scaled = value / alignment;
+    let min = -(1i64 << (bits - 1));
+    let max = (1i64 << (bits - 1)) - 1;
+    assert!(
+        (min..=max).contains(&scaled),
+        "{} {} is outside the signed {}-bit scaled range",
+        context,
+        value,
+        bits
+    );
+}
+
+fn unsigned_scaled_field(offset: u16, bits: u8, scale: u8, context: &str) -> u32 {
+    let offset = u64::from(offset);
+    let alignment = 1u64 << scale;
+    let max = ((1u64 << bits) - 1) * alignment;
+    assert!(
+        offset <= max && offset % alignment == 0,
+        "{} {} must be {}-byte aligned and no greater than {}",
+        context,
+        offset,
+        alignment,
+        max
+    );
+    (offset >> scale) as u32
+}
+
 fn logical_imm(sf: bool, opc: u32, imm: u64, rn: GpReg, rd: GpReg) -> u32 {
     let width = if sf { 64 } else { 32 };
+    assert!(
+        sf || imm <= u64::from(u32::MAX),
+        "32-bit logical immediate contains bits outside the register width"
+    );
     let imm = if sf { imm } else { imm & 0xFFFF_FFFF };
     let (n, immr, imms) =
-        encode_logical_immediate(imm, width).expect("logical immediate validated by parser");
+        encode_logical_immediate(imm, width).expect("logical immediate is not encodable");
     ((sf as u32) << 31)
         | (opc << 29)
         | (0b100100 << 23)
@@ -2983,6 +3050,7 @@ fn logical_imm(sf: bool, opc: u32, imm: u64, rn: GpReg, rd: GpReg) -> u32 {
 }
 
 fn dp_imm(sf: bool, op: u32, imm12: u16, shift: bool, rn: GpReg, rd: GpReg) -> u32 {
+    assert!(imm12 <= 0xFFF, "add/sub immediate exceeds 12 bits");
     ((sf as u32) << 31)
         | (op << 29)
         | (0b100010 << 23)
@@ -3001,6 +3069,7 @@ fn dp_ext(
     rn: GpReg,
     rd: GpReg,
 ) -> u32 {
+    assert!(amount <= 4, "extended-register shift exceeds 4");
     ((sf as u32) << 31)
         | (op << 29)
         | (0b01011 << 24)
@@ -3013,6 +3082,10 @@ fn dp_ext(
 }
 
 fn mov_wide(sf: bool, opc: u32, imm16: u16, shift: u8, rd: GpReg) -> u32 {
+    assert!(
+        matches!(shift, 0 | 16 | 32 | 48) && (sf || shift <= 16),
+        "move-wide shift is invalid for the register width"
+    );
     let hw = (shift / 16) as u32;
     ((sf as u32) << 31)
         | (opc << 29)
@@ -3022,7 +3095,20 @@ fn mov_wide(sf: bool, opc: u32, imm16: u16, shift: u8, rd: GpReg) -> u32 {
         | rd.enc()
 }
 
+fn assert_bitfield_alias(lsb: u8, width: u8, bits: u8) {
+    assert!(lsb < bits, "bitfield lsb exceeds the register width");
+    assert!(
+        width >= 1 && width <= bits - lsb,
+        "bitfield width is invalid for its lsb and register width"
+    );
+}
+
 fn bitfield(sf: bool, opc: u32, immr: u8, imms: u8, rn: GpReg, rd: GpReg) -> u32 {
+    let bits = if sf { 64 } else { 32 };
+    assert!(
+        immr < bits && imms < bits,
+        "bitfield immediates exceed the register width"
+    );
     let n = sf as u32;
     ((sf as u32) << 31)
         | (opc << 29)
@@ -3111,6 +3197,8 @@ fn csel(sf: bool, variant: u32, rm: GpReg, cond: Cond, rn: GpReg, rd: GpReg) -> 
 }
 
 fn ccmp_imm(sf: bool, is_cmp: bool, rn: GpReg, imm5: u8, nzcv: u8, cond: Cond) -> u32 {
+    assert!(imm5 <= 0x1F, "conditional-compare immediate exceeds 5 bits");
+    assert!(nzcv <= 0xF, "conditional-compare NZCV value exceeds 4 bits");
     let base = match (sf, is_cmp) {
         (false, true) => 0x7A400800,
         (false, false) => 0x3A400800,
@@ -3124,6 +3212,7 @@ fn ccmp_imm(sf: bool, is_cmp: bool, rn: GpReg, imm5: u8, nzcv: u8, cond: Cond) -
 }
 
 fn ldst_idx(size: u32, opc: u32, offset: i16, idx: u32, rn: GpReg, rt: GpReg) -> u32 {
+    assert_signed_scaled_immediate(i64::from(offset), 9, 0, "unscaled memory offset");
     let imm9 = (offset as u32) & 0x1FF;
     (size << 30)
         | (0b111_0_00 << 24)
@@ -3135,7 +3224,7 @@ fn ldst_idx(size: u32, opc: u32, offset: i16, idx: u32, rn: GpReg, rt: GpReg) ->
 }
 
 fn ldst_uimm_fp(size: u32, opc: u32, scale: u8, offset: u16, rn: GpReg, rt: FpReg) -> u32 {
-    let uoff = ((offset as u32) >> scale) & 0xFFF;
+    let uoff = unsigned_scaled_field(offset, 12, scale, "FP/SIMD memory offset");
     (size << 30) | (0b111_1_01 << 24) | (opc << 22) | (uoff << 10) | (rn.enc() << 5) | rt.enc()
 }
 
@@ -3173,6 +3262,7 @@ fn ldst_reg_fp(
 }
 
 fn ldr_lit(opc: u32, offset: i32, rt: GpReg) -> u32 {
+    assert_signed_scaled_immediate(i64::from(offset), 19, 2, "literal load offset");
     let imm19 = ((offset >> 2) as u32) & 0x7FFFF;
     (opc << 30) | (0b011 << 27) | (imm19 << 5) | rt.enc()
 }
@@ -3190,6 +3280,7 @@ fn ldst_idx_fp(size: u32, opc: u32, offset: i16, idx: u32, rn: GpReg, rt: FpReg)
 /// mode: 001=post-index, 010=signed-offset, 011=pre-index
 fn ldp_stp(opc: u32, mode: u32, l: u32, offset: i16, rt2: GpReg, rn: GpReg, rt1: GpReg) -> u32 {
     let scale = if opc == 0b00 { 2 } else { 3 };
+    assert_signed_scaled_immediate(i64::from(offset), 7, scale, "register-pair offset");
     let imm7 = ((offset >> scale) as u32) & 0x7F;
     (opc << 30)
         | (0b101 << 27)
@@ -3208,6 +3299,7 @@ fn ldp_stp_fp(opc: u32, mode: u32, l: u32, offset: i16, rt2: FpReg, rn: GpReg, r
         0b10 => 4,
         _ => unreachable!("invalid FP pair opc"),
     };
+    assert_signed_scaled_immediate(i64::from(offset), 7, scale, "FP register-pair offset");
     let imm7 = ((offset >> scale) as u32) & 0x7F;
     (opc << 30)
         | (0b101 << 27)
@@ -3406,6 +3498,222 @@ mod tests {
     // by assembling the instruction and reading the 4-byte encoding
     // with `otool -t`.
     // ================================================================
+
+    #[test]
+    fn invalid_immediate_fields_panic_before_encoding() {
+        let invalid = [
+            (
+                "w logical width",
+                Inst::AndImm {
+                    rd: W0,
+                    rn: W1,
+                    imm: 0x1_0000_0002,
+                    sf: false,
+                },
+            ),
+            (
+                "add immediate",
+                Inst::AddImm {
+                    rd: X0,
+                    rn: X1,
+                    imm12: 4096,
+                    shift: false,
+                    sf: true,
+                },
+            ),
+            (
+                "shifted-register immediate",
+                Inst::AddShiftReg {
+                    rd: X0,
+                    rn: X1,
+                    rm: X2,
+                    shift: RegShift::Lsl,
+                    amount: 64,
+                    sf: true,
+                },
+            ),
+            (
+                "extended-register immediate",
+                Inst::AddExtReg {
+                    rd: X0,
+                    rn: X1,
+                    rm: W2,
+                    extend: RegExtend::Uxtw,
+                    amount: 5,
+                    sf: true,
+                },
+            ),
+            (
+                "move-wide shift",
+                Inst::Movz {
+                    rd: X0,
+                    imm16: 0,
+                    shift: 64,
+                    sf: true,
+                },
+            ),
+            (
+                "w move-wide shift",
+                Inst::Movz {
+                    rd: W0,
+                    imm16: 0,
+                    shift: 32,
+                    sf: false,
+                },
+            ),
+            (
+                "immediate shift",
+                Inst::LslImm {
+                    rd: X0,
+                    rn: X1,
+                    amount: 64,
+                    sf: true,
+                },
+            ),
+            (
+                "bitfield width",
+                Inst::Ubfiz {
+                    rd: X0,
+                    rn: X1,
+                    lsb: 63,
+                    width: 2,
+                    sf: true,
+                },
+            ),
+            ("branch alignment", Inst::B { offset: 2 }),
+            (
+                "branch range",
+                Inst::Bl {
+                    offset: 134_217_728,
+                },
+            ),
+            (
+                "conditional branch range",
+                Inst::BCond {
+                    cond: Cond::EQ,
+                    offset: 1_048_576,
+                },
+            ),
+            (
+                "test branch bit",
+                Inst::Tbz {
+                    rt: W0,
+                    bit: 32,
+                    offset: 0,
+                    sf: false,
+                },
+            ),
+            (
+                "test branch offset",
+                Inst::Tbnz {
+                    rt: X0,
+                    bit: 0,
+                    offset: 32_768,
+                    sf: true,
+                },
+            ),
+            (
+                "conditional compare immediate",
+                Inst::CcmpImm {
+                    rn: X0,
+                    imm5: 32,
+                    nzcv: 0,
+                    cond: Cond::EQ,
+                    sf: true,
+                },
+            ),
+            (
+                "conditional compare flags",
+                Inst::CcmpImm {
+                    rn: X0,
+                    imm5: 0,
+                    nzcv: 16,
+                    cond: Cond::EQ,
+                    sf: true,
+                },
+            ),
+            (
+                "adr range",
+                Inst::Adr {
+                    rd: X0,
+                    imm: 1_048_576,
+                },
+            ),
+            ("adrp alignment", Inst::Adrp { rd: X0, imm: 1 }),
+            (
+                "adrp range",
+                Inst::Adrp {
+                    rd: X0,
+                    imm: 4_294_967_296,
+                },
+            ),
+            (
+                "unsigned memory offset",
+                Inst::LdrImm64 {
+                    rt: X0,
+                    rn: X1,
+                    offset: 32_768,
+                },
+            ),
+            (
+                "unscaled memory offset",
+                Inst::Ldur64 {
+                    rt: X0,
+                    rn: X1,
+                    offset: 256,
+                },
+            ),
+            (
+                "narrow memory alignment",
+                Inst::Ldrh {
+                    rt: W0,
+                    rn: X1,
+                    offset: 3,
+                },
+            ),
+            (
+                "fp memory offset",
+                Inst::LdrFpImm128 {
+                    rt: D0,
+                    rn: X1,
+                    offset: u16::MAX,
+                },
+            ),
+            (
+                "literal offset",
+                Inst::LdrLit64 {
+                    rt: X0,
+                    offset: 1_048_576,
+                },
+            ),
+            (
+                "pair offset",
+                Inst::LdpOff64 {
+                    rt1: X0,
+                    rt2: X1,
+                    rn: X2,
+                    offset: 512,
+                },
+            ),
+            (
+                "fp pair offset",
+                Inst::LdpFpOff128 {
+                    rt1: D0,
+                    rt2: D1,
+                    rn: X2,
+                    offset: 1024,
+                },
+            ),
+        ];
+
+        for (context, inst) in invalid {
+            assert!(
+                std::panic::catch_unwind(|| inst.encode()).is_err(),
+                "invalid {} encoded without panicking",
+                context
+            );
+        }
+    }
 
     // ---- Data processing (register) ----
 

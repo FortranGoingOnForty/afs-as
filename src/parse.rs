@@ -971,7 +971,12 @@ impl<'a> Parser<'a> {
         scale: u8,
     ) -> Result<i32, ParseError> {
         let value = self.parse_signed_scaled_immediate(context, bits, scale)?;
-        Ok(i32::try_from(value).expect("validated PC-relative immediate fits in i32"))
+        i32::try_from(value).map_err(|_| {
+            self.err(format!(
+                "{} {} does not fit the assembler's offset representation",
+                context, value
+            ))
+        })
     }
 
     fn parse_i16_signed_scaled_immediate(
@@ -1068,8 +1073,24 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_logical_immediate_value(&mut self, sf: bool) -> Result<u64, ParseError> {
+        let start = self.pos;
         let imm = self.parse_immediate_const_expr("logical immediate")?;
-        let raw = if sf { imm as u64 } else { (imm as u32) as u64 };
+        let raw = if sf {
+            imm as u64
+        } else {
+            if !(i64::from(i32::MIN)..=i64::from(u32::MAX)).contains(&imm) {
+                return Err(self.err_at(
+                    start,
+                    format!(
+                        "32-bit logical immediate must be in the range {}..={}, got {}",
+                        i32::MIN,
+                        u32::MAX,
+                        imm
+                    ),
+                ));
+            }
+            (imm as u32) as u64
+        };
         if logical_immediate_encodable(raw, if sf { 64 } else { 32 }) {
             Ok(raw)
         } else {
@@ -2887,8 +2908,10 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let width = self.parse_immediate_const_expr("bitfield width")?;
         self.validate_bitfield_alias_args(mnemonic, sf, lsb, width)?;
-        let lsb = u8::try_from(lsb).expect("validated bitfield lsb fits in u8");
-        let width = u8::try_from(width).expect("validated bitfield width fits in u8");
+        let lsb = u8::try_from(lsb)
+            .map_err(|_| self.err(format!("{} lsb does not fit in u8", mnemonic)))?;
+        let width = u8::try_from(width)
+            .map_err(|_| self.err(format!("{} width does not fit in u8", mnemonic)))?;
         Ok(match mnemonic {
             "ubfiz" => Inst::Ubfiz {
                 rd,
@@ -5136,11 +5159,9 @@ impl<'a> Parser<'a> {
             }
         };
 
-        Ok((
-            u16::try_from(imm12).expect("validated add/sub immediate fits in u16"),
-            shift,
-            value.is_negative(),
-        ))
+        let imm12 = u16::try_from(imm12)
+            .map_err(|_| self.err(format!("{} does not fit in u16", context)))?;
+        Ok((imm12, shift, value.is_negative()))
     }
 
     fn parse_optional_mov_wide_shift(&mut self, sf: bool) -> Result<u8, ParseError> {
@@ -5172,7 +5193,7 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        Ok(u8::try_from(amount).expect("validated mov wide shift fits in u8"))
+        u8::try_from(amount).map_err(|_| self.err("mov wide shift does not fit in u8".into()))
     }
 
     fn parse_bit_index(&mut self, sf: bool, context: &str) -> Result<u8, ParseError> {

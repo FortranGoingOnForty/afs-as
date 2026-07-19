@@ -107,6 +107,24 @@ fn bitfield_alias_immediates_reject_values_before_narrowing() {
 }
 
 #[test]
+fn w_logical_immediates_preserve_32_bit_source_values() {
+    assert_encoding("and w0, w1, #-2", 0x121F_7820);
+    assert_encoding("and w0, w1, #4294967294", 0x121F_7820);
+}
+
+#[test]
+fn w_logical_immediates_reject_truncating_source_values() {
+    for source in [
+        "and w0, w1, #4294967296",
+        "and w0, w1, #8589934590",
+        "and w0, w1, #-2147483649",
+        "and w0, w1, #-4294967298",
+    ] {
+        assert_rejected(source, "32-bit logical immediate");
+    }
+}
+
+#[test]
 fn system_immediates_validate_u16_boundaries() {
     for (source, expected) in [
         ("svc #0", 0xD400_0001),
