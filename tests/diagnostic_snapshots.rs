@@ -47,6 +47,15 @@ fn snapshot_unsupported_directive() {
 }
 
 #[test]
+fn snapshot_trailing_arm64_token() {
+    run_failure_snapshot(
+        "trailing-token.s",
+        ".text\nnop ret\n",
+        "<input>:2:5: error: unexpected trailing token: ret\nnop ret\n    ^\n",
+    );
+}
+
+#[test]
 fn snapshot_unsupported_cfi_directive() {
     run_failure_snapshot(
         "unsupported-cfi.s",

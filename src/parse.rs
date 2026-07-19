@@ -470,6 +470,9 @@ impl<'a> Parser<'a> {
         self.skip_newlines();
         while self.peek() != &Tok::Eof {
             self.parse_line(&mut stmts)?;
+            if !self.at_end_of_stmt() {
+                return Err(self.err(format!("unexpected trailing token: {}", self.peek())));
+            }
             self.skip_newlines();
         }
         Ok(stmts)
@@ -490,6 +493,9 @@ impl<'a> Parser<'a> {
                         line: start.line,
                         col: start.col,
                     });
+                    if !self.at_end_of_stmt() {
+                        self.parse_line(stmts)?;
+                    }
                 } else {
                     // Directive
                     stmts.push(LocatedStmt {
@@ -10886,6 +10892,40 @@ mod tests {
     fn parse_local_label() {
         let stmts = parse_stmts(".Lloop:");
         assert_eq!(stmts, vec![Stmt::Label(".Lloop".into())]);
+    }
+
+    #[test]
+    fn parse_chained_labels_on_one_line() {
+        assert_eq!(
+            parse_stmts(".Llocal: named: 1: ret"),
+            vec![
+                Stmt::Label(".Llocal".into()),
+                Stmt::Label("named".into()),
+                Stmt::Label(".Ltmp$1$1".into()),
+                Stmt::Instruction(Inst::Ret { rn: X30 }),
+            ]
+        );
+    }
+
+    #[test]
+    fn reject_trailing_tokens_after_arm64_statements() {
+        for (source, col, token) in [
+            ("nop ret", 5, "ret"),
+            ("named: nop ret", 12, "ret"),
+            (".Llocal: nop ret", 14, "ret"),
+            ("1: nop ret", 8, "ret"),
+            (".byte 1 ret", 9, "ret"),
+            (".text nop", 7, "nop"),
+        ] {
+            let error = parse(source).expect_err("trailing token unexpectedly parsed");
+            assert_eq!(error.line, 1, "source: {source}");
+            assert_eq!(error.col, col, "source: {source}");
+            assert_eq!(
+                error.msg,
+                format!("unexpected trailing token: {token}"),
+                "source: {source}"
+            );
+        }
     }
 
     #[test]
