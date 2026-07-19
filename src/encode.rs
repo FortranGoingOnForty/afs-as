@@ -548,6 +548,24 @@ pub enum Inst {
     Stur64 { rt: GpReg, rn: GpReg, offset: i16 },
     /// STUR Wt, [Xn, #offset]  (32-bit signed unscaled offset)
     Stur32 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDURB Wt, [Xn, #offset]  (byte load, signed unscaled offset)
+    Ldurb { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDURSB Wt, [Xn, #offset]  (signed byte load, sign-extend to 32)
+    Ldursb32 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDURSB Xt, [Xn, #offset]  (signed byte load, sign-extend to 64)
+    Ldursb64 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDURH Wt, [Xn, #offset]  (halfword load, signed unscaled offset)
+    Ldurh { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDURSH Wt, [Xn, #offset]  (signed halfword load, sign-extend to 32)
+    Ldursh32 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDURSH Xt, [Xn, #offset]  (signed halfword load, sign-extend to 64)
+    Ldursh64 { rt: GpReg, rn: GpReg, offset: i16 },
+    /// STURB Wt, [Xn, #offset]  (byte store, signed unscaled offset)
+    Sturb { rt: GpReg, rn: GpReg, offset: i16 },
+    /// STURH Wt, [Xn, #offset]  (halfword store, signed unscaled offset)
+    Sturh { rt: GpReg, rn: GpReg, offset: i16 },
+    /// LDURSW Xt, [Xn, #offset]  (signed word load, sign-extend to 64)
+    Ldursw { rt: GpReg, rn: GpReg, offset: i16 },
     /// LDR Xt, [Xn, Rm{, extend}]
     LdrReg64 {
         rt: GpReg,
@@ -2096,6 +2114,15 @@ impl Inst {
             Inst::Ldur32 { rt, rn, offset } => ldst_idx(0b10, 0b01, *offset, 0b00, *rn, *rt),
             Inst::Stur64 { rt, rn, offset } => ldst_idx(0b11, 0b00, *offset, 0b00, *rn, *rt),
             Inst::Stur32 { rt, rn, offset } => ldst_idx(0b10, 0b00, *offset, 0b00, *rn, *rt),
+            Inst::Ldurb { rt, rn, offset } => ldst_idx(0b00, 0b01, *offset, 0b00, *rn, *rt),
+            Inst::Ldursb32 { rt, rn, offset } => ldst_idx(0b00, 0b11, *offset, 0b00, *rn, *rt),
+            Inst::Ldursb64 { rt, rn, offset } => ldst_idx(0b00, 0b10, *offset, 0b00, *rn, *rt),
+            Inst::Ldurh { rt, rn, offset } => ldst_idx(0b01, 0b01, *offset, 0b00, *rn, *rt),
+            Inst::Ldursh32 { rt, rn, offset } => ldst_idx(0b01, 0b11, *offset, 0b00, *rn, *rt),
+            Inst::Ldursh64 { rt, rn, offset } => ldst_idx(0b01, 0b10, *offset, 0b00, *rn, *rt),
+            Inst::Sturb { rt, rn, offset } => ldst_idx(0b00, 0b00, *offset, 0b00, *rn, *rt),
+            Inst::Sturh { rt, rn, offset } => ldst_idx(0b01, 0b00, *offset, 0b00, *rn, *rt),
+            Inst::Ldursw { rt, rn, offset } => ldst_idx(0b10, 0b10, *offset, 0b00, *rn, *rt),
             Inst::LdrReg64 {
                 rt,
                 rn,
