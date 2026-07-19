@@ -353,6 +353,118 @@ fn push_plain_term(terms: &mut Vec<(String, i32)>, symbol: String, delta: i32) {
     }
 }
 
+pub(crate) fn resolve_absolute_assignments(
+    assignments: &[(String, Expr)],
+    base_symbols: &BTreeMap<String, SymbolValue>,
+) -> Vec<Result<i64, String>> {
+    AbsoluteAssignmentResolver::new(assignments, base_symbols).resolve_all()
+}
+
+struct AbsoluteAssignmentResolver<'a> {
+    assignments: &'a [(String, Expr)],
+    base_symbols: &'a BTreeMap<String, SymbolValue>,
+    positions: BTreeMap<String, Vec<usize>>,
+    resolved: Vec<Option<Result<i64, String>>>,
+    visiting: Vec<usize>,
+}
+
+impl<'a> AbsoluteAssignmentResolver<'a> {
+    fn new(
+        assignments: &'a [(String, Expr)],
+        base_symbols: &'a BTreeMap<String, SymbolValue>,
+    ) -> Self {
+        let mut positions: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (index, (name, _)) in assignments.iter().enumerate() {
+            positions.entry(name.clone()).or_default().push(index);
+        }
+        Self {
+            assignments,
+            base_symbols,
+            positions,
+            resolved: vec![None; assignments.len()],
+            visiting: Vec::new(),
+        }
+    }
+
+    fn resolve_all(mut self) -> Vec<Result<i64, String>> {
+        for index in 0..self.assignments.len() {
+            let _ = self.resolve_assignment(index);
+        }
+        self.resolved
+            .into_iter()
+            .map(|value| value.expect("every absolute assignment was visited"))
+            .collect()
+    }
+
+    fn resolve_assignment(&mut self, index: usize) -> Result<i64, String> {
+        if let Some(value) = &self.resolved[index] {
+            return value.clone();
+        }
+
+        let name = self.assignments[index].0.clone();
+        if self.visiting.contains(&index) {
+            return Err(format!(
+                "absolute symbol '{}' has a cyclic definition",
+                name
+            ));
+        }
+
+        self.visiting.push(index);
+        let result = self.resolve_assignment_expr(index, &name);
+        self.visiting.pop();
+        self.resolved[index] = Some(result.clone());
+        result
+    }
+
+    fn resolve_assignment_expr(&mut self, index: usize, name: &str) -> Result<i64, String> {
+        let references = referenced_symbols(&self.assignments[index].1);
+        let mut symbols = BTreeMap::new();
+        for referenced in references {
+            if symbols.contains_key(&referenced) {
+                continue;
+            }
+            let value = self.resolve_symbol_before_assignment(&referenced, index, name)?;
+            symbols.insert(referenced, value);
+        }
+
+        match classify(&self.assignments[index].1, &symbols) {
+            Ok(ClassifiedExpr::Absolute(value)) => Ok(value),
+            Ok(_) => Err(format!(
+                "absolute symbol '{}' must resolve to an absolute value",
+                name
+            )),
+            Err(error) => Err(format!("absolute symbol '{}': {}", name, error)),
+        }
+    }
+
+    fn resolve_symbol_before_assignment(
+        &mut self,
+        symbol: &str,
+        assignment_index: usize,
+        owner: &str,
+    ) -> Result<SymbolValue, String> {
+        if let Some(indices) = self.positions.get(symbol) {
+            let prior_count = indices.partition_point(|index| *index < assignment_index);
+            let target = if prior_count > 0 {
+                Some(indices[prior_count - 1])
+            } else {
+                let future = indices.partition_point(|index| *index <= assignment_index);
+                indices.get(future).copied()
+            };
+            if let Some(target) = target {
+                return self.resolve_assignment(target).map(SymbolValue::Absolute);
+            }
+        }
+
+        self.base_symbols.get(symbol).copied().ok_or_else(|| {
+            format!(
+                "absolute symbol '{}' references undefined symbol '{}'",
+                owner, symbol
+            )
+        })
+    }
+}
+
 fn checked_add(lhs: i64, rhs: i64) -> Result<i64, ClassifyError> {
     lhs.checked_add(rhs).ok_or(ClassifyError::Overflow)
 }
@@ -550,5 +662,28 @@ mod tests {
                 pcrel: true,
             }
         );
+    }
+
+    #[test]
+    fn absolute_assignments_resolve_chronologically_and_freeze_aliases() {
+        let assignments = vec![
+            ("A".into(), Expr::Symbol("B".into())),
+            ("B".into(), Expr::Int(2)),
+            ("B".into(), Expr::Int(3)),
+        ];
+        assert_eq!(
+            resolve_absolute_assignments(&assignments, &BTreeMap::new()),
+            [Ok(2), Ok(2), Ok(3)]
+        );
+    }
+
+    #[test]
+    fn absolute_assignment_resolution_handles_large_linear_timelines() {
+        let assignments: Vec<_> = (0..10_000)
+            .map(|index| (format!("X{index}"), Expr::Int(index)))
+            .collect();
+        let resolved = resolve_absolute_assignments(&assignments, &BTreeMap::new());
+        assert_eq!(resolved.len(), assignments.len());
+        assert_eq!(resolved.last(), Some(&Ok(9_999)));
     }
 }

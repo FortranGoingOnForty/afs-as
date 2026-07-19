@@ -260,8 +260,12 @@ struct Assembler {
 
     /// Labels → (section index, offset within section).
     labels: BTreeMap<String, (usize, u64)>,
-    /// Absolute symbol assignments declared via `.set` / `.equ`.
-    absolute_defs: BTreeMap<String, Expr>,
+    /// Absolute symbol assignments declared via `.set` / `.equ`, in source order.
+    absolute_assignments: Vec<(String, Expr)>,
+    absolute_symbol_names: BTreeSet<String>,
+    absolute_assignment_values: Vec<i64>,
+    next_absolute_assignment: usize,
+    initial_absolute_symbols: BTreeMap<String, i64>,
     absolute_symbols: BTreeMap<String, i64>,
     final_absolute_symbols: BTreeMap<String, i64>,
     common_symbols: BTreeMap<String, CommonSymbol>,
@@ -583,7 +587,11 @@ impl Assembler {
             sections: vec![Section::text()],
             source_section_count: 1,
             labels: BTreeMap::new(),
-            absolute_defs: BTreeMap::new(),
+            absolute_assignments: Vec::new(),
+            absolute_symbol_names: BTreeSet::new(),
+            absolute_assignment_values: Vec::new(),
+            next_absolute_assignment: 0,
+            initial_absolute_symbols: BTreeMap::new(),
             absolute_symbols: BTreeMap::new(),
             final_absolute_symbols: BTreeMap::new(),
             common_symbols: BTreeMap::new(),
@@ -635,9 +643,9 @@ impl Assembler {
             section.size = 0;
         }
         self.fixups.clear();
-        self.absolute_defs.clear();
+        self.next_absolute_assignment = 0;
         self.absolute_symbols
-            .clone_from(&self.final_absolute_symbols);
+            .clone_from(&self.initial_absolute_symbols);
         self.pending_relocs.clear();
         self.pending_relocs
             .resize_with(self.sections.len(), Vec::new);
@@ -661,9 +669,24 @@ impl Assembler {
                 return Err(error);
             }
         };
-        self.absolute_symbols = self.resolve_absolute_symbols()?;
-        self.final_absolute_symbols
-            .clone_from(&self.absolute_symbols);
+        let assignment_results = expr::resolve_absolute_assignments(
+            &self.absolute_assignments,
+            &self.label_values_for_expr(),
+        );
+        let mut first_names = BTreeMap::new();
+        self.initial_absolute_symbols.clear();
+        self.final_absolute_symbols.clear();
+        self.absolute_assignment_values.clear();
+        for ((name, _), result) in self.absolute_assignments.iter().zip(assignment_results) {
+            let value = result.map_err(AsmError)?;
+            if first_names.insert(name.clone(), ()).is_none() {
+                self.initial_absolute_symbols.insert(name.clone(), value);
+            }
+            self.final_absolute_symbols.insert(name.clone(), value);
+            self.absolute_assignment_values.push(value);
+        }
+        self.absolute_symbols
+            .clone_from(&self.final_absolute_symbols);
         Ok(())
     }
 
@@ -787,7 +810,8 @@ impl Assembler {
             Directive::Data => self.switch_to("__DATA", "__data")?,
             Directive::Set(name, expr) => {
                 self.note_symbol(name);
-                self.absolute_defs.insert(name.clone(), expr.clone());
+                self.absolute_symbol_names.insert(name.clone());
+                self.absolute_assignments.push((name.clone(), expr.clone()));
             }
             Directive::Comm {
                 name,
@@ -893,7 +917,7 @@ impl Assembler {
         match dir {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
-            Directive::Set(name, expr) => self.activate_absolute_definition(name, expr),
+            Directive::Set(name, _) => self.activate_absolute_definition(name)?,
             Directive::Comm { .. }
             | Directive::Extern(_)
             | Directive::Global(_)
@@ -1768,7 +1792,7 @@ impl Assembler {
                 name, align_pow2
             )));
         }
-        if self.labels.contains_key(name) || self.absolute_defs.contains_key(name) {
+        if self.labels.contains_key(name) || self.absolute_symbol_names.contains(name) {
             return Err(AsmError(format!("duplicate symbol '{}'", name)));
         }
         if self
@@ -1814,7 +1838,9 @@ impl Assembler {
         };
 
         if let Some(symbol) = symbol {
-            if self.common_symbols.contains_key(symbol) || self.absolute_defs.contains_key(symbol) {
+            if self.common_symbols.contains_key(symbol)
+                || self.absolute_symbol_names.contains(symbol)
+            {
                 return Err(AsmError(format!("duplicate symbol '{}'", symbol)));
             }
             self.note_symbol(symbol);
@@ -2038,11 +2064,17 @@ impl Assembler {
     }
 
     fn symbol_values_for_expr(&self) -> BTreeMap<String, SymbolValue> {
-        let mut values = BTreeMap::new();
+        let mut values = self.label_values_for_expr();
 
         for (name, value) in &self.absolute_symbols {
             values.insert(name.clone(), SymbolValue::Absolute(*value));
         }
+
+        values
+    }
+
+    fn label_values_for_expr(&self) -> BTreeMap<String, SymbolValue> {
+        let mut values = BTreeMap::new();
 
         for (name, (section, offset)) in &self.labels {
             values.insert(
@@ -2062,11 +2094,24 @@ impl Assembler {
             .map_err(|err| AsmError(err.to_string()))
     }
 
-    fn activate_absolute_definition(&mut self, name: &str, expr: &Expr) {
-        self.absolute_defs.insert(name.to_string(), expr.clone());
-        let mut symbols = self.final_absolute_symbols.clone();
-        symbols.extend(self.resolve_available_absolute_symbols());
-        self.absolute_symbols = symbols;
+    fn activate_absolute_definition(&mut self, name: &str) -> Result<(), AsmError> {
+        let (expected_name, _) = self
+            .absolute_assignments
+            .get(self.next_absolute_assignment)
+            .ok_or_else(|| AsmError("missing resolved absolute assignment".into()))?;
+        if expected_name != name {
+            return Err(AsmError(format!(
+                "absolute assignment order changed between passes: expected '{}', got '{}'",
+                expected_name, name
+            )));
+        }
+        let value = *self
+            .absolute_assignment_values
+            .get(self.next_absolute_assignment)
+            .ok_or_else(|| AsmError("missing resolved absolute assignment value".into()))?;
+        self.next_absolute_assignment += 1;
+        self.absolute_symbols.insert(name.to_string(), value);
+        Ok(())
     }
 
     fn require_sized_absolute_expr(
@@ -2849,92 +2894,6 @@ impl Assembler {
             data.push(0);
         }
         Ok(data)
-    }
-
-    fn resolve_absolute_symbols(&self) -> Result<BTreeMap<String, i64>, AsmError> {
-        let mut resolved = BTreeMap::new();
-        let mut visiting = Vec::new();
-        let names: Vec<_> = self.absolute_defs.keys().cloned().collect();
-        for name in names {
-            let value = self.resolve_absolute_symbol(&name, &mut resolved, &mut visiting)?;
-            resolved.insert(name, value);
-        }
-        Ok(resolved)
-    }
-
-    fn resolve_available_absolute_symbols(&self) -> BTreeMap<String, i64> {
-        let mut resolved = BTreeMap::new();
-        for name in self.absolute_defs.keys() {
-            let mut visiting = Vec::new();
-            let _ = self.resolve_absolute_symbol(name, &mut resolved, &mut visiting);
-        }
-        resolved
-    }
-
-    fn resolve_absolute_symbol(
-        &self,
-        name: &str,
-        resolved: &mut BTreeMap<String, i64>,
-        visiting: &mut Vec<String>,
-    ) -> Result<i64, AsmError> {
-        if let Some(value) = resolved.get(name) {
-            return Ok(*value);
-        }
-        if visiting.iter().any(|entry| entry == name) {
-            return Err(AsmError(format!(
-                "absolute symbol '{}' has a cyclic definition",
-                name
-            )));
-        }
-
-        let expr = self
-            .absolute_defs
-            .get(name)
-            .ok_or_else(|| AsmError(format!("missing absolute symbol definition '{}'", name)))?;
-
-        visiting.push(name.to_string());
-        let mut symbols = BTreeMap::new();
-        for referenced in expr::referenced_symbols(expr) {
-            if let Some(value) = resolved.get(&referenced) {
-                symbols.insert(referenced, SymbolValue::Absolute(*value));
-            } else if self.absolute_defs.contains_key(&referenced) {
-                let value = self.resolve_absolute_symbol(&referenced, resolved, visiting)?;
-                symbols.insert(referenced, SymbolValue::Absolute(value));
-            } else if let Some((section, offset)) = self.labels.get(&referenced) {
-                symbols.insert(
-                    referenced,
-                    SymbolValue::Defined {
-                        section: *section,
-                        value: (self.section_bases[*section] + offset) as i64,
-                    },
-                );
-            } else {
-                visiting.pop();
-                return Err(AsmError(format!(
-                    "absolute symbol '{}' references undefined symbol '{}'",
-                    name, referenced
-                )));
-            }
-        }
-
-        let value = match expr::classify(expr, &symbols) {
-            Ok(ClassifiedExpr::Absolute(value)) => value,
-            Ok(_) => {
-                visiting.pop();
-                return Err(AsmError(format!(
-                    "absolute symbol '{}' must resolve to an absolute value",
-                    name
-                )));
-            }
-            Err(err) => {
-                visiting.pop();
-                return Err(AsmError(format!("absolute symbol '{}': {}", name, err)));
-            }
-        };
-
-        visiting.pop();
-        resolved.insert(name.to_string(), value);
-        Ok(value)
     }
 }
 

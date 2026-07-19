@@ -263,14 +263,73 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, ParseError> {
 /// Parse assembly source text into statements with source locations.
 pub fn parse_with_locations(src: &str) -> Result<Vec<LocatedStmt>, ParseError> {
     let tokens = Lexer::tokenize(src)?;
+    let previews = scan_absolute_assignments(&tokens);
+    let assignments: Vec<_> = previews
+        .iter()
+        .map(|preview| (preview.name.clone(), preview.expr.clone()))
+        .collect();
+    let resolved = expr::resolve_absolute_assignments(&assignments, &BTreeMap::new());
+
     let mut p = Parser::new(&tokens);
+    let mut first_assignments = BTreeMap::new();
+    for (preview, value) in previews.iter().zip(resolved) {
+        let value = value.ok();
+        p.absolute_assignment_values
+            .insert((preview.line, preview.col), value);
+        if first_assignments.insert(preview.name.clone(), ()).is_none() {
+            if let Some(value) = value {
+                p.absolute_symbols.insert(preview.name.clone(), value);
+            }
+        }
+    }
     p.parse_program()
+}
+
+struct AbsoluteAssignmentPreview {
+    name: String,
+    expr: Expr,
+    line: u32,
+    col: u32,
+}
+
+fn scan_absolute_assignments(tokens: &[Token]) -> Vec<AbsoluteAssignmentPreview> {
+    let mut assignments = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if !matches!(&token.kind, Tok::Ident(name) if name == ".set" || name == ".equ") {
+            continue;
+        }
+        if index > 0 && !matches!(tokens[index - 1].kind, Tok::Newline | Tok::Colon) {
+            continue;
+        }
+
+        let mut parser = Parser::new(tokens);
+        parser.pos = index + 1;
+        let parsed = (|| {
+            let name = parser.expect_ident()?;
+            parser.expect(&Tok::Comma)?;
+            let expr = parser.parse_expr()?;
+            if !parser.at_end_of_stmt() {
+                return Err(parser.err("invalid absolute assignment".into()));
+            }
+            Ok((name, expr))
+        })();
+        if let Ok((name, expr)) = parsed {
+            assignments.push(AbsoluteAssignmentPreview {
+                name,
+                expr,
+                line: token.line,
+                col: token.col,
+            });
+        }
+    }
+    assignments
 }
 
 struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     absolute_symbols: BTreeMap<String, i64>,
+    absolute_assignment_values: BTreeMap<(u32, u32), Option<i64>>,
     numeric_labels: BTreeMap<u32, u32>,
 }
 
@@ -356,6 +415,7 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             absolute_symbols: BTreeMap::new(),
+            absolute_assignment_values: BTreeMap::new(),
             numeric_labels: BTreeMap::new(),
         }
     }
@@ -622,10 +682,20 @@ impl<'a> Parser<'a> {
                 let sym = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
                 let expr = self.parse_expr()?;
-                if let Ok(value) = expr::eval_with_symbols(&expr, &self.absolute_symbols) {
-                    self.absolute_symbols.insert(sym.clone(), value);
-                } else {
-                    self.absolute_symbols.remove(&sym);
+                match self.absolute_assignment_values.get(&(line, col)) {
+                    Some(Some(value)) => {
+                        self.absolute_symbols.insert(sym.clone(), *value);
+                    }
+                    Some(None) => {
+                        self.absolute_symbols.remove(&sym);
+                    }
+                    None => {
+                        if let Ok(value) = expr::eval_with_symbols(&expr, &self.absolute_symbols) {
+                            self.absolute_symbols.insert(sym.clone(), value);
+                        } else {
+                            self.absolute_symbols.remove(&sym);
+                        }
+                    }
                 }
                 Directive::Set(sym, expr)
             }

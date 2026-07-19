@@ -325,3 +325,47 @@ fn reassigned_absolute_symbols_use_the_value_visible_at_each_data_directive() {
         .expect("resolvable absolute alias unexpectedly followed a later reassignment");
     assert_eq!(alias.text_section().data, [2]);
 }
+
+#[test]
+fn absolute_symbols_bind_to_the_earliest_visible_assignment() {
+    let source = assemble_source(".byte X\n.set X,1\n.set X,2\n.byte X\n")
+        .expect("forward assignment timeline unexpectedly rejected");
+    assert_eq!(source.text_section().data, [1, 2]);
+
+    let direct = assemble_stmts(&[
+        Stmt::Directive(Directive::Byte(vec![Expr::Symbol("X".into())])),
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(1))),
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(2))),
+        Stmt::Directive(Directive::Byte(vec![Expr::Symbol("X".into())])),
+    ])
+    .expect("preparsed forward assignment timeline unexpectedly rejected");
+    assert_eq!(direct.text_section().data, source.text_section().data);
+
+    let alias = assemble_source(
+        ".set A,B\n\
+         .set B,2\n\
+         .byte A\n\
+         .set B,3\n\
+         .byte A\n",
+    )
+    .expect("absolute alias was not frozen when it first resolved");
+    assert_eq!(alias.text_section().data, [2, 2]);
+}
+
+#[test]
+fn forward_absolute_aliases_work_in_parser_resolved_directives() {
+    let fill = assemble_source(".set A,B\n.set B,2\n.data\n.fill 1,1,A\n")
+        .expect("forward alias in .fill unexpectedly rejected");
+    assert_eq!(fill.section("__DATA", "__data").unwrap().data, [2]);
+
+    let space = assemble_source(".set A,B\n.set B,2\n.data\n.space A\n")
+        .expect("forward alias in .space unexpectedly rejected");
+    assert_eq!(space.section("__DATA", "__data").unwrap().data, [0, 0]);
+
+    let align = assemble_source(".set A,B\n.set B,2\n.data\n.byte 1\n.align A,0xaa\n")
+        .expect("forward alias in .align unexpectedly rejected");
+    assert_eq!(
+        align.section("__DATA", "__data").unwrap().data,
+        [1, 0xaa, 0xaa, 0xaa]
+    );
+}
