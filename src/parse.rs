@@ -1648,7 +1648,7 @@ impl<'a> Parser<'a> {
         required_64bit: bool,
         context: &str,
     ) -> Result<GpReg, ParseError> {
-        let (reg, is_64bit) = self.parse_gp_reg_with_size()?;
+        let (reg, is_64bit) = self.parse_gp_data_reg_with_size(context)?;
         if is_64bit != required_64bit {
             return Err(self.err(format!(
                 "{} requires an {}-register",
@@ -1667,9 +1667,19 @@ impl<'a> Parser<'a> {
         self.parse_gp_reg_with_required_width(false, context)
     }
 
-    /// Returns (register, is_64bit).
-    fn parse_gp_reg_with_size(&mut self) -> Result<(GpReg, bool), ParseError> {
-        let (reg, is_64bit, _kind) = self.parse_gp_reg_with_size_kind()?;
+    fn parse_memory_base_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        let (reg, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
+        if !is_64bit || kind == GpRegKind::Zr {
+            return Err(self.err(format!("{} requires an x-register or sp base", context)));
+        }
+        Ok(reg)
+    }
+
+    fn parse_gp_data_reg_with_size(&mut self, context: &str) -> Result<(GpReg, bool), ParseError> {
+        let (reg, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
+        if kind == GpRegKind::Sp {
+            return Err(self.err(format!("{} does not allow sp as a data register", context)));
+        }
         Ok((reg, is_64bit))
     }
 
@@ -1678,7 +1688,7 @@ impl<'a> Parser<'a> {
         expected_64bit: bool,
         context: &str,
     ) -> Result<GpReg, ParseError> {
-        let (reg, is_64bit) = self.parse_gp_reg_with_size()?;
+        let (reg, is_64bit) = self.parse_gp_data_reg_with_size(context)?;
         if is_64bit != expected_64bit {
             return Err(self.err(format!("{} requires registers of the same width", context)));
         }
@@ -2283,7 +2293,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tst(&mut self) -> Result<Inst, ParseError> {
-        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        let (rn, sf) = self.parse_gp_data_reg_with_size("tst")?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let imm = self.parse_logical_immediate_value(sf)?;
@@ -2346,7 +2356,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_mvn(&mut self) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size("mvn")?;
         self.expect(&Tok::Comma)?;
         let rm = self.parse_gp_reg_matching_width(sf, "mvn")?;
         Ok(Inst::OrnReg {
@@ -2358,7 +2368,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cond_select(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
@@ -2401,7 +2411,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cond_select_set_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
@@ -2427,7 +2437,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cond_select_unary_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
@@ -2478,7 +2488,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cond_compare_imm(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rn, sf) = self.parse_gp_reg_with_size()?;
+        let (rn, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let imm5 = self.parse_immediate_const_expr("conditional compare immediate")?;
         if !(0..=31).contains(&imm5) {
@@ -2547,7 +2557,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_3reg(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
@@ -2561,7 +2571,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_madd_sub(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
@@ -2580,17 +2590,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_umull(&mut self) -> Result<Inst, ParseError> {
-        let (rd, rd_is_64bit) = self.parse_gp_reg_with_size()?;
+        let (rd, rd_is_64bit) = self.parse_gp_data_reg_with_size("umull")?;
         if !rd_is_64bit {
             return Err(self.err("umull destination must be an X register".into()));
         }
         self.expect(&Tok::Comma)?;
-        let (rn, rn_is_64bit) = self.parse_gp_reg_with_size()?;
+        let (rn, rn_is_64bit) = self.parse_gp_data_reg_with_size("umull")?;
         if rn_is_64bit {
             return Err(self.err("umull sources must be W registers".into()));
         }
         self.expect(&Tok::Comma)?;
-        let (rm, rm_is_64bit) = self.parse_gp_reg_with_size()?;
+        let (rm, rm_is_64bit) = self.parse_gp_data_reg_with_size("umull")?;
         if rm_is_64bit {
             return Err(self.err("umull sources must be W registers".into()));
         }
@@ -2598,7 +2608,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_logic(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
@@ -2788,7 +2798,7 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::RBracket)?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_x_reg("SIMD lane load memory base")?;
+        let rn = self.parse_memory_base_reg("SIMD lane load memory base")?;
         self.expect(&Tok::RBracket)?;
         Ok(match width {
             SimdLaneWidth::S32 => Inst::Ld1LaneS { rt, index, rn },
@@ -2799,7 +2809,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_mov_wide(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let imm = self.parse_u16_immediate("mov wide immediate")?;
         let shift = self.parse_optional_mov_wide_shift(sf)?;
@@ -2906,7 +2916,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_bitfield_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rd, sf) = self.parse_gp_reg_with_size()?;
+        let (rd, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
@@ -3004,7 +3014,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cbz(&mut self, is_nz: bool) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("cbz/cbnz")?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let offset = self.parse_i32_signed_scaled_immediate("cbz/cbnz offset", 19, 2)?;
@@ -3034,7 +3044,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tbz(&mut self, is_nz: bool) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("tbz/tbnz")?;
         self.expect(&Tok::Comma)?;
         let bit = self.parse_bit_index(
             sf,
@@ -3285,10 +3295,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldur_stur(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("ldur/stur data operand")?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_x_reg("ldur/stur memory base")?;
+        let rn = self.parse_memory_base_reg("ldur/stur memory base")?;
         let offset = if self.eat(&Tok::RBracket) {
             0
         } else {
@@ -3311,7 +3321,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldr_str_gp(&mut self, is_load: bool) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("ldr/str data operand")?;
         self.expect(&Tok::Comma)?;
 
         if is_load && self.starts_immediate_expr() {
@@ -3347,7 +3357,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_x_reg("ldr/str memory base")?;
+        let rn = self.parse_memory_base_reg("ldr/str memory base")?;
 
         if self.eat(&Tok::RBracket) {
             // [Xn] or [Xn], #off (post-index)
@@ -3514,7 +3524,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_x_reg("FP/SIMD memory base")?;
+        let rn = self.parse_memory_base_reg("FP/SIMD memory base")?;
 
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
@@ -3940,7 +3950,7 @@ impl<'a> Parser<'a> {
         let rt = self.parse_w_reg(&format!("{} data operand", mnemonic))?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_x_reg(&format!("{} memory base", mnemonic))?;
+        let rn = self.parse_memory_base_reg(&format!("{} memory base", mnemonic))?;
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
                 let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
@@ -3978,10 +3988,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldst_signed_b_h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_x_reg(&format!("{} memory base", mnemonic))?;
+        let rn = self.parse_memory_base_reg(&format!("{} memory base", mnemonic))?;
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
                 let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
@@ -4026,7 +4036,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldrsw(&mut self) -> Result<Stmt, ParseError> {
-        let (rt, sf) = self.parse_gp_reg_with_size()?;
+        let (rt, sf) = self.parse_gp_data_reg_with_size("ldrsw destination")?;
         if !sf {
             return Err(self.err("ldrsw destination must be an x-register".into()));
         }
@@ -4051,7 +4061,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_x_reg("ldrsw memory base")?;
+        let rn = self.parse_memory_base_reg("ldrsw memory base")?;
         let (offset, offset_start) = if self.eat(&Tok::Comma) {
             if self.starts_register_like_operand() {
                 let (rm, extend, shift) = self.parse_reg_offset_operand(2)?;
@@ -4087,15 +4097,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldp_stp_gp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
-        let (rt1, sf) = self.parse_gp_reg_with_size()?;
+        let (rt1, sf) = self.parse_gp_data_reg_with_size("ldp/stp data operand")?;
         self.expect(&Tok::Comma)?;
-        let (rt2, second_sf) = self.parse_gp_reg_with_size()?;
+        let (rt2, second_sf) = self.parse_gp_data_reg_with_size("ldp/stp data operand")?;
         if sf != second_sf {
             return Err(self.err("ldp/stp register pair must use matching register widths".into()));
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_x_reg("ldp/stp memory base")?;
+        let rn = self.parse_memory_base_reg("ldp/stp memory base")?;
         let scale = if sf { 3 } else { 2 };
 
         if self.eat(&Tok::RBracket) {
@@ -4235,7 +4245,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_x_reg("ldp/stp FP memory base")?;
+        let rn = self.parse_memory_base_reg("ldp/stp FP memory base")?;
         let scale = width.scale();
 
         if self.eat(&Tok::RBracket) {
@@ -4992,7 +5002,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_fcvtzs(&mut self) -> Result<Inst, ParseError> {
-        let (rd, dst_64bit) = self.parse_gp_reg_with_size()?;
+        let (rd, dst_64bit) = self.parse_gp_data_reg_with_size("fcvtzs")?;
         self.expect(&Tok::Comma)?;
         let (rn, src_double) = self.parse_fp_reg_with_size()?;
         Ok(Inst::Fcvtzs {
@@ -5017,7 +5027,7 @@ impl<'a> Parser<'a> {
     fn parse_scvtf(&mut self) -> Result<Inst, ParseError> {
         let (rd, dst_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, src_64bit) = self.parse_gp_reg_with_size()?;
+        let (rn, src_64bit) = self.parse_gp_data_reg_with_size("scvtf")?;
         Ok(Inst::Scvtf {
             rd,
             rn,
@@ -5606,7 +5616,10 @@ impl<'a> Parser<'a> {
         &mut self,
         scale: u8,
     ) -> Result<(GpReg, AddrExtend, bool), ParseError> {
-        let (rm, is_64bit) = self.parse_gp_reg_with_size()?;
+        let (rm, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
+        if kind == GpRegKind::Sp {
+            return Err(self.err("register offset does not allow sp".into()));
+        }
         let mut extend = AddrExtend::Lsl;
         let mut shift = false;
 

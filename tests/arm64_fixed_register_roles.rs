@@ -33,6 +33,19 @@ fn fixed_width_operand_roles_reject_wrong_register_classes() {
         "ldp x0, x1, [w2]",
         "stp d0, d1, [w2]",
         "ld1.s { v0 }[0], [w1]",
+        "and x0, sp, x1",
+        "mul sp, x1, x2",
+        "csel x0, sp, x2, eq",
+        "ubfiz sp, x1, #0, #1",
+        "br sp",
+        "adr sp, #0",
+        "ldr x0, [xzr]",
+        "fcvtzs sp, d0",
+        "movz sp, #0",
+        "cbz sp, #0",
+        "ldr sp, [x0]",
+        "ldp sp, x0, [x1]",
+        "ldr x0, [x1, sp]",
     ] {
         assert_rejected(source, "register");
     }
