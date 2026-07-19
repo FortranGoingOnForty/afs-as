@@ -1579,6 +1579,14 @@ impl Assembler {
         let context = if pcrel { "page fixup" } else { "pageoff fixup" };
         let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, context)?;
         if addend != 0 {
+            if !matches!(
+                reloc_type,
+                crate::macho::ARM64_RELOC_PAGE21 | crate::macho::ARM64_RELOC_PAGEOFF12
+            ) {
+                return Err(AsmError(
+                    "GOT and TLVP page relocations do not support addends".into(),
+                ));
+            }
             self.record_addend_reloc(fixup.section, fixup.offset, 2, addend)?;
         }
         self.record_pending_reloc(fixup.section, fixup.offset, symbol, 2, reloc_type, pcrel);
@@ -1703,6 +1711,11 @@ impl Assembler {
                 addend,
                 pcrel,
             } => {
+                if pcrel {
+                    return Err(AsmError(
+                        ".quad pointer-to-GOT expression must not be PC-relative".into(),
+                    ));
+                }
                 self.patch_section_data(
                     fixup.section,
                     fixup.offset,
@@ -1733,6 +1746,11 @@ impl Assembler {
                 value
             ))),
             ClassifiedExpr::PointerToGot { symbol, addend, pcrel } => {
+                if !pcrel {
+                    return Err(AsmError(
+                        ".long pointer-to-GOT expression must be PC-relative".into(),
+                    ));
+                }
                 self.patch_section_data(fixup.section, fixup.offset, &(addend as u32).to_le_bytes(), ".word")?;
                 self.record_pending_reloc(
                     fixup.section,
@@ -4231,6 +4249,24 @@ mod tests {
     }
 
     #[test]
+    fn assemble_got_and_tlvp_page_addends_are_rejected() {
+        for source in [
+            ".text\nadrp x0, _value@GOTPAGE + 4\n",
+            ".text\nldr x0, [x0, _value@GOTPAGEOFF + 4]\n",
+            ".text\nadrp x0, _value@TLVPPAGE + 4\n",
+            ".text\nldr x0, [x0, _value@TLVPPAGEOFF + 4]\n",
+        ] {
+            let error = assemble_source(source).unwrap_err();
+            assert_eq!(
+                error.msg,
+                "GOT and TLVP page relocations do not support addends"
+            );
+            assert_eq!(error.line, Some(2));
+            assert_eq!(error.col, Some(1));
+        }
+    }
+
+    #[test]
     fn assemble_quad_local_symbol_creates_unsigned_relocation() {
         let obj = assemble_source(".data\nfoo: .byte 1\n.quad foo\n").unwrap();
         let relocs = data_relocs(&obj);
@@ -4269,6 +4305,25 @@ mod tests {
         assert!(relocs[0].pcrel);
         assert_eq!(obj.symbols[relocs[0].symbol_idx as usize].name, "_puts");
         assert_eq!(&text_bytes(&obj)[..4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn assemble_pointer_to_got_rejects_invalid_width_modes() {
+        let error = assemble_source(".data\n.long _puts@GOT\n").unwrap_err();
+        assert_eq!(
+            error.msg,
+            ".long pointer-to-GOT expression must be PC-relative"
+        );
+        assert_eq!(error.line, Some(2));
+        assert_eq!(error.col, Some(1));
+
+        let error = assemble_source(".data\n.quad _puts@GOT - .\n").unwrap_err();
+        assert_eq!(
+            error.msg,
+            ".quad pointer-to-GOT expression must not be PC-relative"
+        );
+        assert_eq!(error.line, Some(2));
+        assert_eq!(error.col, Some(1));
     }
 
     #[test]

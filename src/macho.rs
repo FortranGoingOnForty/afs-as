@@ -332,9 +332,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
                 ),
             ));
         }
-        for relocation in &section.relocations {
-            validate_relocation(obj, section, relocation)?;
-        }
+        validate_relocations(obj, section)?;
 
         vm_cursor = checked_align_value(vm_cursor, section.align_pow2).ok_or_else(|| {
             io::Error::new(
@@ -571,9 +569,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
 
     // ---- Relocation entries (descending address order within each section) ----
     for section in &obj.sections {
-        let mut sorted_relocs: Vec<_> = section.relocations.iter().collect();
-        sorted_relocs.sort_by_key(|rel| std::cmp::Reverse(rel.offset));
-        for rel in &sorted_relocs {
+        for rel in sorted_relocations(section) {
             write_reloc(w, rel)?;
         }
     }
@@ -725,12 +721,98 @@ fn relocation_address(rel: &Relocation) -> io::Result<i32> {
     })
 }
 
+fn sorted_relocations(section: &Section) -> Vec<&Relocation> {
+    let mut relocations: Vec<_> = section.relocations.iter().collect();
+    relocations.sort_by_key(|relocation| std::cmp::Reverse(relocation.offset));
+    relocations
+}
+
+fn validate_relocations(obj: &ObjectFile, section: &Section) -> io::Result<()> {
+    let relocations = sorted_relocations(section);
+    for relocation in &relocations {
+        validate_relocation(obj, section, relocation)?;
+    }
+
+    let mut index = 0;
+    while index < relocations.len() {
+        let relocation = relocations[index];
+        match relocation.reloc_type {
+            ARM64_RELOC_ADDEND => {
+                let paired = relocations.get(index + 1).copied();
+                if !paired.is_some_and(|paired| {
+                    paired.offset == relocation.offset
+                        && matches!(
+                            paired.reloc_type,
+                            ARM64_RELOC_BRANCH26 | ARM64_RELOC_PAGE21 | ARM64_RELOC_PAGEOFF12
+                        )
+                }) {
+                    return Err(invalid_input(
+                        "ARM64_RELOC_ADDEND must be followed by ARM64_RELOC_BRANCH26, ARM64_RELOC_PAGE21, or ARM64_RELOC_PAGEOFF12 at the same offset",
+                    ));
+                }
+                index += 2;
+            }
+            ARM64_RELOC_SUBTRACTOR => {
+                let paired = relocations.get(index + 1).copied();
+                if !paired.is_some_and(|paired| {
+                    paired.offset == relocation.offset
+                        && paired.reloc_type == ARM64_RELOC_UNSIGNED
+                        && paired.length == relocation.length
+                }) {
+                    return Err(invalid_input(
+                        "ARM64_RELOC_SUBTRACTOR must be followed by ARM64_RELOC_UNSIGNED at the same offset and length",
+                    ));
+                }
+                index += 2;
+            }
+            _ => index += 1,
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_relocation(obj: &ObjectFile, section: &Section, rel: &Relocation) -> io::Result<()> {
     relocation_address(rel)?;
+    if rel.symbol_idx > 0x00ff_ffff {
+        return Err(invalid_input(format!(
+            "relocation symbol index {} exceeds 24 bits",
+            rel.symbol_idx
+        )));
+    }
     if rel.length > 3 {
         return Err(invalid_input(format!(
             "relocation length {} exceeds 2 bits",
             rel.length
+        )));
+    }
+    if rel.reloc_type > ARM64_RELOC_ADDEND {
+        return Err(invalid_input(format!(
+            "unsupported ARM64 relocation type {}",
+            rel.reloc_type
+        )));
+    }
+
+    let valid_form = match rel.reloc_type {
+        ARM64_RELOC_UNSIGNED => !rel.pcrel && matches!(rel.length, 2 | 3),
+        ARM64_RELOC_SUBTRACTOR => !rel.pcrel && rel.extern_ && matches!(rel.length, 2 | 3),
+        ARM64_RELOC_BRANCH26
+        | ARM64_RELOC_PAGE21
+        | ARM64_RELOC_GOT_LOAD_PAGE21
+        | ARM64_RELOC_TLVP_LOAD_PAGE21 => rel.pcrel && rel.extern_ && rel.length == 2,
+        ARM64_RELOC_PAGEOFF12
+        | ARM64_RELOC_GOT_LOAD_PAGEOFF12
+        | ARM64_RELOC_TLVP_LOAD_PAGEOFF12 => !rel.pcrel && rel.extern_ && rel.length == 2,
+        ARM64_RELOC_ADDEND => !rel.pcrel && rel.length == 2,
+        ARM64_RELOC_POINTER_TO_GOT => {
+            rel.extern_ && ((rel.pcrel && rel.length == 2) || (!rel.pcrel && rel.length == 3))
+        }
+        _ => unreachable!("unsupported relocation type was rejected"),
+    };
+    if !valid_form {
+        return Err(invalid_input(format!(
+            "ARM64 relocation type {} does not support r_pcrel={}, r_length={}, r_extern={}",
+            rel.reloc_type, rel.pcrel as u8, rel.length, rel.extern_ as u8
         )));
     }
 
@@ -1093,7 +1175,7 @@ mod tests {
         assert_eq!((info >> 28) & 0xF, 3); // type = PAGE21
     }
 
-    fn zerofill_object_with_relocation(size: u64, offset: u32, length: u8) -> ObjectFile {
+    fn zerofill_object_with_relocation(size: u64, offset: u32) -> ObjectFile {
         let mut obj = ObjectFile::new();
         let mut section = Section::new("__DATA", "__bss", SectionKind::ZeroFill);
         section.size = size;
@@ -1101,7 +1183,7 @@ mod tests {
             offset,
             symbol_idx: 1,
             pcrel: false,
-            length,
+            length: 3,
             extern_: false,
             reloc_type: ARM64_RELOC_UNSIGNED,
         });
@@ -1112,14 +1194,14 @@ mod tests {
     #[test]
     fn relocation_address_accepts_the_signed_boundary() {
         let max = i32::MAX as u32;
-        let obj = zerofill_object_with_relocation(u64::from(max) + 1, max, 0);
+        let obj = zerofill_object_with_relocation(u64::from(max) + 8, max);
         write_macho(&obj, &mut Vec::new()).unwrap();
     }
 
     #[test]
     fn relocation_address_rejects_the_scattered_bit() {
         let offset = i32::MAX as u32 + 1;
-        let obj = zerofill_object_with_relocation(u64::from(offset) + 1, offset, 0);
+        let obj = zerofill_object_with_relocation(u64::from(offset) + 8, offset);
         let error = write_macho(&obj, &mut Vec::new()).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(
@@ -1130,27 +1212,47 @@ mod tests {
 
     #[test]
     fn relocation_extent_must_fit_its_section() {
-        let offset = i32::MAX as u32 - 3;
-        let exact_size = u64::from(offset) + 4;
-        let exact = zerofill_object_with_relocation(exact_size, offset, 2);
+        let offset = i32::MAX as u32 - 7;
+        let exact_size = u64::from(offset) + 8;
+        let exact = zerofill_object_with_relocation(exact_size, offset);
         write_macho(&exact, &mut Vec::new()).unwrap();
 
-        let outside = zerofill_object_with_relocation(exact_size - 1, offset, 2);
+        let outside = zerofill_object_with_relocation(exact_size - 1, offset);
         let error = write_macho(&outside, &mut Vec::new()).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(
             error.to_string(),
-            "relocation at offset 2147483644 with width 4 exceeds section __DATA,__bss size 2147483647"
+            "relocation at offset 2147483640 with width 8 exceeds section __DATA,__bss size 2147483647"
         );
     }
 
-    fn object_with_text_relocation(relocation: Relocation) -> ObjectFile {
+    fn object_with_text_relocations(relocations: Vec<Relocation>) -> ObjectFile {
         let mut obj = ObjectFile::new();
         let text = obj.text_section_mut();
-        text.data = vec![0; 4];
-        text.size = 4;
-        text.relocations.push(relocation);
+        text.data = vec![0; 16];
+        text.size = 16;
+        text.relocations = relocations;
         obj
+    }
+
+    fn object_with_text_relocation(relocation: Relocation) -> ObjectFile {
+        object_with_text_relocations(vec![relocation])
+    }
+
+    fn add_undefined_symbol(obj: &mut ObjectFile) {
+        obj.symbols.push(Symbol {
+            name: "_external".into(),
+            section: 0,
+            value: 0,
+            global: true,
+            undefined: true,
+            absolute: false,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        });
     }
 
     #[test]
@@ -1178,7 +1280,7 @@ mod tests {
                 offset: 0,
                 symbol_idx: ordinal,
                 pcrel: false,
-                length: 2,
+                length: 3,
                 extern_: false,
                 reloc_type: ARM64_RELOC_UNSIGNED,
             });
@@ -1193,14 +1295,25 @@ mod tests {
 
     #[test]
     fn addend_relocation_uses_a_raw_nonexternal_payload() {
-        let obj = object_with_text_relocation(Relocation {
-            offset: 0,
-            symbol_idx: 0x00ff_ffff,
-            pcrel: false,
-            length: 2,
-            extern_: false,
-            reloc_type: ARM64_RELOC_ADDEND,
-        });
+        let mut obj = object_with_text_relocations(vec![
+            Relocation {
+                offset: 0,
+                symbol_idx: 0x00ff_ffff,
+                pcrel: false,
+                length: 2,
+                extern_: false,
+                reloc_type: ARM64_RELOC_ADDEND,
+            },
+            Relocation {
+                offset: 0,
+                symbol_idx: 0,
+                pcrel: true,
+                length: 2,
+                extern_: true,
+                reloc_type: ARM64_RELOC_PAGE21,
+            },
+        ]);
+        add_undefined_symbol(&mut obj);
         write_macho(&obj, &mut Vec::new()).unwrap();
 
         let invalid = object_with_text_relocation(Relocation {
@@ -1216,6 +1329,160 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "ARM64_RELOC_ADDEND must use a non-external r_symbolnum payload"
+        );
+    }
+
+    #[test]
+    fn relocation_payload_is_validated_before_output() {
+        let mut obj = object_with_text_relocations(vec![
+            Relocation {
+                offset: 0,
+                symbol_idx: 0x0100_0000,
+                pcrel: false,
+                length: 2,
+                extern_: false,
+                reloc_type: ARM64_RELOC_ADDEND,
+            },
+            Relocation {
+                offset: 0,
+                symbol_idx: 0,
+                pcrel: true,
+                length: 2,
+                extern_: true,
+                reloc_type: ARM64_RELOC_PAGE21,
+            },
+        ]);
+        add_undefined_symbol(&mut obj);
+        let mut output = Vec::new();
+        let error = write_macho(&obj, &mut output).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "relocation symbol index 16777216 exceeds 24 bits"
+        );
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn relocation_type_must_have_a_supported_form() {
+        let invalid_forms = [
+            Relocation {
+                offset: 0,
+                symbol_idx: 1,
+                pcrel: true,
+                length: 3,
+                extern_: false,
+                reloc_type: ARM64_RELOC_UNSIGNED,
+            },
+            Relocation {
+                offset: 0,
+                symbol_idx: 1,
+                pcrel: false,
+                length: 2,
+                extern_: false,
+                reloc_type: ARM64_RELOC_BRANCH26,
+            },
+            Relocation {
+                offset: 0,
+                symbol_idx: 1,
+                pcrel: true,
+                length: 2,
+                extern_: false,
+                reloc_type: ARM64_RELOC_PAGEOFF12,
+            },
+            Relocation {
+                offset: 0,
+                symbol_idx: 1,
+                pcrel: false,
+                length: 2,
+                extern_: false,
+                reloc_type: ARM64_RELOC_POINTER_TO_GOT,
+            },
+        ];
+
+        for relocation in invalid_forms {
+            let reloc_type = relocation.reloc_type;
+            let pcrel = relocation.pcrel as u8;
+            let length = relocation.length;
+            let extern_ = relocation.extern_ as u8;
+            let error =
+                write_macho(&object_with_text_relocation(relocation), &mut Vec::new()).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "ARM64 relocation type {reloc_type} does not support r_pcrel={pcrel}, r_length={length}, r_extern={extern_}"
+                )
+            );
+        }
+
+        let unsupported = object_with_text_relocation(Relocation {
+            offset: 0,
+            symbol_idx: 1,
+            pcrel: false,
+            length: 3,
+            extern_: false,
+            reloc_type: ARM64_RELOC_ADDEND + 1,
+        });
+        let error = write_macho(&unsupported, &mut Vec::new()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(error.to_string(), "unsupported ARM64 relocation type 11");
+    }
+
+    #[test]
+    fn paired_relocations_must_be_adjacent_at_the_same_offset() {
+        let orphan_addend = object_with_text_relocation(Relocation {
+            offset: 0,
+            symbol_idx: 1,
+            pcrel: false,
+            length: 2,
+            extern_: false,
+            reloc_type: ARM64_RELOC_ADDEND,
+        });
+        let error = write_macho(&orphan_addend, &mut Vec::new()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "ARM64_RELOC_ADDEND must be followed by ARM64_RELOC_BRANCH26, ARM64_RELOC_PAGE21, or ARM64_RELOC_PAGEOFF12 at the same offset"
+        );
+
+        let mut orphan_subtractor = object_with_text_relocation(Relocation {
+            offset: 0,
+            symbol_idx: 0,
+            pcrel: false,
+            length: 3,
+            extern_: true,
+            reloc_type: ARM64_RELOC_SUBTRACTOR,
+        });
+        add_undefined_symbol(&mut orphan_subtractor);
+        let error = write_macho(&orphan_subtractor, &mut Vec::new()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "ARM64_RELOC_SUBTRACTOR must be followed by ARM64_RELOC_UNSIGNED at the same offset and length"
+        );
+
+        let mut mismatched_subtractor = object_with_text_relocations(vec![
+            Relocation {
+                offset: 0,
+                symbol_idx: 0,
+                pcrel: false,
+                length: 3,
+                extern_: true,
+                reloc_type: ARM64_RELOC_SUBTRACTOR,
+            },
+            Relocation {
+                offset: 1,
+                symbol_idx: 1,
+                pcrel: false,
+                length: 3,
+                extern_: false,
+                reloc_type: ARM64_RELOC_UNSIGNED,
+            },
+        ]);
+        add_undefined_symbol(&mut mismatched_subtractor);
+        let error = write_macho(&mismatched_subtractor, &mut Vec::new()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "ARM64_RELOC_SUBTRACTOR must be followed by ARM64_RELOC_UNSIGNED at the same offset and length"
         );
     }
 
