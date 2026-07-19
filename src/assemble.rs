@@ -272,6 +272,7 @@ struct Assembler {
     symbol_order: BTreeMap<String, usize>,
     next_symbol_order: usize,
     section_bases: Vec<u64>,
+    expected_section_layout: Vec<SectionLayoutFingerprint>,
     /// Symbol attributes declared via directives.
     symbol_attrs: BTreeMap<String, SymbolAttrs>,
     /// Unresolved fixups captured during emission.
@@ -284,6 +285,27 @@ struct Assembler {
     active_cfi_proc: Option<CfiProcState>,
     compact_unwind_rows: Vec<CompactUnwindRow>,
     eh_frame_rows: Vec<EhFrameRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SectionLayoutFingerprint {
+    segment: String,
+    name: String,
+    kind: SectionKind,
+    align_pow2: u32,
+    size: u64,
+}
+
+impl From<&Section> for SectionLayoutFingerprint {
+    fn from(section: &Section) -> Self {
+        Self {
+            segment: section.segment.clone(),
+            name: section.name.clone(),
+            kind: section.kind.clone(),
+            align_pow2: section.align_pow2,
+            size: section.size,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -598,6 +620,7 @@ impl Assembler {
             symbol_order: BTreeMap::from([(String::from("ltmp0"), 0)]),
             next_symbol_order: 1,
             section_bases: Vec::new(),
+            expected_section_layout: Vec::new(),
             symbol_attrs: BTreeMap::new(),
             fixups: Vec::new(),
             pending_relocs: vec![Vec::new()],
@@ -669,6 +692,11 @@ impl Assembler {
                 return Err(error);
             }
         };
+        self.expected_section_layout = self
+            .sections
+            .iter()
+            .map(SectionLayoutFingerprint::from)
+            .collect();
         let assignment_results = expr::resolve_absolute_assignments(
             &self.absolute_assignments,
             &self.label_values_for_expr(),
@@ -2309,7 +2337,12 @@ impl Assembler {
         self.materialize_eh_frame_section()?;
 
         let section_bases = self.section_base_addresses()?;
-        if section_bases != self.section_bases {
+        let section_layout: Vec<_> = self
+            .sections
+            .iter()
+            .map(SectionLayoutFingerprint::from)
+            .collect();
+        if section_bases != self.section_bases || section_layout != self.expected_section_layout {
             return Err(AsmError(
                 "section layout changed between assembly passes".into(),
             ));
@@ -4692,6 +4725,32 @@ mod tests {
         write_macho(&obj, &mut buf).unwrap();
         let written_names = file_symbol_names(&buf);
         assert_eq!(written_names, names, "written symbols: {:?}", written_names);
+    }
+
+    #[test]
+    fn finish_rejects_generated_section_size_drift() {
+        let stmts = parse::parse_with_locations(
+            ".text\n\
+             _f:\n\
+             .cfi_startproc\n\
+             ret\n\
+             .cfi_restore w29\n\
+             .cfi_endproc\n",
+        )
+        .unwrap();
+        let mut asm = Assembler::new();
+        asm.collect_layout(&stmts).unwrap();
+        asm.prepare_unwind_layout().unwrap();
+        asm.prepare_expression_state(&stmts).unwrap();
+        asm.reset_for_emission();
+        asm.process(&stmts).unwrap();
+        asm.resolve_fixups().unwrap();
+
+        asm.eh_frame_rows[0].instructions.push(0);
+        let error = asm
+            .finish()
+            .expect_err("generated section size drift unexpectedly passed");
+        assert_eq!(error.msg, "section layout changed between assembly passes");
     }
 
     #[test]
