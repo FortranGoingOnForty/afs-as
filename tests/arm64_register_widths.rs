@@ -1,3 +1,4 @@
+use afs_as::assemble::assemble_source;
 use afs_as::encode::Inst;
 use afs_as::parse::{parse, Stmt};
 
@@ -21,6 +22,16 @@ fn assert_rejected(source: &str, expected: &str) {
         Ok(_) => panic!("source unexpectedly parsed: {source}"),
         Err(error) => error.to_string(),
     };
+    assert!(
+        error.contains(expected),
+        "source: {source}; expected {expected:?}; error: {error}"
+    );
+}
+
+fn assert_assembly_rejected(source: &str, expected: &str) {
+    let error = assemble_source(source)
+        .expect_err("source unexpectedly assembled")
+        .to_string();
     assert!(
         error.contains(expected),
         "source: {source}; expected {expected:?}; error: {error}"
@@ -183,6 +194,86 @@ fn leading_zero_register_spellings_are_rejected() {
         "ld1.s { v01 }[0], [x0]",
     ] {
         assert_rejected(source, "register");
+    }
+}
+
+#[test]
+fn extended_add_sub_sources_follow_instruction_width() {
+    let operations = [
+        ("add w0, w1", "add x0, x1", false),
+        ("sub w0, w1", "sub x0, x1", false),
+        ("adds w0, w1", "adds x0, x1", true),
+        ("subs w0, w1", "subs x0, x1", true),
+        ("cmp w1", "cmp x1", true),
+        ("cmn w1", "cmn x1", true),
+    ];
+    let extensions = [
+        ("uxtb", false),
+        ("uxth", false),
+        ("uxtw", false),
+        ("uxtx", true),
+        ("sxtb", false),
+        ("sxth", false),
+        ("sxtw", false),
+        ("sxtx", true),
+    ];
+
+    for (op32, op64, sets_flags) in operations {
+        for (extension, uses_x_in_64_bit_form) in extensions {
+            parse_inst(&format!("{op32}, w2, {extension}"));
+            assert_rejected(&format!("{op32}, x2, {extension}"), "register operand");
+
+            if uses_x_in_64_bit_form && sets_flags {
+                let with_w = parse_inst(&format!("{op64}, w2, {extension}"));
+                let with_x = parse_inst(&format!("{op64}, x2, {extension}"));
+                assert_eq!(with_w.encode(), with_x.encode());
+            } else {
+                let (valid64, invalid64) = if uses_x_in_64_bit_form {
+                    ("x2", "w2")
+                } else {
+                    ("w2", "x2")
+                };
+                parse_inst(&format!("{op64}, {valid64}, {extension}"));
+                assert_rejected(
+                    &format!("{op64}, {invalid64}, {extension}"),
+                    "register operand",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn canonical_register_names_cannot_be_shadowed_as_branch_offsets() {
+    for register in [
+        "x0", "w0", "sp", "wsp", "xzr", "wzr", "x31", "w31", "b0", "h0", "s0", "d0", "q0", "v0",
+    ] {
+        let source = format!(".set {register}, 4\nb {register}");
+        assert_assembly_rejected(&source, "architectural register");
+    }
+}
+
+#[test]
+fn canonical_register_labels_are_not_branch_operands() {
+    for register in ["x0", "w0", "d0", "s0", "q0", "v0"] {
+        let source = format!("{register}:\nnop\nb {register}");
+        assert_assembly_rejected(&source, "architectural register");
+    }
+}
+
+#[test]
+fn noncanonical_register_shaped_symbols_remain_branch_offsets() {
+    let expected = assemble_source("b #4").unwrap().text_section().data.clone();
+    for symbol in ["x01", "w01", "d01", "v01"] {
+        let source = format!(".set {symbol}, 4\nb {symbol}");
+        assert_eq!(
+            assemble_source(&source).unwrap().text_section().data,
+            expected,
+            "source: {source}"
+        );
+
+        let source = format!("{symbol}:\nnop\nb {symbol}");
+        assemble_source(&source).unwrap();
     }
 }
 

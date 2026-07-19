@@ -1217,7 +1217,16 @@ impl<'a> Parser<'a> {
         if let Some(symbol) = self.parse_numeric_label_ref()? {
             Ok(symbol)
         } else {
-            self.expect_ident()
+            let start = self.pos;
+            let symbol = self.expect_ident()?;
+            if is_canonical_register_name(&symbol) {
+                Err(self.err_at(
+                    start,
+                    format!("expected label, got architectural register '{}'", symbol),
+                ))
+            } else {
+                Ok(symbol)
+            }
         }
     }
 
@@ -2149,7 +2158,7 @@ impl<'a> Parser<'a> {
             let rm_start = self.pos;
             let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
             let rm_meta = GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start);
-            let modifier = self.parse_optional_add_sub_modifier(sf, rm_meta)?;
+            let modifier = self.parse_optional_add_sub_modifier(sf, sets_flags, rm_meta)?;
             let modifier = self.normalize_add_sub_register_modifier(
                 rd_meta, rn_meta, rm_meta, sets_flags, modifier,
             )?;
@@ -2259,7 +2268,7 @@ impl<'a> Parser<'a> {
             let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
             let rn_meta = GpOperandMeta::new(sf, rn_kind, rn_start);
             let rm_meta = GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start);
-            let modifier = self.parse_optional_add_sub_modifier(sf, rm_meta)?;
+            let modifier = self.parse_optional_add_sub_modifier(sf, true, rm_meta)?;
             let modifier = self.normalize_add_sub_register_modifier(
                 GpOperandMeta::new(sf, GpRegKind::Zr, rn_start),
                 rn_meta,
@@ -2305,7 +2314,7 @@ impl<'a> Parser<'a> {
         let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         let rn_meta = GpOperandMeta::new(sf, rn_kind, rn_start);
         let rm_meta = GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start);
-        let modifier = self.parse_optional_add_sub_modifier(sf, rm_meta)?;
+        let modifier = self.parse_optional_add_sub_modifier(sf, true, rm_meta)?;
         let modifier = self.normalize_add_sub_register_modifier(
             GpOperandMeta::new(sf, GpRegKind::Zr, rn_start),
             rn_meta,
@@ -2380,6 +2389,7 @@ impl<'a> Parser<'a> {
         }
         let modifier = self.parse_optional_add_sub_modifier(
             sf,
+            false,
             GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start),
         )?;
         if !matches!(modifier, Some(AddSubModifier::Extend(..))) && rm_is_64bit != sf {
@@ -5442,6 +5452,7 @@ impl<'a> Parser<'a> {
     fn parse_optional_add_sub_modifier(
         &mut self,
         sf: bool,
+        sets_flags: bool,
         rm: GpOperandMeta,
     ) -> Result<Option<AddSubModifier>, ParseError> {
         if !self.eat(&Tok::Comma) {
@@ -5468,79 +5479,33 @@ impl<'a> Parser<'a> {
                 Ok(Some(AddSubModifier::Shift(shift, amount as u8)))
             }
             "uxtb" | "uxth" | "uxtw" | "uxtx" | "sxtb" | "sxth" | "sxtw" | "sxtx" => {
+                let x_extension = matches!(name.as_str(), "uxtx" | "sxtx");
+                // LLVM accepts Wm or Xm for UXTX/SXTX only in 64-bit flag-setting forms.
+                let valid_width = match (sf, sets_flags, x_extension) {
+                    (_, _, false) | (false, _, true) => !rm.is_64bit,
+                    (true, false, true) => rm.is_64bit,
+                    (true, true, true) => true,
+                };
+                if !valid_width {
+                    let requires_64bit = sf && x_extension;
+                    return Err(self.err_at(
+                        rm.start,
+                        format!(
+                            "{} add/sub extensions require a {}-register operand",
+                            name,
+                            if requires_64bit { "x" } else { "w" }
+                        ),
+                    ));
+                }
                 let extend = match name.as_str() {
-                    "uxtb" => {
-                        if rm.is_64bit {
-                            return Err(self.err_at(
-                                rm.start,
-                                "uxtb add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Uxtb
-                    }
-                    "uxth" => {
-                        if rm.is_64bit {
-                            return Err(self.err_at(
-                                rm.start,
-                                "uxth add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Uxth
-                    }
-                    "uxtw" => {
-                        if rm.is_64bit {
-                            return Err(self.err_at(
-                                rm.start,
-                                "uxtw add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Uxtw
-                    }
-                    "uxtx" => {
-                        if !rm.is_64bit {
-                            return Err(self.err_at(
-                                rm.start,
-                                "uxtx add/sub extensions require an x-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Uxtx
-                    }
-                    "sxtb" => {
-                        if rm.is_64bit {
-                            return Err(self.err_at(
-                                rm.start,
-                                "sxtb add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Sxtb
-                    }
-                    "sxth" => {
-                        if rm.is_64bit {
-                            return Err(self.err_at(
-                                rm.start,
-                                "sxth add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Sxth
-                    }
-                    "sxtw" => {
-                        if rm.is_64bit {
-                            return Err(self.err_at(
-                                rm.start,
-                                "sxtw add/sub extensions require a w-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Sxtw
-                    }
-                    "sxtx" => {
-                        if !rm.is_64bit {
-                            return Err(self.err_at(
-                                rm.start,
-                                "sxtx add/sub extensions require an x-register operand".into(),
-                            ));
-                        }
-                        RegExtend::Sxtx
-                    }
+                    "uxtb" => RegExtend::Uxtb,
+                    "uxth" => RegExtend::Uxth,
+                    "uxtw" => RegExtend::Uxtw,
+                    "uxtx" => RegExtend::Uxtx,
+                    "sxtb" => RegExtend::Sxtb,
+                    "sxth" => RegExtend::Sxth,
+                    "sxtw" => RegExtend::Sxtw,
+                    "sxtx" => RegExtend::Sxtx,
                     _ => unreachable!(),
                 };
                 let amount = if self.starts_immediate_expr() {
@@ -5765,7 +5730,7 @@ impl<'a> Parser<'a> {
         matches!(
             self.peek(),
             Tok::Ident(name)
-                if classify_gp_reg_name(&name.to_lowercase()).is_none()
+                if !is_canonical_register_name(name)
                     && self.absolute_symbols.contains_key(name)
         )
     }
@@ -5921,6 +5886,13 @@ fn parse_simd_reg_name(name: &str) -> Option<FpReg> {
 
 fn looks_like_fp_register_name(name: &str) -> bool {
     parse_fp_reg_name(name).is_some()
+}
+
+fn is_canonical_register_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    classify_gp_reg_name(&lower).is_some()
+        || parse_fp_reg_name(&lower).is_some()
+        || parse_simd_reg_name(&lower).is_some()
 }
 
 fn parse_canonical_register_number(suffix: &str) -> Option<u8> {
@@ -6278,18 +6250,9 @@ mod tests {
             ("add wzr, wsp, w1", "require a register or sp destination"),
             ("adds wsp, w1, w2", "do not allow an sp destination"),
             ("add wsp, x1, w2", "involving sp must have matching widths"),
-            (
-                "add w0, wsp, x1, uxtx",
-                "involving sp must have matching widths",
-            ),
-            (
-                "add wsp, w1, x2, sxtx",
-                "involving sp must have matching widths",
-            ),
-            (
-                "cmp wsp, x1, uxtx",
-                "involving sp must have matching widths",
-            ),
+            ("add w0, wsp, x1, uxtx", "require a w-register operand"),
+            ("add wsp, w1, x2, sxtx", "require a w-register operand"),
+            ("cmp wsp, x1, uxtx", "require a w-register operand"),
             ("neg sp, x1", "neg does not allow sp"),
             ("neg x0, sp", "neg does not allow sp"),
             ("neg wsp, w1", "neg does not allow sp"),

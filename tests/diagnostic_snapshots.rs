@@ -468,6 +468,11 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "ld1.s { v32 }[0], [x0]",
             "<input>:2:9: error: expected vector register, got 'v32'\nld1.s { v32 }[0], [x0]\n        ^\n",
         ),
+        (
+            "architectural-register-branch-target.s",
+            "b d0",
+            "<input>:2:3: error: expected label, got architectural register 'd0'\nb d0\n  ^\n",
+        ),
     ] {
         run_failure_snapshot(name, &format!(".text\n{}\n", instruction), expected);
     }
