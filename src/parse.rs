@@ -1643,12 +1643,6 @@ impl<'a> Parser<'a> {
 
     // ---- Register parsing helpers ----
 
-    fn parse_gp_reg(&mut self) -> Result<GpReg, ParseError> {
-        let name = self.expect_ident()?;
-        parse_gp_reg_name(&name)
-            .ok_or_else(|| self.err(format!("expected GP register, got '{}'", name)))
-    }
-
     fn parse_gp_reg_with_required_width(
         &mut self,
         required_64bit: bool,
@@ -4998,10 +4992,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_fcvtzs(&mut self) -> Result<Inst, ParseError> {
-        let rd = self.parse_gp_reg()?;
+        let (rd, dst_64bit) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
-        Ok(Inst::FcvtzsD { rd, rn })
+        let (rn, src_double) = self.parse_fp_reg_with_size()?;
+        Ok(Inst::Fcvtzs {
+            rd,
+            rn,
+            dst_64bit,
+            src_double,
+        })
     }
 
     fn parse_fcvt(&mut self) -> Result<Inst, ParseError> {
@@ -5016,10 +5015,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_scvtf(&mut self) -> Result<Inst, ParseError> {
-        let (rd, _) = self.parse_fp_reg_with_size()?;
+        let (rd, dst_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let rn = self.parse_gp_reg()?;
-        Ok(Inst::ScvtfD { rd, rn })
+        let (rn, src_64bit) = self.parse_gp_reg_with_size()?;
+        Ok(Inst::Scvtf {
+            rd,
+            rn,
+            dst_double,
+            src_64bit,
+        })
     }
 
     fn parse_fmov(&mut self) -> Result<Inst, ParseError> {
@@ -10478,7 +10482,12 @@ mod tests {
     fn parse_fcvtzs_() {
         assert_eq!(
             parse_inst("fcvtzs x0, d1"),
-            Inst::FcvtzsD { rd: X0, rn: D1 }
+            Inst::Fcvtzs {
+                rd: X0,
+                rn: D1,
+                dst_64bit: true,
+                src_double: true,
+            }
         );
     }
 
@@ -10507,7 +10516,15 @@ mod tests {
 
     #[test]
     fn parse_scvtf_() {
-        assert_eq!(parse_inst("scvtf d0, x1"), Inst::ScvtfD { rd: D0, rn: X1 });
+        assert_eq!(
+            parse_inst("scvtf d0, x1"),
+            Inst::Scvtf {
+                rd: D0,
+                rn: X1,
+                dst_double: true,
+                src_64bit: true,
+            }
+        );
     }
 
     #[test]

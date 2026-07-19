@@ -5068,14 +5068,30 @@ fn sys_fcvtzs() {
     if !native_macho_host("verify_against_system_as", "sys_fcvtzs") {
         return;
     }
-    verify("fcvtzs x5, d6", Inst::FcvtzsD { rd: X5, rn: D6 });
+    verify(
+        "fcvtzs x5, d6",
+        Inst::Fcvtzs {
+            rd: X5,
+            rn: D6,
+            dst_64bit: true,
+            src_double: true,
+        },
+    );
 }
 #[test]
 fn sys_scvtf() {
     if !native_macho_host("verify_against_system_as", "sys_scvtf") {
         return;
     }
-    verify("scvtf d5, x6", Inst::ScvtfD { rd: D5, rn: X6 });
+    verify(
+        "scvtf d5, x6",
+        Inst::Scvtf {
+            rd: D5,
+            rn: X6,
+            dst_double: true,
+            src_64bit: true,
+        },
+    );
 }
 #[test]
 fn sys_fmov_to() {

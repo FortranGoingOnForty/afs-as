@@ -1640,13 +1640,23 @@ pub enum Inst {
 
     // ---- FP / integer conversion ----
     /// FCVTZS Xd, Dn  (double -> signed 64-bit int, truncate toward zero)
-    FcvtzsD { rd: GpReg, rn: FpReg },
+    Fcvtzs {
+        rd: GpReg,
+        rn: FpReg,
+        dst_64bit: bool,
+        src_double: bool,
+    },
     /// FCVT Dd, Sn  (single -> double)
     FcvtDFromS { rd: FpReg, rn: FpReg },
     /// FCVT Sd, Dn  (double -> single)
     FcvtSFromD { rd: FpReg, rn: FpReg },
     /// SCVTF Dd, Xn  (signed 64-bit int -> double)
-    ScvtfD { rd: FpReg, rn: GpReg },
+    Scvtf {
+        rd: FpReg,
+        rn: GpReg,
+        dst_double: bool,
+        src_64bit: bool,
+    },
     /// FMOV Dd, Xn  (move bits GP -> FP, no conversion)
     FmovToD { rd: FpReg, rn: GpReg },
     /// FMOV Sd, Wn  (move bits GP -> FP, no conversion)
@@ -2945,13 +2955,31 @@ impl Inst {
             Inst::FmaddS { rd, rn, rm, ra } => fp_madd(0b00, *rd, *rn, *rm, *ra),
 
             // ---- FP / integer conversion ----
-            Inst::FcvtzsD { rd, rn } => {
-                (0b1_00_11110_01_1 << 21) | (0b11_000 << 16) | (rn.enc() << 5) | rd.enc()
+            Inst::Fcvtzs {
+                rd,
+                rn,
+                dst_64bit,
+                src_double,
+            } => {
+                0x1E38_0000
+                    | ((*dst_64bit as u32) << 31)
+                    | ((*src_double as u32) << 22)
+                    | (rn.enc() << 5)
+                    | rd.enc()
             }
             Inst::FcvtDFromS { rd, rn } => 0x1E22C000 | (rn.enc() << 5) | rd.enc(),
             Inst::FcvtSFromD { rd, rn } => 0x1E624000 | (rn.enc() << 5) | rd.enc(),
-            Inst::ScvtfD { rd, rn } => {
-                (0b1_00_11110_01_1 << 21) | (0b00_010 << 16) | (rn.enc() << 5) | rd.enc()
+            Inst::Scvtf {
+                rd,
+                rn,
+                dst_double,
+                src_64bit,
+            } => {
+                0x1E22_0000
+                    | ((*src_64bit as u32) << 31)
+                    | ((*dst_double as u32) << 22)
+                    | (rn.enc() << 5)
+                    | rd.enc()
             }
             Inst::FmovToD { rd, rn } => {
                 (0b1_00_11110_01_1 << 21) | (0b00_111 << 16) | (rn.enc() << 5) | rd.enc()
@@ -8608,7 +8636,16 @@ mod tests {
 
     #[test]
     fn fcvtzs_x0_d1() {
-        assert_eq!(Inst::FcvtzsD { rd: X0, rn: D1 }.encode(), 0x9E780020);
+        assert_eq!(
+            Inst::Fcvtzs {
+                rd: X0,
+                rn: D1,
+                dst_64bit: true,
+                src_double: true,
+            }
+            .encode(),
+            0x9E780020
+        );
     }
     #[test]
     fn fcvt_d8_s9() {
@@ -8620,7 +8657,16 @@ mod tests {
     }
     #[test]
     fn scvtf_d0_x1() {
-        assert_eq!(Inst::ScvtfD { rd: D0, rn: X1 }.encode(), 0x9E620020);
+        assert_eq!(
+            Inst::Scvtf {
+                rd: D0,
+                rn: X1,
+                dst_double: true,
+                src_64bit: true,
+            }
+            .encode(),
+            0x9E620020
+        );
     }
     #[test]
     fn fmov_d0_x1() {
