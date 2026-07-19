@@ -390,7 +390,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             let mut pos: u64 = 0;
             for (i, item) in sb.items.iter().enumerate() {
                 offsets.push(pos);
-                pos += match item {
+                let size = match item {
                     Item::Bytes(b, _) => b.len() as u64,
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
@@ -401,9 +401,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             branch_len(*kind, true)
                         }
                     }
-                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip),
+                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip)?,
                     Item::SizeDot(_) => 0,
                 };
+                pos = checked_layout_add(pos, size)?;
             }
             offsets.push(pos);
             // Grow any short branch whose displacement overflows i8.
@@ -415,8 +416,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     }
                     let target_item = sb.labels[label];
                     let target_off = offsets[target_item];
-                    let end = offsets[i] + branch_len(*kind, false);
-                    let disp = target_off as i64 - end as i64;
+                    let end = checked_layout_add(offsets[i], branch_len(*kind, false))?;
+                    let disp = i128::from(target_off) - i128::from(end);
                     if i8::try_from(disp).is_err() {
                         long[i] = true;
                         grew = true;
@@ -437,7 +438,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             let mut pos = 0u64;
             for (i, item) in sb.items.iter().enumerate() {
                 item_offsets.push(pos);
-                pos += match item {
+                let size = match item {
                     Item::Bytes(b, _) => b.len() as u64,
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
@@ -448,9 +449,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             branch_len(*kind, true)
                         }
                     }
-                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip),
+                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip)?,
                     Item::SizeDot(_) => 0,
                 };
+                pos = checked_layout_add(pos, size)?;
             }
             item_offsets.push(pos);
         }
@@ -480,7 +482,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     if !is_bss {
                         bytes.extend_from_slice(b);
                     }
-                    pos += b.len() as u64;
+                    pos = checked_layout_add(pos, b.len() as u64)?;
                 }
                 Item::Zero(n) => {
                     if !is_bss {
@@ -492,7 +494,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             .ok_or_else(|| err(0, format!("zero fill too large: {}", n)))?;
                         bytes.resize(new_len, 0);
                     }
-                    pos += *n;
+                    pos = checked_layout_add(pos, *n)?;
                 }
                 Item::Fill { size, byte } => {
                     if !is_bss {
@@ -504,7 +506,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             .ok_or_else(|| err(0, format!("space fill too large: {}", size)))?;
                         bytes.resize(new_len, *byte);
                     }
-                    pos += *size;
+                    pos = checked_layout_add(pos, *size)?;
                 }
                 Item::Branch { kind, label } => {
                     if is_local_branch(label) {
@@ -516,15 +518,22 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                                 BranchKind::Jmp => (5u64, vec![0xe9]),
                                 BranchKind::Jcc(cc) => (6u64, vec![0x0f, 0x80 + cc]),
                             };
-                            let disp = target as i64 - (here + len) as i64;
+                            let end = checked_layout_add(here, len)?;
+                            let disp = i128::from(target) - i128::from(end);
+                            let encoded = i32::try_from(disp).map_err(|_| {
+                                err(0, format!("branch displacement to '{}' exceeds i32", label))
+                            })?;
                             if !is_bss {
                                 bytes.append(&mut head);
-                                bytes.extend_from_slice(&(disp as i32).to_le_bytes());
+                                bytes.extend_from_slice(&encoded.to_le_bytes());
                             }
-                            pos += len;
+                            pos = end;
                         } else {
-                            let disp = target as i64 - (here + 2) as i64;
-                            let d8 = i8::try_from(disp).expect("relaxation fixed-point violated");
+                            let end = checked_layout_add(here, 2)?;
+                            let disp = i128::from(target) - i128::from(end);
+                            let d8 = i8::try_from(disp).map_err(|_| {
+                                err(0, "relaxed branch displacement exceeds i8".into())
+                            })?;
                             if !is_bss {
                                 match kind {
                                     BranchKind::Jmp => bytes.extend_from_slice(&[0xeb, d8 as u8]),
@@ -533,15 +542,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                                     }
                                 }
                             }
-                            pos += 2;
+                            pos = end;
                         }
                     } else {
                         let (head, disp_offset): (&[u8], u64) = match kind {
                             BranchKind::Jmp => (&[0xe9], 1),
                             BranchKind::Jcc(cc) => (&[0x0f, 0x80 + cc], 2),
                         };
+                        let relocation_pos = checked_layout_add(pos, disp_offset)?;
                         relocs.push(InsnReloc {
-                            offset: reloc_offset(pos + disp_offset)?,
+                            offset: reloc_offset(relocation_pos)?,
                             sym: label.clone(),
                             r_type: R_X86_64_PLT32,
                             addend: -4,
@@ -550,7 +560,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             bytes.extend_from_slice(head);
                             bytes.extend_from_slice(&0i32.to_le_bytes());
                         }
-                        pos += head.len() as u64 + 4;
+                        pos = checked_layout_add(pos, head.len() as u64 + 4)?;
                     }
                 }
                 Item::Align {
@@ -558,20 +568,24 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     fill,
                     max_skip,
                 } => {
-                    let pad = align_pad(pos, *pow, *max_skip);
+                    let pad = align_pad(pos, *pow, *max_skip)?;
+                    let end = checked_layout_add(pos, pad)?;
                     if !is_bss {
                         let len = usize::try_from(pad)
                             .map_err(|_| err(0, format!("alignment fill too large: {}", pad)))?;
                         let here = bytes.len();
+                        let end = here
+                            .checked_add(len)
+                            .ok_or_else(|| err(0, format!("alignment fill too large: {}", pad)))?;
                         if let Some(byte) = fill {
-                            bytes.resize(here + len, *byte);
+                            bytes.resize(end, *byte);
                         } else if is_text {
                             fill_nops(&mut bytes, len);
                         } else {
-                            bytes.resize(here + len, 0);
+                            bytes.resize(end, 0);
                         }
                     }
-                    pos += pad;
+                    pos = end;
                 }
                 Item::SizeDot(sym) => {
                     size_dot.insert(sym.clone(), pos);
@@ -645,11 +659,14 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             obj.sections.push(Section::bss());
             model_sec_index.insert(".bss".into(), obj.sections.len() - 1);
         }
-        for (sym, size, align, _) in &commons {
+        for (sym, size, align, line) in &commons {
             if syminfo.get(sym).is_some_and(|i| i.local) {
                 let bss = &mut obj.sections[model_sec_index[".bss"]];
-                let off = bss.nobits_size.next_multiple_of((*align).max(1));
-                bss.nobits_size = off + size;
+                let off = checked_align_up(bss.nobits_size, (*align).max(1))
+                    .ok_or_else(|| err(*line, "local COMMON alignment overflows u64".into()))?;
+                bss.nobits_size = off
+                    .checked_add(*size)
+                    .ok_or_else(|| err(*line, "local COMMON size overflows u64".into()))?;
                 bss.sh_addralign = bss.sh_addralign.max(*align);
                 local_bss.insert(sym.clone(), (off, *size));
             }
@@ -839,7 +856,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     let pc_rel = r.r_type == R_X86_64_PC32 || r.r_type == R_X86_64_PLT32;
                     if pc_rel && tmodel == sec_idx {
                         // Same-section local PC-rel: patch in place.
-                        let disp = off as i64 + r.addend - r.offset as i64;
+                        let disp = i128::from(off) + i128::from(r.addend) - i128::from(r.offset);
                         let d = i32::try_from(disp).map_err(|_| {
                             err(0, format!("displacement to '{}' overflows i32", r.sym))
                         })?;
@@ -874,7 +891,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     } else {
                         r.r_type
                     };
-                    (ss, rt, r.addend + off as i64)
+                    // ELF64 RELA addends are signed, but relocation arithmetic
+                    // preserves the section offset modulo 2^64. GNU as emits
+                    // the same two's-complement representation above i64::MAX.
+                    (ss, rt, (off as i64).wrapping_add(r.addend))
                 }
                 Some((_, _, false)) => {
                     let sym_idx = model_sym_index.get(&r.sym).copied().ok_or_else(|| {
@@ -919,21 +939,46 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     Ok(obj)
 }
 
+fn checked_layout_add(pos: u64, size: u64) -> Result<u64, AsmX86Error> {
+    pos.checked_add(size).ok_or_else(|| AsmX86Error {
+        line: 0,
+        msg: "section layout size overflows u64".into(),
+    })
+}
+
+fn checked_align_up(value: u64, alignment: u64) -> Option<u64> {
+    let remainder = value % alignment;
+    if remainder == 0 {
+        Some(value)
+    } else {
+        value.checked_add(alignment - remainder)
+    }
+}
+
+/// Padding a `.p2align pow` inserts at `pos`, honoring a `.p2align N,,M`
+/// max-skip: gas emits no padding at all when it would exceed `max_skip`.
+fn align_pad(pos: u64, pow: u32, max_skip: Option<u64>) -> Result<u64, AsmX86Error> {
+    let alignment = 1u64.checked_shl(pow).ok_or_else(|| AsmX86Error {
+        line: 0,
+        msg: "section alignment exceeds u64".into(),
+    })?;
+    let remainder = pos & (alignment - 1);
+    let pad = if remainder == 0 {
+        0
+    } else {
+        alignment - remainder
+    };
+    Ok(if max_skip.is_some_and(|m| pad > m) {
+        0
+    } else {
+        pad
+    })
+}
+
 /// gas-style multi-byte NOP fill for text alignment. Single NOPs run
 /// up to 11 bytes (66/2e-prefixed nopw forms), longer fills go
 /// longest-first. Table measured from gas 2.44 output for every fill
 /// size 1..=15.
-/// Padding a `.p2align pow` inserts at `pos`, honoring a `.p2align N,,M`
-/// max-skip: gas emits no padding at all when it would exceed `max_skip`.
-fn align_pad(pos: u64, pow: u32, max_skip: Option<u64>) -> u64 {
-    let pad = pos.next_multiple_of(1u64 << pow) - pos;
-    if max_skip.is_some_and(|m| pad > m) {
-        0
-    } else {
-        pad
-    }
-}
-
 fn fill_nops(out: &mut Vec<u8>, mut n: usize) {
     const NOPS: [&[u8]; 11] = [
         &[0x90],
