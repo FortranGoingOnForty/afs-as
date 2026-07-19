@@ -867,14 +867,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cfi_register(&mut self) -> Result<GpReg, ParseError> {
-        let start = self.pos;
-        let (register, _, kind) = self.parse_gp_reg_with_size_kind()?;
-        if matches!(kind, GpRegKind::Zr) {
-            return Err(self.err_at(
-                start,
-                "CFI directives do not accept the zero register".into(),
-            ));
-        }
+        let (register, _, _) = self.parse_gp_reg_with_size_kind()?;
         Ok(register)
     }
 
@@ -1731,9 +1724,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_gp_reg_with_size_kind(&mut self) -> Result<(GpReg, bool, GpRegKind), ParseError> {
+        let start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
-        self.gp_reg_with_size_kind_from_name(&name, &lower)
+        self.gp_reg_with_size_kind_from_name(&name, &lower, start)
     }
 
     fn parse_add_sub_gp_reg_with_size_kind(
@@ -1746,24 +1740,16 @@ impl<'a> Parser<'a> {
         &self,
         name: &str,
         lower: &str,
+        start: usize,
     ) -> Result<(GpReg, bool, GpRegKind), ParseError> {
-        match lower {
-            "sp" => return Ok((SP, true, GpRegKind::Sp)),
-            "wsp" => return Ok((SP, false, GpRegKind::Sp)),
-            "xzr" => return Ok((XZR, true, GpRegKind::Zr)),
-            "wzr" => return Ok((WZR, false, GpRegKind::Zr)),
-            _ => {}
+        if let Some(register) = classify_gp_reg_name(lower) {
+            return Ok(register);
         }
-        if lower.starts_with('x') {
-            let reg = parse_gp_reg_name(lower)
-                .ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
-            Ok((reg, true, GpRegKind::Reg))
-        } else if lower.starts_with('w') {
-            let reg = parse_gp_reg_name(lower)
-                .ok_or_else(|| self.err(format!("bad register '{}'", name)))?;
-            Ok((reg, false, GpRegKind::Reg))
+
+        if lower.starts_with('x') || lower.starts_with('w') {
+            Err(self.err_at(start, format!("bad register '{}'", name)))
         } else {
-            Err(self.err(format!("expected GP register, got '{}'", name)))
+            Err(self.err_at(start, format!("expected GP register, got '{}'", name)))
         }
     }
 
@@ -5218,7 +5204,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             // FMOV Xd, Dn or FMOV Wd, Sn (FP → GP)
-            let (rd, sf, kind) = self.gp_reg_with_size_kind_from_name(&name, &lower)?;
+            let (rd, sf, kind) = self.gp_reg_with_size_kind_from_name(&name, &lower, rd_start)?;
             if kind == GpRegKind::Sp {
                 return Err(self.err_at(rd_start, "fmov does not allow SP".into()));
             }
@@ -5246,7 +5232,7 @@ impl<'a> Parser<'a> {
 
     fn peek_is_gp_reg(&self) -> bool {
         match self.peek() {
-            Tok::Ident(name) => parse_gp_reg_name(&name.to_lowercase()).is_some(),
+            Tok::Ident(name) => classify_gp_reg_name(&name.to_lowercase()).is_some(),
             _ => false,
         }
     }
@@ -5864,25 +5850,24 @@ fn decimal_width(mut value: u32) -> u32 {
     width
 }
 
-fn parse_gp_reg_name(name: &str) -> Option<GpReg> {
-    let lower = name.to_lowercase();
-    match lower.as_str() {
-        "sp" => Some(SP),
-        "xzr" | "wzr" => Some(XZR),
-        _ => {
-            let (prefix, num_str) = if lower.starts_with('x') || lower.starts_with('w') {
-                (&lower[..1], &lower[1..])
-            } else {
-                return None;
-            };
-            let num: u8 = num_str.parse().ok()?;
-            if num > 30 {
-                return None;
-            }
-            let _ = prefix; // both x and w map to the same encoding
-            Some(GpReg::new(num))
-        }
+fn classify_gp_reg_name(lower: &str) -> Option<(GpReg, bool, GpRegKind)> {
+    match lower {
+        "sp" => return Some((SP, true, GpRegKind::Sp)),
+        "wsp" => return Some((SP, false, GpRegKind::Sp)),
+        "xzr" | "x31" => return Some((XZR, true, GpRegKind::Zr)),
+        "wzr" | "w31" => return Some((WZR, false, GpRegKind::Zr)),
+        _ => {}
     }
+
+    let (is_64bit, num_str) = if let Some(num) = lower.strip_prefix('x') {
+        (true, num)
+    } else if let Some(num) = lower.strip_prefix('w') {
+        (false, num)
+    } else {
+        return None;
+    };
+    let num: u8 = num_str.parse().ok()?;
+    (num <= 30).then(|| (GpReg::new(num), is_64bit, GpRegKind::Reg))
 }
 
 fn looks_like_gp_register_name(name: &str) -> bool {
@@ -11390,15 +11375,31 @@ mod tests {
     }
 
     #[test]
-    fn parse_cfi_def_cfa_with_wsp() {
-        let stmts = parse_stmts(".cfi_def_cfa wsp, 16");
-        assert_eq!(
-            stmts,
-            vec![Stmt::Directive(Directive::CfiDefCfa {
-                register: SP,
-                offset: 16,
-            })]
-        );
+    fn parse_cfi_register_31_spellings() {
+        for spelling in ["sp", "wsp", "xzr", "wzr", "x31", "w31"] {
+            let source = format!(
+                ".cfi_def_cfa {spelling}, 16\n\
+                 .cfi_def_cfa_register {spelling}\n\
+                 .cfi_offset {spelling}, -8\n\
+                 .cfi_restore {spelling}"
+            );
+            assert_eq!(
+                parse_stmts(&source),
+                vec![
+                    Stmt::Directive(Directive::CfiDefCfa {
+                        register: SP,
+                        offset: 16,
+                    }),
+                    Stmt::Directive(Directive::CfiDefCfaRegister(SP)),
+                    Stmt::Directive(Directive::CfiOffset {
+                        register: SP,
+                        offset: -8,
+                    }),
+                    Stmt::Directive(Directive::CfiRestore(SP)),
+                ],
+                "spelling: {spelling}"
+            );
+        }
     }
 
     #[test]

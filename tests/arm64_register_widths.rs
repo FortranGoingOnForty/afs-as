@@ -94,6 +94,40 @@ fn stack_pointer_move_aliases_reject_unrepresentable_operands() {
 }
 
 #[test]
+fn numeric_zero_register_aliases_match_canonical_spellings() {
+    for (alias, canonical) in [
+        ("and x0, x1, x31", "and x0, x1, xzr"),
+        ("and w0, w1, w31", "and w0, w1, wzr"),
+        ("br x31", "br xzr"),
+        ("ldr x31, [x0]", "ldr xzr, [x0]"),
+        ("fmov d0, x31", "fmov d0, xzr"),
+        ("fcvtzs x31, d0", "fcvtzs xzr, d0"),
+        ("mov.s w31, v0[0]", "mov.s wzr, v0[0]"),
+        ("add x0, sp, x31", "add x0, sp, xzr"),
+        ("lsl w0, w1, w31", "lsl w0, w1, wzr"),
+        ("stlr w31, [x0]", "stlr wzr, [x0]"),
+        ("ldr x0, [x1, x31]", "ldr x0, [x1, xzr]"),
+        ("ldp x31, x0, [x1]", "ldp xzr, x0, [x1]"),
+    ] {
+        assert_eq!(
+            parse_inst(alias).encode(),
+            parse_inst(canonical).encode(),
+            "alias: {alias}; canonical: {canonical}"
+        );
+    }
+}
+
+#[test]
+fn stack_pointer_shift_operands_cannot_be_shadowed_as_constants() {
+    for mnemonic in ["lsl", "lsr", "asr"] {
+        for prefix in ["", ".set wsp, 1\n"] {
+            let source = format!("{prefix}{mnemonic} w0, w1, wsp");
+            assert_rejected(&source, "does not allow SP");
+        }
+    }
+}
+
+#[test]
 fn scalar_fp_instruction_families_reject_mismatched_register_widths() {
     for source in [
         "fadd d0, s1, s2",

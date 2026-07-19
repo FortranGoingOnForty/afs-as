@@ -354,6 +354,11 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "<input>:2:9: error: lsl does not allow SP\nlsl w0, wsp, #1\n        ^\n",
         ),
         (
+            "wsp-shift-register.s",
+            "lsl w0, w1, wsp",
+            "<input>:2:13: error: lsl register form does not allow SP\nlsl w0, w1, wsp\n            ^\n",
+        ),
+        (
             "wsp-fmov-source.s",
             "fmov s0, wsp",
             "<input>:2:10: error: fmov does not allow SP\nfmov s0, wsp\n         ^\n",
@@ -392,6 +397,41 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "fmov-fp-source-width.s",
             "fmov x0, s1",
             "<input>:2:10: error: fmov xN, ... requires a d-register source\nfmov x0, s1\n         ^\n",
+        ),
+        (
+            "malformed-add-register.s",
+            "add x0, x32, x2",
+            "<input>:2:9: error: bad register 'x32'\nadd x0, x32, x2\n        ^\n",
+        ),
+        (
+            "malformed-branch-register.s",
+            "br x32",
+            "<input>:2:4: error: bad register 'x32'\nbr x32\n   ^\n",
+        ),
+        (
+            "malformed-memory-register.s",
+            "ldr x0, [x32]",
+            "<input>:2:10: error: bad register 'x32'\nldr x0, [x32]\n         ^\n",
+        ),
+        (
+            "malformed-atomic-register.s",
+            "stlr x32, [x0]",
+            "<input>:2:6: error: bad register 'x32'\nstlr x32, [x0]\n     ^\n",
+        ),
+        (
+            "malformed-conversion-register.s",
+            "fcvtzs x32, d0",
+            "<input>:2:8: error: bad register 'x32'\nfcvtzs x32, d0\n       ^\n",
+        ),
+        (
+            "malformed-move-register.s",
+            "mov x0, x32",
+            "<input>:2:9: error: bad register 'x32'\nmov x0, x32\n        ^\n",
+        ),
+        (
+            "malformed-shift-register.s",
+            "lsl x0, x32, #1",
+            "<input>:2:9: error: bad register 'x32'\nlsl x0, x32, #1\n        ^\n",
         ),
     ] {
         run_failure_snapshot(name, &format!(".text\n{}\n", instruction), expected);
