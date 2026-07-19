@@ -6,7 +6,7 @@
 //!
 //! Also provides the library API for the compiler to call directly.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
@@ -2511,6 +2511,9 @@ impl Assembler {
             });
         }
 
+        let mut known_symbols: HashSet<_> =
+            symbols.iter().map(|symbol| symbol.name.clone()).collect();
+
         // Explicit symbol directives.
         for (name, attrs) in &self.symbol_attrs {
             if let Some(value) = absolute_symbols.get(name) {
@@ -2520,6 +2523,7 @@ impl Assembler {
                         name
                     )));
                 }
+                known_symbols.insert(name.clone());
                 symbols.push(Symbol {
                     name: name.clone(),
                     section: 0,
@@ -2541,6 +2545,7 @@ impl Assembler {
                     )));
                 }
                 let value = section_bases[*section] + offset;
+                known_symbols.insert(name.clone());
                 symbols.push(Symbol {
                     name: name.clone(),
                     section: (*section + 1) as u8,
@@ -2554,7 +2559,7 @@ impl Assembler {
                     weak_ref: false,
                     weak_def: attrs.weak_def,
                 });
-            } else if !symbols.iter().any(|s| s.name == *name) {
+            } else if !known_symbols.contains(name) {
                 if attrs.private_extern {
                     return Err(AsmError(format!(
                         "private extern '{}' must be defined in this object",
@@ -2567,6 +2572,7 @@ impl Assembler {
                         name
                     )));
                 }
+                known_symbols.insert(name.clone());
                 symbols.push(Symbol {
                     name: name.clone(),
                     section: 0,
@@ -2589,16 +2595,14 @@ impl Assembler {
                 let PendingRelocTarget::Symbol(symbol) = &reloc.target else {
                     continue;
                 };
-                if !self.labels.contains_key(symbol)
-                    && !symbols.iter().any(|s| s.name == *symbol)
-                    && !missing_reloc_symbols.iter().any(|name| name == symbol)
-                {
+                if !self.labels.contains_key(symbol) && !known_symbols.contains(symbol) {
                     if is_assembler_local_symbol(symbol) {
                         return Err(AsmError(format!(
                             "local symbol '{}' must be defined in this object",
                             symbol
                         )));
                     }
+                    known_symbols.insert(symbol.clone());
                     missing_reloc_symbols.push(symbol.clone());
                 }
             }
@@ -2912,17 +2916,24 @@ impl Assembler {
             })
         });
 
+        let mut symbol_indices = HashMap::with_capacity(symbols.len());
+        for (index, symbol) in symbols.iter().enumerate() {
+            let index = u32::try_from(index)
+                .map_err(|_| AsmError("Mach-O symbol index exceeds u32".into()))?;
+            symbol_indices.entry(symbol.name.as_str()).or_insert(index);
+        }
+
         let linker_optimization_hints = self.build_linker_optimization_hint_data()?;
 
         for relocs in self.pending_relocs {
             for pending in relocs {
                 let symbol_idx = match pending.target {
-                    PendingRelocTarget::Symbol(symbol) => symbols
-                        .iter()
-                        .position(|s| s.name == symbol)
+                    PendingRelocTarget::Symbol(symbol) => symbol_indices
+                        .get(symbol.as_str())
+                        .copied()
                         .ok_or_else(|| {
                             AsmError(format!("missing relocation symbol '{}'", symbol))
-                        })? as u32,
+                        })?,
                     PendingRelocTarget::Raw(value) => value,
                 };
                 self.sections[pending.section].relocations.push(Relocation {
@@ -2935,6 +2946,7 @@ impl Assembler {
                 });
             }
         }
+        drop(symbol_indices);
 
         Ok(ObjectFile {
             sections: self.sections,
