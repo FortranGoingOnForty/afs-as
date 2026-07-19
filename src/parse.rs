@@ -11285,16 +11285,19 @@ mod tests {
 
     #[test]
     fn parse_equ_directive() {
-        let stmts = parse_stmts(".equ ABS2, ABS1 + 5");
+        let stmts = parse_stmts(".set ABS1, 7\n.equ ABS2, ABS1 + 5");
         assert_eq!(
             stmts,
-            vec![Stmt::Directive(Directive::Set(
-                "ABS2".into(),
-                Expr::Add(
-                    Box::new(Expr::Symbol("ABS1".into())),
-                    Box::new(Expr::Int(5))
-                ),
-            ))]
+            vec![
+                Stmt::Directive(Directive::Set("ABS1".into(), Expr::Int(7))),
+                Stmt::Directive(Directive::Set(
+                    "ABS2".into(),
+                    Expr::Add(
+                        Box::new(Expr::Symbol("ABS1".into())),
+                        Box::new(Expr::Int(5))
+                    ),
+                )),
+            ]
         );
     }
 
