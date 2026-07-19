@@ -238,6 +238,46 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "fadd d0, s1, s2",
             "<input>:2:10: error: fadd requires registers of the same width\nfadd d0, s1, s2\n         ^\n",
         ),
+        (
+            "add-immediate-base-width.s",
+            "add x0, w1, #1",
+            "<input>:2:9: error: add/sub immediate operands must have matching widths\nadd x0, w1, #1\n        ^\n",
+        ),
+        (
+            "add-register-base-width.s",
+            "add x0, w1, x2",
+            "<input>:2:9: error: add/sub requires registers of the same width\nadd x0, w1, x2\n        ^\n",
+        ),
+        (
+            "add-register-source-width.s",
+            "add x0, x1, w2",
+            "<input>:2:13: error: add/sub requires registers of the same width\nadd x0, x1, w2\n            ^\n",
+        ),
+        (
+            "neg-register-width.s",
+            "neg x0, w1",
+            "<input>:2:9: error: neg requires registers of the same width\nneg x0, w1\n        ^\n",
+        ),
+        (
+            "umull-destination-width.s",
+            "umull w0, w1, w2",
+            "<input>:2:7: error: umull destination must be an X register\numull w0, w1, w2\n      ^\n",
+        ),
+        (
+            "ldrsw-destination-width.s",
+            "ldrsw w0, [x1]",
+            "<input>:2:7: error: ldrsw destination must be an x-register\nldrsw w0, [x1]\n      ^\n",
+        ),
+        (
+            "pair-register-width.s",
+            "ldp x0, w1, [x2]",
+            "<input>:2:9: error: ldp/stp register pair must use matching register widths\nldp x0, w1, [x2]\n        ^\n",
+        ),
+        (
+            "register-offset-stack-pointer.s",
+            "ldr x0, [x1, sp]",
+            "<input>:2:14: error: register offset does not allow sp\nldr x0, [x1, sp]\n             ^\n",
+        ),
     ] {
         run_failure_snapshot(name, &format!(".text\n{}\n", instruction), expected);
     }

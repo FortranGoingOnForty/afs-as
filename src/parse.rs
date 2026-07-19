@@ -293,6 +293,23 @@ enum GpRegKind {
     Zr,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GpOperandMeta {
+    is_64bit: bool,
+    kind: GpRegKind,
+    start: usize,
+}
+
+impl GpOperandMeta {
+    fn new(is_64bit: bool, kind: GpRegKind, start: usize) -> Self {
+        Self {
+            is_64bit,
+            kind,
+            start,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FpMemWidth {
     B8,
@@ -2020,18 +2037,22 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_add_sub(&mut self, is_sub: bool, sets_flags: bool) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
         let rd = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
         let rn = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
-        self.parse_add_sub_operand(rd, rn, is_sub, sets_flags)
+        self.parse_add_sub_operand(rd, rn, rd_start, rn_start, is_sub, sets_flags)
     }
 
     /// ADD that can also handle label@PAGEOFF references (for ADRP+ADD pairs).
     fn parse_add_sub_stmt(&mut self, is_sub: bool, sets_flags: bool) -> Result<Stmt, ParseError> {
+        let rd_start = self.pos;
         let rd_operand = self.parse_add_sub_gp_reg_with_size_kind()?;
         let (rd, sf, rd_kind) = rd_operand;
         self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
         let rn_operand = self.parse_add_sub_gp_reg_with_size_kind()?;
         let (rn, rn_is_64bit, rn_kind) = rn_operand;
         self.expect(&Tok::Comma)?;
@@ -2039,8 +2060,8 @@ impl<'a> Parser<'a> {
         // Check for label@PAGEOFF (identifier or numeric local reference followed by @).
         if self.starts_non_register_symbol_reference() {
             self.validate_add_sub_immediate_registers(
-                (sf, rd_kind),
-                (rn_is_64bit, rn_kind),
+                GpOperandMeta::new(sf, rd_kind, rd_start),
+                GpOperandMeta::new(rn_is_64bit, rn_kind, rn_start),
                 sets_flags,
             )?;
             let label = self.parse_label_reference()?;
@@ -2068,7 +2089,9 @@ impl<'a> Parser<'a> {
         }
 
         // Normal add/sub (immediate or register).
-        let inst = self.parse_add_sub_operand(rd_operand, rn_operand, is_sub, sets_flags)?;
+        let inst = self.parse_add_sub_operand(
+            rd_operand, rn_operand, rd_start, rn_start, is_sub, sets_flags,
+        )?;
         Ok(Stmt::Instruction(inst))
     }
 
@@ -2077,17 +2100,17 @@ impl<'a> Parser<'a> {
         &mut self,
         rd: (GpReg, bool, GpRegKind),
         rn: (GpReg, bool, GpRegKind),
+        rd_start: usize,
+        rn_start: usize,
         is_sub: bool,
         sets_flags: bool,
     ) -> Result<Inst, ParseError> {
         let (rd, sf, rd_kind) = rd;
         let (rn, rn_is_64bit, rn_kind) = rn;
+        let rd_meta = GpOperandMeta::new(sf, rd_kind, rd_start);
+        let rn_meta = GpOperandMeta::new(rn_is_64bit, rn_kind, rn_start);
         if self.starts_immediate_expr() {
-            self.validate_add_sub_immediate_registers(
-                (sf, rd_kind),
-                (rn_is_64bit, rn_kind),
-                sets_flags,
-            )?;
+            self.validate_add_sub_immediate_registers(rd_meta, rn_meta, sets_flags)?;
             let (imm, shift, negate_operation) =
                 self.parse_add_sub_immediate("add/sub immediate")?;
             let is_sub = is_sub ^ negate_operation;
@@ -2122,15 +2145,12 @@ impl<'a> Parser<'a> {
                 },
             })
         } else {
+            let rm_start = self.pos;
             let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
-            let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+            let rm_meta = GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start);
+            let modifier = self.parse_optional_add_sub_modifier(sf, rm_meta)?;
             let modifier = self.normalize_add_sub_register_modifier(
-                rd_kind,
-                (rn_is_64bit, rn_kind),
-                (rm_is_64bit, rm_kind),
-                sf,
-                sets_flags,
-                modifier,
+                rd_meta, rn_meta, rm_meta, sets_flags, modifier,
             )?;
             Ok(match (is_sub, sets_flags, modifier) {
                 (false, false, None) => Inst::AddReg { rd, rn, rm, sf },
@@ -2206,10 +2226,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cmp(&mut self) -> Result<Inst, ParseError> {
+        let rn_start = self.pos;
         let (rn, sf, rn_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
-            self.validate_add_sub_immediate_registers((sf, GpRegKind::Zr), (sf, rn_kind), true)?;
+            self.validate_add_sub_immediate_registers(
+                GpOperandMeta::new(sf, GpRegKind::Zr, rn_start),
+                GpOperandMeta::new(sf, rn_kind, rn_start),
+                true,
+            )?;
             let (imm, shift, negate_operation) = self.parse_add_sub_immediate("cmp immediate")?;
             if negate_operation {
                 Ok(Inst::AddsImm {
@@ -2229,13 +2254,15 @@ impl<'a> Parser<'a> {
                 })
             }
         } else {
+            let rm_start = self.pos;
             let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
-            let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+            let rn_meta = GpOperandMeta::new(sf, rn_kind, rn_start);
+            let rm_meta = GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start);
+            let modifier = self.parse_optional_add_sub_modifier(sf, rm_meta)?;
             let modifier = self.normalize_add_sub_register_modifier(
-                GpRegKind::Zr,
-                (sf, rn_kind),
-                (rm_is_64bit, rm_kind),
-                sf,
+                GpOperandMeta::new(sf, GpRegKind::Zr, rn_start),
+                rn_meta,
+                rm_meta,
                 true,
                 modifier,
             )?;
@@ -2270,15 +2297,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cmn(&mut self) -> Result<Inst, ParseError> {
+        let rn_start = self.pos;
         let (rn, sf, rn_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
+        let rm_start = self.pos;
         let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
-        let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+        let rn_meta = GpOperandMeta::new(sf, rn_kind, rn_start);
+        let rm_meta = GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start);
+        let modifier = self.parse_optional_add_sub_modifier(sf, rm_meta)?;
         let modifier = self.normalize_add_sub_register_modifier(
-            GpRegKind::Zr,
-            (sf, rn_kind),
-            (rm_is_64bit, rm_kind),
-            sf,
+            GpOperandMeta::new(sf, GpRegKind::Zr, rn_start),
+            rn_meta,
+            rm_meta,
             true,
             modifier,
         )?;
@@ -2334,17 +2364,30 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_neg(&mut self) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
         let (rd, sf, rd_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
+        let rm_start = self.pos;
         let (rm, rm_is_64bit, rm_kind) = self.parse_add_sub_gp_reg_with_size_kind()?;
         if rd_kind == GpRegKind::Sp || rm_kind == GpRegKind::Sp {
-            return Err(self.err("neg does not allow sp operands".into()));
+            let start = if rd_kind == GpRegKind::Sp {
+                rd_start
+            } else {
+                rm_start
+            };
+            return Err(self.err_at(start, "neg does not allow sp operands".into()));
         }
-        let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+        let modifier = self.parse_optional_add_sub_modifier(
+            sf,
+            GpOperandMeta::new(rm_is_64bit, rm_kind, rm_start),
+        )?;
         if !matches!(modifier, Some(AddSubModifier::Extend(..))) && rm_is_64bit != sf {
-            return Err(self.err("neg requires registers of the same width".into()));
+            return Err(self.err_at(rm_start, "neg requires registers of the same width".into()));
         }
-        self.validate_add_sub_extended_base_reg(GpRegKind::Zr, modifier)?;
+        self.validate_add_sub_extended_base_reg(
+            GpOperandMeta::new(sf, GpRegKind::Zr, rm_start),
+            modifier,
+        )?;
         if let Some(modifier) = modifier {
             Ok(match modifier {
                 AddSubModifier::Shift(shift, amount) => Inst::SubShiftReg {
@@ -2609,19 +2652,22 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_umull(&mut self) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
         let (rd, rd_is_64bit) = self.parse_gp_data_reg_with_size("umull")?;
         if !rd_is_64bit {
-            return Err(self.err("umull destination must be an X register".into()));
+            return Err(self.err_at(rd_start, "umull destination must be an X register".into()));
         }
         self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
         let (rn, rn_is_64bit) = self.parse_gp_data_reg_with_size("umull")?;
         if rn_is_64bit {
-            return Err(self.err("umull sources must be W registers".into()));
+            return Err(self.err_at(rn_start, "umull sources must be W registers".into()));
         }
         self.expect(&Tok::Comma)?;
+        let rm_start = self.pos;
         let (rm, rm_is_64bit) = self.parse_gp_data_reg_with_size("umull")?;
         if rm_is_64bit {
-            return Err(self.err("umull sources must be W registers".into()));
+            return Err(self.err_at(rm_start, "umull sources must be W registers".into()));
         }
         Ok(Inst::Umull { rd, rn, rm })
     }
@@ -4073,9 +4119,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldrsw(&mut self) -> Result<Stmt, ParseError> {
+        let rt_start = self.pos;
         let (rt, sf) = self.parse_gp_data_reg_with_size("ldrsw destination")?;
         if !sf {
-            return Err(self.err("ldrsw destination must be an x-register".into()));
+            return Err(self.err_at(rt_start, "ldrsw destination must be an x-register".into()));
         }
         self.expect(&Tok::Comma)?;
 
@@ -4136,9 +4183,13 @@ impl<'a> Parser<'a> {
     fn parse_ldp_stp_gp(&mut self, is_load: bool) -> Result<Inst, ParseError> {
         let (rt1, sf) = self.parse_gp_data_reg_with_size("ldp/stp data operand")?;
         self.expect(&Tok::Comma)?;
+        let rt2_start = self.pos;
         let (rt2, second_sf) = self.parse_gp_data_reg_with_size("ldp/stp data operand")?;
         if sf != second_sf {
-            return Err(self.err("ldp/stp register pair must use matching register widths".into()));
+            return Err(self.err_at(
+                rt2_start,
+                "ldp/stp register pair must use matching register widths".into(),
+            ));
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
@@ -5360,7 +5411,7 @@ impl<'a> Parser<'a> {
     fn parse_optional_add_sub_modifier(
         &mut self,
         sf: bool,
-        rm_is_64bit: bool,
+        rm: GpOperandMeta,
     ) -> Result<Option<AddSubModifier>, ParseError> {
         if !self.eat(&Tok::Comma) {
             return Ok(None);
@@ -5388,64 +5439,72 @@ impl<'a> Parser<'a> {
             "uxtb" | "uxth" | "uxtw" | "uxtx" | "sxtb" | "sxth" | "sxtw" | "sxtx" => {
                 let extend = match name.as_str() {
                     "uxtb" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
+                        if rm.is_64bit {
+                            return Err(self.err_at(
+                                rm.start,
                                 "uxtb add/sub extensions require a w-register operand".into(),
                             ));
                         }
                         RegExtend::Uxtb
                     }
                     "uxth" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
+                        if rm.is_64bit {
+                            return Err(self.err_at(
+                                rm.start,
                                 "uxth add/sub extensions require a w-register operand".into(),
                             ));
                         }
                         RegExtend::Uxth
                     }
                     "uxtw" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
+                        if rm.is_64bit {
+                            return Err(self.err_at(
+                                rm.start,
                                 "uxtw add/sub extensions require a w-register operand".into(),
                             ));
                         }
                         RegExtend::Uxtw
                     }
                     "uxtx" => {
-                        if !rm_is_64bit {
-                            return Err(self.err(
+                        if !rm.is_64bit {
+                            return Err(self.err_at(
+                                rm.start,
                                 "uxtx add/sub extensions require an x-register operand".into(),
                             ));
                         }
                         RegExtend::Uxtx
                     }
                     "sxtb" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
+                        if rm.is_64bit {
+                            return Err(self.err_at(
+                                rm.start,
                                 "sxtb add/sub extensions require a w-register operand".into(),
                             ));
                         }
                         RegExtend::Sxtb
                     }
                     "sxth" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
+                        if rm.is_64bit {
+                            return Err(self.err_at(
+                                rm.start,
                                 "sxth add/sub extensions require a w-register operand".into(),
                             ));
                         }
                         RegExtend::Sxth
                     }
                     "sxtw" => {
-                        if rm_is_64bit {
-                            return Err(self.err(
+                        if rm.is_64bit {
+                            return Err(self.err_at(
+                                rm.start,
                                 "sxtw add/sub extensions require a w-register operand".into(),
                             ));
                         }
                         RegExtend::Sxtw
                     }
                     "sxtx" => {
-                        if !rm_is_64bit {
-                            return Err(self.err(
+                        if !rm.is_64bit {
+                            return Err(self.err_at(
+                                rm.start,
                                 "sxtx add/sub extensions require an x-register operand".into(),
                             ));
                         }
@@ -5472,41 +5531,52 @@ impl<'a> Parser<'a> {
 
     fn normalize_add_sub_register_modifier(
         &self,
-        rd_kind: GpRegKind,
-        rn: (bool, GpRegKind),
-        rm: (bool, GpRegKind),
-        sf: bool,
+        rd: GpOperandMeta,
+        rn: GpOperandMeta,
+        rm: GpOperandMeta,
         sets_flags: bool,
         modifier: Option<AddSubModifier>,
     ) -> Result<Option<AddSubModifier>, ParseError> {
-        let (rn_is_64bit, rn_kind) = rn;
-        let (rm_is_64bit, rm_kind) = rm;
-        if rm_kind == GpRegKind::Sp {
-            return Err(
-                self.err("add/sub register forms do not allow sp as the third operand".into())
-            );
+        if rm.kind == GpRegKind::Sp {
+            return Err(self.err_at(
+                rm.start,
+                "add/sub register forms do not allow sp as the third operand".into(),
+            ));
         }
 
-        let uses_sp = rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp;
-        if !uses_sp && rn_is_64bit != sf {
-            return Err(self.err("add/sub requires registers of the same width".into()));
+        let uses_sp = rd.kind == GpRegKind::Sp || rn.kind == GpRegKind::Sp;
+        if !uses_sp && rn.is_64bit != rd.is_64bit {
+            return Err(self.err_at(
+                rn.start,
+                "add/sub requires registers of the same width".into(),
+            ));
         }
         let modifier = if uses_sp {
-            if rn_is_64bit != sf {
-                return Err(self.err(
+            if rn.is_64bit != rd.is_64bit {
+                return Err(self.err_at(
+                    rn.start,
                     "add/sub register operands involving sp must have matching widths".into(),
                 ));
             }
 
-            let default_extend = if sf { RegExtend::Uxtx } else { RegExtend::Uxtw };
+            let default_extend = if rd.is_64bit {
+                RegExtend::Uxtx
+            } else {
+                RegExtend::Uxtw
+            };
             match modifier {
-                None if rm_is_64bit == sf => Some(AddSubModifier::Extend(default_extend, 0)),
+                None if rm.is_64bit == rd.is_64bit => {
+                    Some(AddSubModifier::Extend(default_extend, 0))
+                }
                 None => {
-                    return Err(self.err(
+                    return Err(self.err_at(
+                        rm.start,
                         "add/sub register operands involving sp must have matching widths".into(),
                     ));
                 }
-                Some(AddSubModifier::Shift(RegShift::Lsl, amount)) if rm_is_64bit == sf => {
+                Some(AddSubModifier::Shift(RegShift::Lsl, amount))
+                    if rm.is_64bit == rd.is_64bit =>
+                {
                     if amount > 4 {
                         return Err(
                             self.err("sp add/sub lsl amount must be in the range 0..=4".into())
@@ -5515,7 +5585,8 @@ impl<'a> Parser<'a> {
                     Some(AddSubModifier::Extend(default_extend, amount))
                 }
                 Some(AddSubModifier::Shift(RegShift::Lsl, _)) => {
-                    return Err(self.err(
+                    return Err(self.err_at(
+                        rm.start,
                         "add/sub register operands involving sp must have matching widths".into(),
                     ));
                 }
@@ -5524,8 +5595,9 @@ impl<'a> Parser<'a> {
                         "sp add/sub register forms only support lsl or an extend modifier".into(),
                     ));
                 }
-                Some(AddSubModifier::Extend(..)) if !sf && rm_is_64bit => {
-                    return Err(self.err(
+                Some(AddSubModifier::Extend(..)) if !rd.is_64bit && rm.is_64bit => {
+                    return Err(self.err_at(
+                        rm.start,
                         "add/sub register operands involving sp must have matching widths".into(),
                     ));
                 }
@@ -5535,21 +5607,29 @@ impl<'a> Parser<'a> {
             modifier
         };
 
-        if !uses_sp && !matches!(modifier, Some(AddSubModifier::Extend(..))) && rm_is_64bit != sf {
-            return Err(self.err("add/sub requires registers of the same width".into()));
+        if !uses_sp
+            && !matches!(modifier, Some(AddSubModifier::Extend(..)))
+            && rm.is_64bit != rd.is_64bit
+        {
+            return Err(self.err_at(
+                rm.start,
+                "add/sub requires registers of the same width".into(),
+            ));
         }
 
         if matches!(modifier, Some(AddSubModifier::Extend(..))) {
-            self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
-            match (sets_flags, rd_kind) {
+            self.validate_add_sub_extended_base_reg(rn, modifier)?;
+            match (sets_flags, rd.kind) {
                 (false, GpRegKind::Zr) => {
-                    return Err(self.err(
+                    return Err(self.err_at(
+                        rd.start,
                         "extended add/sub forms require a register or sp destination, not xzr/wzr"
                             .into(),
                     ));
                 }
                 (true, GpRegKind::Sp) => {
-                    return Err(self.err(
+                    return Err(self.err_at(
+                        rd.start,
                         "flag-setting extended add/sub forms do not allow an sp destination".into(),
                     ));
                 }
@@ -5562,41 +5642,45 @@ impl<'a> Parser<'a> {
 
     fn validate_add_sub_immediate_registers(
         &self,
-        rd: (bool, GpRegKind),
-        rn: (bool, GpRegKind),
+        rd: GpOperandMeta,
+        rn: GpOperandMeta,
         sets_flags: bool,
     ) -> Result<(), ParseError> {
-        let (rd_is_64bit, rd_kind) = rd;
-        let (rn_is_64bit, rn_kind) = rn;
-        if rd_is_64bit != rn_is_64bit {
-            let message = if rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp {
+        if rd.is_64bit != rn.is_64bit {
+            let message = if rd.kind == GpRegKind::Sp || rn.kind == GpRegKind::Sp {
                 "add/sub immediate operands involving sp must have matching widths"
             } else {
                 "add/sub immediate operands must have matching widths"
             };
-            return Err(self.err(message.into()));
+            return Err(self.err_at(rn.start, message.into()));
         }
-        if rn_kind == GpRegKind::Zr {
-            return Err(self
-                .err("add/sub immediate forms require a register or sp base, not xzr/wzr".into()));
+        if rn.kind == GpRegKind::Zr {
+            return Err(self.err_at(
+                rn.start,
+                "add/sub immediate forms require a register or sp base, not xzr/wzr".into(),
+            ));
         }
-        match (sets_flags, rd_kind) {
-            (false, GpRegKind::Zr) => Err(self.err(
+        match (sets_flags, rd.kind) {
+            (false, GpRegKind::Zr) => Err(self.err_at(
+                rd.start,
                 "add/sub immediate forms require a register or sp destination, not xzr/wzr".into(),
             )),
-            (true, GpRegKind::Sp) => Err(self
-                .err("flag-setting add/sub immediate forms do not allow an sp destination".into())),
+            (true, GpRegKind::Sp) => Err(self.err_at(
+                rd.start,
+                "flag-setting add/sub immediate forms do not allow an sp destination".into(),
+            )),
             _ => Ok(()),
         }
     }
 
     fn validate_add_sub_extended_base_reg(
         &self,
-        rn_kind: GpRegKind,
+        rn: GpOperandMeta,
         modifier: Option<AddSubModifier>,
     ) -> Result<(), ParseError> {
-        if matches!(modifier, Some(AddSubModifier::Extend(..))) && rn_kind == GpRegKind::Zr {
-            return Err(self.err(
+        if matches!(modifier, Some(AddSubModifier::Extend(..))) && rn.kind == GpRegKind::Zr {
+            return Err(self.err_at(
+                rn.start,
                 "extended add/sub forms require an x-register or sp base operand, not xzr/wzr"
                     .into(),
             ));
@@ -5653,9 +5737,10 @@ impl<'a> Parser<'a> {
         &mut self,
         scale: u8,
     ) -> Result<(GpReg, AddrExtend, bool), ParseError> {
+        let rm_start = self.pos;
         let (rm, is_64bit, kind) = self.parse_gp_reg_with_size_kind()?;
         if kind == GpRegKind::Sp {
-            return Err(self.err("register offset does not allow sp".into()));
+            return Err(self.err_at(rm_start, "register offset does not allow sp".into()));
         }
         let mut extend = AddrExtend::Lsl;
         let mut shift = false;
