@@ -1522,11 +1522,11 @@ impl<'a> Parser<'a> {
             // Branches
             "ret" => self.parse_ret(),
             "br" => {
-                let rn = self.parse_gp_reg()?;
+                let rn = self.parse_x_reg("br")?;
                 Ok(Inst::Br { rn })
             }
             "blr" => {
-                let rn = self.parse_gp_reg()?;
+                let rn = self.parse_x_reg("blr")?;
                 Ok(Inst::Blr { rn })
             }
 
@@ -1647,6 +1647,30 @@ impl<'a> Parser<'a> {
         let name = self.expect_ident()?;
         parse_gp_reg_name(&name)
             .ok_or_else(|| self.err(format!("expected GP register, got '{}'", name)))
+    }
+
+    fn parse_gp_reg_with_required_width(
+        &mut self,
+        required_64bit: bool,
+        context: &str,
+    ) -> Result<GpReg, ParseError> {
+        let (reg, is_64bit) = self.parse_gp_reg_with_size()?;
+        if is_64bit != required_64bit {
+            return Err(self.err(format!(
+                "{} requires an {}-register",
+                context,
+                if required_64bit { "x" } else { "w" }
+            )));
+        }
+        Ok(reg)
+    }
+
+    fn parse_x_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        self.parse_gp_reg_with_required_width(true, context)
+    }
+
+    fn parse_w_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        self.parse_gp_reg_with_required_width(false, context)
     }
 
     /// Returns (register, is_64bit).
@@ -2770,7 +2794,7 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::RBracket)?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_gp_reg()?;
+        let rn = self.parse_x_reg("SIMD lane load memory base")?;
         self.expect(&Tok::RBracket)?;
         Ok(match width {
             SimdLaneWidth::S32 => Inst::Ld1LaneS { rt, index, rn },
@@ -3078,13 +3102,13 @@ impl<'a> Parser<'a> {
         if self.at_end_of_stmt() {
             Ok(Inst::Ret { rn: X30 })
         } else {
-            let rn = self.parse_gp_reg()?;
+            let rn = self.parse_x_reg("ret")?;
             Ok(Inst::Ret { rn })
         }
     }
 
     fn parse_adr(&mut self) -> Result<Stmt, ParseError> {
-        let rd = self.parse_gp_reg()?;
+        let rd = self.parse_x_reg("adr destination")?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let imm = self.parse_i32_signed_scaled_immediate("adr immediate", 21, 0)?;
@@ -3104,7 +3128,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_adrp(&mut self) -> Result<Stmt, ParseError> {
-        let rd = self.parse_gp_reg()?;
+        let rd = self.parse_x_reg("adrp destination")?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let imm = self.parse_signed_scaled_immediate("adrp immediate", 21, 12)?;
@@ -3270,7 +3294,7 @@ impl<'a> Parser<'a> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_x_reg("ldur/stur memory base")?;
         let offset = if self.eat(&Tok::RBracket) {
             0
         } else {
@@ -3329,7 +3353,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_x_reg("ldr/str memory base")?;
 
         if self.eat(&Tok::RBracket) {
             // [Xn] or [Xn], #off (post-index)
@@ -3496,7 +3520,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_x_reg("FP/SIMD memory base")?;
 
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
@@ -3919,10 +3943,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ldstb_h(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
-        let rt = self.parse_gp_reg()?;
+        let rt = self.parse_w_reg(&format!("{} data operand", mnemonic))?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_gp_reg()?;
+        let rn = self.parse_x_reg(&format!("{} memory base", mnemonic))?;
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
                 let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
@@ -3963,7 +3987,7 @@ impl<'a> Parser<'a> {
         let (rt, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_gp_reg()?;
+        let rn = self.parse_x_reg(&format!("{} memory base", mnemonic))?;
         if self.eat(&Tok::RBracket) {
             if self.eat(&Tok::Comma) {
                 let offset = self.parse_i16_signed_scaled_immediate("post-index offset", 9, 0)?;
@@ -4033,7 +4057,7 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::LBracket)?;
-        let rn = self.parse_gp_reg()?;
+        let rn = self.parse_x_reg("ldrsw memory base")?;
         let (offset, offset_start) = if self.eat(&Tok::Comma) {
             if self.starts_register_like_operand() {
                 let (rm, extend, shift) = self.parse_reg_offset_operand(2)?;
@@ -4077,7 +4101,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_x_reg("ldp/stp memory base")?;
         let scale = if sf { 3 } else { 2 };
 
         if self.eat(&Tok::RBracket) {
@@ -4217,7 +4241,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_x_reg("ldp/stp FP memory base")?;
         let scale = width.scale();
 
         if self.eat(&Tok::RBracket) {
