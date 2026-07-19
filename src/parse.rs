@@ -6161,10 +6161,8 @@ fn classify_gp_reg_name(lower: &str) -> Option<(GpReg, bool, GpRegKind)> {
 
     let (is_64bit, num_str) = if let Some(num) = lower.strip_prefix('x') {
         (true, num)
-    } else if let Some(num) = lower.strip_prefix('w') {
-        (false, num)
     } else {
-        return None;
+        (false, lower.strip_prefix('w')?)
     };
     let num = parse_canonical_register_number(num_str)?;
     (num <= 30).then(|| (GpReg::new(num), is_64bit, GpRegKind::Reg))
