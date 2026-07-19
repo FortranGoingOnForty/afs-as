@@ -149,7 +149,13 @@ fn is_stdio_path(path: &Path) -> bool {
 /// The `--64` path: x86_64 AT&T source to an ELF64 relocatable
 /// object. Matches the driver's `<as> --64 -o obj.o asm.s` contract.
 fn assemble_cli_x86(input: &Path, output: &Path) -> Result<(), String> {
-    let read_err = |e: io::Error| format!("{}: {}", input.display(), e);
+    let stdin_display = Path::new("<stdin>");
+    let input_display = if is_stdio_path(input) {
+        stdin_display
+    } else {
+        input
+    };
+    let read_err = |e: io::Error| format!("{}: {}", input_display.display(), e);
     let src = if is_stdio_path(input) {
         let mut src = String::new();
         io::stdin().read_to_string(&mut src).map_err(read_err)?;
@@ -164,8 +170,9 @@ fn assemble_cli_x86(input: &Path, output: &Path) -> Result<(), String> {
         afs_as::elf::ELFOSABI_NONE
     };
     let obj = afs_as::x86::assemble::assemble_x86(&src, osabi)
-        .map_err(|e| format!("{}: {}", input.display(), e))?;
-    let bytes = afs_as::elf::write_elf(&obj).map_err(|e| format!("{}: {}", input.display(), e))?;
+        .map_err(|e| e.with_source_context(input_display, &src).to_string())?;
+    let bytes =
+        afs_as::elf::write_elf(&obj).map_err(|e| format!("{}: {}", input_display.display(), e))?;
 
     let write_err = |e: io::Error| format!("{}: {}", output.display(), e);
     if is_stdio_path(output) {

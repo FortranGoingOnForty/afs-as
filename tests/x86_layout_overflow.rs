@@ -1,12 +1,14 @@
+use afs_as::assemble::AsmError;
 use afs_as::elf::{parse_elf, write_elf, SymbolPlace};
 use afs_as::x86::assemble::assemble_x86;
 
 const HALF: u64 = 9_223_372_036_854_775_807;
 
-fn overflow(src: &str) -> String {
-    assemble_x86(src, 0)
-        .expect_err("overflowing layout unexpectedly assembled")
-        .msg
+fn overflow(src: &str, line: u32) -> AsmError {
+    let err = assemble_x86(src, 0).expect_err("overflowing layout unexpectedly assembled");
+    assert_eq!(err.line, Some(line));
+    assert_eq!(err.col, Some(1));
+    err
 }
 
 #[test]
@@ -32,13 +34,13 @@ fn section_size_may_reach_u64_max() {
 #[test]
 fn section_size_above_u64_max_is_rejected() {
     let src = format!(".bss\n.space {HALF}\n.space {HALF}\n.zero 3\n");
-    assert_eq!(overflow(&src), "section layout size overflows u64");
+    assert_eq!(overflow(&src, 4).msg, "section layout size overflows u64");
 }
 
 #[test]
 fn alignment_past_u64_max_is_rejected() {
     let src = format!(".bss\n.space {HALF}\n.space {HALF}\n.p2align 2\n");
-    assert_eq!(overflow(&src), "section layout size overflows u64");
+    assert_eq!(overflow(&src, 4).msg, "section layout size overflows u64");
 }
 
 #[test]
@@ -54,13 +56,16 @@ fn max_skip_can_suppress_alignment_past_u64_max() {
 #[test]
 fn local_common_size_overflow_is_rejected() {
     let src = format!(".bss\n.space {HALF}\n.space {HALF}\n.local item\n.comm item,2,1\n");
-    assert_eq!(overflow(&src), "local COMMON size overflows u64");
+    assert_eq!(overflow(&src, 5).msg, "local COMMON size overflows u64");
 }
 
 #[test]
 fn local_common_alignment_overflow_is_rejected() {
     let src = format!(".bss\n.space {HALF}\n.space {HALF}\n.local item\n.comm item,1,4\n");
-    assert_eq!(overflow(&src), "local COMMON alignment overflows u64");
+    assert_eq!(
+        overflow(&src, 5).msg,
+        "local COMMON alignment overflows u64"
+    );
 }
 
 #[test]
@@ -86,7 +91,7 @@ fn local_common_may_end_at_u64_max() {
 #[test]
 fn unencodable_high_offset_branch_is_rejected() {
     let src = format!(".bss\njmp .Ltarget\n.space {HALF}\n.Ltarget:\n");
-    let message = overflow(&src);
+    let message = overflow(&src, 2).msg;
 
     assert!(
         message.contains("branch displacement") && message.contains("i32"),
@@ -97,7 +102,7 @@ fn unencodable_high_offset_branch_is_rejected() {
 #[test]
 fn unencodable_same_section_pcrel_fixup_is_rejected() {
     let src = format!(".bss\ncall .Ltarget\n.space {HALF}\n.Ltarget:\n");
-    let message = overflow(&src);
+    let message = overflow(&src, 2).msg;
 
     assert!(
         message.contains("displacement") && message.contains("i32"),

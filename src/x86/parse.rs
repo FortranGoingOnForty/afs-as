@@ -51,10 +51,11 @@ impl fmt::Display for X86ParseError {
     }
 }
 
-/// One parsed statement with its 1-based source line.
+/// One parsed statement with its 1-based source location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Located {
     pub line: u32,
+    pub col: u32,
     pub stmt: Stmt,
 }
 
@@ -153,6 +154,7 @@ pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
             if let Some((label, rest)) = split_label(line) {
                 out.push(Located {
                     line: line_no,
+                    col: col_of(raw, line),
                     stmt: Stmt::Label(label.to_string()),
                 });
                 line = rest;
@@ -165,6 +167,7 @@ pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
             };
             out.push(Located {
                 line: line_no,
+                col: col_of(raw, line),
                 stmt,
             });
             break;

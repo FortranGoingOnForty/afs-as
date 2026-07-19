@@ -12,8 +12,10 @@ const COLLISIONS: &[&str] = &[
 
 #[test]
 fn defined_labels_cannot_be_redeclared_as_common() {
-    for src in COLLISIONS {
+    for (src, line) in COLLISIONS.iter().zip([5, 3]) {
         let err = assemble_x86(src, 0).expect_err("label/COMMON collision assembled");
+        assert_eq!(err.line, Some(line));
+        assert_eq!(err.col, Some(1));
         assert!(
             err.msg.contains("symbol 'foo' is already defined"),
             "unexpected diagnostic: {err}"

@@ -43,6 +43,14 @@ fn diagnostics_carry_line_and_caret() {
 }
 
 #[test]
+fn statements_carry_their_start_columns() {
+    let stmts = parse("  label:   ret\n").expect("parse statements");
+
+    assert_eq!((stmts[0].line, stmts[0].col), (1, 3));
+    assert_eq!((stmts[1].line, stmts[1].col), (1, 12));
+}
+
+#[test]
 fn unsupported_directive_fails_loudly() {
     let err = parse(".intel_syntax noprefix\n").unwrap_err();
     assert!(
