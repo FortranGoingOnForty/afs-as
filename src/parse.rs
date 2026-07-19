@@ -292,6 +292,19 @@ struct AbsoluteAssignmentPreview {
     col: u32,
 }
 
+const MAX_EXPRESSION_DEPTH: usize = 256;
+
+struct ParsedExpr {
+    expr: Expr,
+    depth: usize,
+}
+
+impl ParsedExpr {
+    fn leaf(expr: Expr) -> Self {
+        Self { expr, depth: 0 }
+    }
+}
+
 fn scan_absolute_assignments(tokens: &[Token]) -> Vec<AbsoluteAssignmentPreview> {
     let mut assignments = Vec::new();
     for (index, token) in tokens.iter().enumerate() {
@@ -513,6 +526,13 @@ impl<'a> Parser<'a> {
             col: t.col,
             msg,
         }
+    }
+
+    fn expression_depth_error(&self, pos: usize) -> ParseError {
+        self.err_at(
+            pos,
+            format!("expression exceeds maximum depth of {MAX_EXPRESSION_DEPTH}"),
+        )
     }
 
     fn at_end_of_stmt(&self) -> bool {
@@ -1272,7 +1292,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_add_sub_expr(false)
+        Ok(self.parse_add_sub_expr(false, 0)?.expr)
     }
 
     fn parse_quad_expr(&mut self) -> Result<Expr, ParseError> {
@@ -1284,7 +1304,7 @@ impl<'a> Parser<'a> {
         restriction: &str,
     ) -> Result<Expr, ParseError> {
         let start = self.pos;
-        let expr = self.parse_add_sub_expr(true)?;
+        let expr = self.parse_add_sub_expr(true, 0)?.expr;
         if contains_wide_unsigned_literal(&expr) && !matches!(expr, Expr::Unsigned(_)) {
             let wide_literal = (start..self.pos)
                 .find(|&pos| matches!(&self.tokens[pos].kind, Tok::UnsignedInteger(_)))
@@ -1300,44 +1320,82 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn parse_add_sub_expr(&mut self, allow_wide_unsigned: bool) -> Result<Expr, ParseError> {
-        let mut expr = self.parse_unary_expr(allow_wide_unsigned)?;
+    fn parse_add_sub_expr(
+        &mut self,
+        allow_wide_unsigned: bool,
+        nesting: usize,
+    ) -> Result<ParsedExpr, ParseError> {
+        let mut parsed = self.parse_unary_expr(allow_wide_unsigned, nesting)?;
         loop {
-            if self.eat(&Tok::Plus) {
-                let rhs = self.parse_unary_expr(allow_wide_unsigned)?;
-                expr = Expr::Add(Box::new(expr), Box::new(rhs));
-            } else if self.eat(&Tok::Minus) {
-                let rhs = self.parse_unary_expr(allow_wide_unsigned)?;
-                expr = Expr::Sub(Box::new(expr), Box::new(rhs));
-            } else {
-                break;
+            let operator_pos = self.pos;
+            let is_add = match self.peek() {
+                Tok::Plus => true,
+                Tok::Minus => false,
+                _ => break,
+            };
+            self.advance();
+
+            let rhs = self.parse_unary_expr(allow_wide_unsigned, nesting)?;
+            let depth = parsed.depth.max(rhs.depth) + 1;
+            if depth > MAX_EXPRESSION_DEPTH {
+                return Err(self.expression_depth_error(operator_pos));
             }
+
+            let expr = if is_add {
+                Expr::Add(Box::new(parsed.expr), Box::new(rhs.expr))
+            } else {
+                Expr::Sub(Box::new(parsed.expr), Box::new(rhs.expr))
+            };
+            parsed = ParsedExpr { expr, depth };
         }
-        Ok(expr)
+        Ok(parsed)
     }
 
-    fn parse_unary_expr(&mut self, allow_wide_unsigned: bool) -> Result<Expr, ParseError> {
-        if self.eat(&Tok::Minus) {
-            Ok(Expr::UnaryMinus(Box::new(
-                self.parse_unary_expr(allow_wide_unsigned)?,
-            )))
-        } else {
-            self.parse_primary_expr(allow_wide_unsigned)
+    fn parse_unary_expr(
+        &mut self,
+        allow_wide_unsigned: bool,
+        nesting: usize,
+    ) -> Result<ParsedExpr, ParseError> {
+        let first_minus = self.pos;
+        let mut minus_count = 0;
+        while self.peek() == &Tok::Minus {
+            if minus_count == MAX_EXPRESSION_DEPTH {
+                return Err(self.expression_depth_error(self.pos));
+            }
+            self.advance();
+            minus_count += 1;
         }
+
+        let parsed = self.parse_primary_expr(allow_wide_unsigned, nesting)?;
+        if parsed.depth > MAX_EXPRESSION_DEPTH - minus_count {
+            let offending_minus = first_minus + (MAX_EXPRESSION_DEPTH - parsed.depth);
+            return Err(self.expression_depth_error(offending_minus));
+        }
+
+        let depth = parsed.depth + minus_count;
+        let mut expr = parsed.expr;
+        for _ in 0..minus_count {
+            expr = Expr::UnaryMinus(Box::new(expr));
+        }
+        Ok(ParsedExpr { expr, depth })
     }
 
-    fn parse_primary_expr(&mut self, allow_wide_unsigned: bool) -> Result<Expr, ParseError> {
+    fn parse_primary_expr(
+        &mut self,
+        allow_wide_unsigned: bool,
+        nesting: usize,
+    ) -> Result<ParsedExpr, ParseError> {
         if let Some(symbol) = self.parse_numeric_label_ref()? {
-            return Ok(Expr::Symbol(symbol));
+            return Ok(ParsedExpr::leaf(Expr::Symbol(symbol)));
         }
         match self.peek().clone() {
             Tok::Integer(value) => {
                 self.advance();
-                Ok(Expr::Int(value))
+                Ok(ParsedExpr::leaf(Expr::Int(value)))
             }
             Tok::UnsignedInteger(value) if allow_wide_unsigned => {
                 self.advance();
-                Ok(Expr::Unsigned(value))
+                Ok(ParsedExpr::leaf(Expr::Unsigned(value)))
             }
             Tok::UnsignedInteger(value) => Err(self.err(format!(
                 "unsigned integer {} exceeds the i64 range for this context",
@@ -1349,26 +1407,30 @@ impl<'a> Parser<'a> {
                     let modifier = self.expect_ident()?;
                     let upper = modifier.to_ascii_uppercase();
                     match upper.as_str() {
-                        "GOT" => Ok(Expr::ModifiedSymbol {
+                        "GOT" => Ok(ParsedExpr::leaf(Expr::ModifiedSymbol {
                             symbol,
                             modifier: SymbolModifier::Got,
-                        }),
+                        })),
                         _ => Err(self.err(format!(
                             "unsupported relocation modifier '@{}' in expression",
                             modifier
                         ))),
                     }
                 } else {
-                    Ok(Expr::Symbol(symbol))
+                    Ok(ParsedExpr::leaf(Expr::Symbol(symbol)))
                 }
             }
             Tok::Dot => {
                 self.advance();
-                Ok(Expr::CurrentLocation)
+                Ok(ParsedExpr::leaf(Expr::CurrentLocation))
             }
             Tok::LParen => {
+                let open_paren = self.pos;
+                if nesting == MAX_EXPRESSION_DEPTH {
+                    return Err(self.expression_depth_error(open_paren));
+                }
                 self.advance();
-                let expr = self.parse_add_sub_expr(allow_wide_unsigned)?;
+                let expr = self.parse_add_sub_expr(allow_wide_unsigned, nesting + 1)?;
                 self.expect(&Tok::RParen)?;
                 Ok(expr)
             }
@@ -11343,6 +11405,44 @@ mod tests {
                 Box::new(Expr::Add(Box::new(Expr::Int(1)), Box::new(Expr::Int(2)),))
             )]))]
         );
+    }
+
+    #[test]
+    fn expression_depth_limit_accepts_the_boundary() {
+        let source = format!(".quad {}1", "-".repeat(MAX_EXPRESSION_DEPTH));
+        parse(&source).expect("boundary-depth expression unexpectedly rejected");
+    }
+
+    #[test]
+    fn expression_depth_limit_rejects_deep_expression_shapes() {
+        let unary = format!(".data\n.quad {}1", "-".repeat(MAX_EXPRESSION_DEPTH + 1));
+        let parenthesized = format!(
+            ".data\n.quad {}1{}",
+            "(".repeat(MAX_EXPRESSION_DEPTH + 1),
+            ")".repeat(MAX_EXPRESSION_DEPTH + 1)
+        );
+        let additive = format!(
+            ".data\n.quad {}",
+            vec!["1"; MAX_EXPRESSION_DEPTH + 2].join("+")
+        );
+
+        for (shape, source, expected_col) in [
+            ("unary", unary, 263),
+            ("parenthesized", parenthesized, 263),
+            ("additive", additive, 520),
+        ] {
+            let error = parse(&source).expect_err("deep expression unexpectedly parsed");
+            assert_eq!(error.line, 2, "wrong line for {shape} expression");
+            assert_eq!(
+                error.col, expected_col,
+                "wrong column for {shape} expression"
+            );
+            assert_eq!(
+                error.msg,
+                format!("expression exceeds maximum depth of {MAX_EXPRESSION_DEPTH}"),
+                "wrong diagnostic for {shape} expression"
+            );
+        }
     }
 
     #[test]
