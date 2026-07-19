@@ -261,6 +261,7 @@ struct Assembler {
     /// Absolute symbol assignments declared via `.set` / `.equ`.
     absolute_defs: BTreeMap<String, Expr>,
     absolute_symbols: BTreeMap<String, i64>,
+    final_absolute_symbols: BTreeMap<String, i64>,
     common_symbols: BTreeMap<String, CommonSymbol>,
     symbol_order: BTreeMap<String, usize>,
     next_symbol_order: usize,
@@ -578,6 +579,7 @@ impl Assembler {
             labels: BTreeMap::new(),
             absolute_defs: BTreeMap::new(),
             absolute_symbols: BTreeMap::new(),
+            final_absolute_symbols: BTreeMap::new(),
             common_symbols: BTreeMap::new(),
             symbol_order: BTreeMap::from([(String::from("ltmp0"), 0)]),
             next_symbol_order: 1,
@@ -626,6 +628,9 @@ impl Assembler {
             section.size = 0;
         }
         self.fixups.clear();
+        self.absolute_defs.clear();
+        self.absolute_symbols
+            .clone_from(&self.final_absolute_symbols);
         self.pending_relocs.clear();
         self.pending_relocs
             .resize_with(self.sections.len(), Vec::new);
@@ -652,6 +657,8 @@ impl Assembler {
             }
         };
         self.absolute_symbols = self.resolve_absolute_symbols()?;
+        self.final_absolute_symbols
+            .clone_from(&self.absolute_symbols);
         Ok(())
     }
 
@@ -863,8 +870,8 @@ impl Assembler {
         match dir {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
-            Directive::Set(_, _)
-            | Directive::Comm { .. }
+            Directive::Set(name, expr) => self.activate_absolute_definition(name, expr),
+            Directive::Comm { .. }
             | Directive::Extern(_)
             | Directive::Global(_)
             | Directive::PrivateExtern(_)
@@ -2032,6 +2039,13 @@ impl Assembler {
             .map_err(|err| AsmError(err.to_string()))
     }
 
+    fn activate_absolute_definition(&mut self, name: &str, expr: &Expr) {
+        self.absolute_defs.insert(name.to_string(), expr.clone());
+        let mut symbols = self.final_absolute_symbols.clone();
+        symbols.extend(self.resolve_available_absolute_symbols());
+        self.absolute_symbols = symbols;
+    }
+
     fn require_sized_absolute_expr(
         &self,
         expr: &Expr,
@@ -2780,6 +2794,15 @@ impl Assembler {
             resolved.insert(name, value);
         }
         Ok(resolved)
+    }
+
+    fn resolve_available_absolute_symbols(&self) -> BTreeMap<String, i64> {
+        let mut resolved = BTreeMap::new();
+        for name in self.absolute_defs.keys() {
+            let mut visiting = Vec::new();
+            let _ = self.resolve_absolute_symbol(name, &mut resolved, &mut visiting);
+        }
+        resolved
     }
 
     fn resolve_absolute_symbol(

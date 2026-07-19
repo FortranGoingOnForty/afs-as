@@ -7,8 +7,9 @@ use std::fmt;
 pub enum Expr {
     Int(i64),
     /// Positive integer literal above `i64::MAX` whose value is preserved as
-    /// a 64-bit bit pattern. The parser restricts this to standalone `.quad`
-    /// values so relocation addends and general expression math remain i64.
+    /// a 64-bit bit pattern. The parser permits these only as standalone data
+    /// or directive-pattern values so relocation addends and expression math
+    /// remain `i64`.
     Unsigned(u64),
     Symbol(String),
     ModifiedSymbol {

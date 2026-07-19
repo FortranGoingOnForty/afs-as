@@ -263,3 +263,49 @@ fn preparsed_directives_enforce_the_same_range_contract() {
         );
     }
 }
+
+#[test]
+fn reassigned_absolute_symbols_use_the_value_visible_at_each_data_directive() {
+    let source_error = assemble_source(".set X,256\n.byte X\n.set X,1\n")
+        .expect_err("out-of-range active assignment unexpectedly assembled");
+    assert_eq!((source_error.line, source_error.col), (Some(2), Some(1)));
+    assert_eq!(
+        source_error.msg,
+        ".byte expression value 256 is out of range for 8-bit data"
+    );
+
+    let direct_error = assemble_stmts(&[
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(256))),
+        Stmt::Directive(Directive::Byte(vec![Expr::Symbol("X".into())])),
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(1))),
+    ])
+    .expect_err("preparsed active assignment unexpectedly used its final value");
+    assert_eq!(direct_error.msg, source_error.msg);
+
+    let source = assemble_source(".set X,1\n.byte X\n.set X,2\n")
+        .expect("resolved assignment unexpectedly followed a later reassignment");
+    assert_eq!(source.text_section().data, [1]);
+
+    let direct = assemble_stmts(&[
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(1))),
+        Stmt::Directive(Directive::Byte(vec![Expr::Symbol("X".into())])),
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(2))),
+    ])
+    .expect("preparsed resolved assignment unexpectedly followed a later reassignment");
+    assert_eq!(direct.text_section().data, [1]);
+
+    let source_forward = assemble_source(".byte X\n.set X,1\n")
+        .expect("source forward absolute assignment unexpectedly rejected");
+    assert_eq!(source_forward.text_section().data, [1]);
+
+    let direct_forward = assemble_stmts(&[
+        Stmt::Directive(Directive::Byte(vec![Expr::Symbol("X".into())])),
+        Stmt::Directive(Directive::Set("X".into(), Expr::Int(1))),
+    ])
+    .expect("preparsed forward absolute assignment unexpectedly rejected");
+    assert_eq!(direct_forward.text_section().data, [1]);
+
+    let alias = assemble_source(".set A,B\n.set B,2\n.byte A\n.set B,3\n")
+        .expect("resolvable absolute alias unexpectedly followed a later reassignment");
+    assert_eq!(alias.text_section().data, [2]);
+}

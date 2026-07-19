@@ -871,7 +871,7 @@ impl<'a> Parser<'a> {
         let value = match expr {
             Expr::Unsigned(value) if unsigned_data_value_fits(*value, bits) => return Ok(()),
             Expr::Unsigned(value) => value.to_string(),
-            _ => match expr::eval_with_symbols(expr, &self.absolute_symbols) {
+            _ => match expr::eval_pure(expr) {
                 Ok(value) if signed_data_value_fits(value, bits) => return Ok(()),
                 Ok(value) => value.to_string(),
                 Err(_) => return Ok(()),
