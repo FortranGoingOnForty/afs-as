@@ -72,6 +72,7 @@ pub fn assemble_stmts(stmts: &[Stmt]) -> Result<ObjectFile, AsmError> {
 fn assemble_located_stmts(stmts: &[LocatedStmt]) -> Result<ObjectFile, AsmError> {
     let mut asm = Assembler::new();
     asm.collect_layout(stmts)?;
+    asm.prepare_unwind_layout()?;
     asm.prepare_expression_state(stmts)?;
     asm.reset_for_emission();
     asm.process(stmts)?;
@@ -255,6 +256,7 @@ struct Assembler {
     current_line: u32,
     current_col: u32,
     sections: Vec<Section>,
+    source_section_count: usize,
 
     /// Labels → (section index, offset within section).
     labels: BTreeMap<String, (usize, u64)>,
@@ -416,6 +418,9 @@ const UNWIND_ARM64_FRAME_X21_X22_PAIR: u32 = 0x00000002;
 const UNWIND_ARM64_FRAME_X23_X24_PAIR: u32 = 0x00000004;
 const UNWIND_ARM64_FRAME_X25_X26_PAIR: u32 = 0x00000008;
 const UNWIND_ARM64_FRAME_X27_X28_PAIR: u32 = 0x00000010;
+const COMPACT_UNWIND_ENTRY_SIZE: u64 = 32;
+const EH_FRAME_CIE_SIZE: u64 = 20;
+const EH_FRAME_FDE_FIXED_SIZE: usize = 25;
 
 impl CfiProcState {
     fn new(start_section: usize, start_offset: u64, function_symbol: String) -> Self {
@@ -576,6 +581,7 @@ impl Assembler {
             current_line: 0,
             current_col: 0,
             sections: vec![Section::text()],
+            source_section_count: 1,
             labels: BTreeMap::new(),
             absolute_defs: BTreeMap::new(),
             absolute_symbols: BTreeMap::new(),
@@ -621,6 +627,7 @@ impl Assembler {
         self.section = 0;
         self.current_line = 0;
         self.current_col = 0;
+        self.sections.truncate(self.source_section_count);
         for section in &mut self.sections {
             section.data.clear();
             section.relocations.clear();
@@ -636,8 +643,6 @@ impl Assembler {
             .resize_with(self.sections.len(), Vec::new);
         self.active_cfi_proc = None;
         self.linker_optimization_hints.clear();
-        self.compact_unwind_rows.clear();
-        self.eh_frame_rows.clear();
     }
 
     fn note_stmt_location(&mut self, line: u32, col: u32) {
@@ -662,11 +667,27 @@ impl Assembler {
         Ok(())
     }
 
+    fn prepare_unwind_layout(&mut self) -> Result<(), AsmError> {
+        self.source_section_count = self.sections.len();
+        for section in self.unwind_layout_sections()? {
+            self.note_section_temp(self.sections.len());
+            self.sections.push(section);
+            self.pending_relocs.push(Vec::new());
+        }
+        Ok(())
+    }
+
     fn collect_layout(&mut self, stmts: &[LocatedStmt]) -> Result<(), AsmError> {
         self.section = 0;
 
         for stmt in stmts {
             self.collect_layout_stmt(stmt)?;
+        }
+
+        if self.active_cfi_proc.is_some() {
+            return Err(AsmError(
+                "unterminated .cfi_startproc before end of file".into(),
+            ));
         }
 
         Ok(())
@@ -706,7 +727,9 @@ impl Assembler {
         let mut probe = Self::new();
         for stmt in stmts {
             probe.collect_layout_stmt(stmt).ok()?;
-            if probe.section_base_addresses().is_err() {
+            let mut sections = probe.sections.clone();
+            sections.extend(probe.unwind_layout_sections().ok()?);
+            if Self::section_base_addresses_for(&sections).is_err() {
                 return Some((stmt.line, stmt.col));
             }
         }
@@ -842,14 +865,14 @@ impl Assembler {
             } => {
                 self.reserve_zerofill(segment, section, symbol.as_deref(), *size, *align_pow2)?;
             }
-            Directive::CfiStartProc
-            | Directive::CfiEndProc
-            | Directive::CfiDefCfa { .. }
+            Directive::CfiStartProc => self.start_cfi_proc()?,
+            Directive::CfiEndProc => self.finish_cfi_proc()?,
+            Directive::CfiDefCfa { .. }
             | Directive::CfiDefCfaOffset(_)
             | Directive::CfiDefCfaRegister(_)
             | Directive::CfiOffset { .. }
             | Directive::CfiRestore(_)
-            | Directive::CfiAdjustCfaOffset(_) => {}
+            | Directive::CfiAdjustCfaOffset(_) => self.apply_cfi_directive(dir)?,
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
@@ -971,18 +994,14 @@ impl Assembler {
             } => {
                 self.emit_zerofill(segment, section, *size, *align_pow2)?;
             }
-            Directive::CfiStartProc => {
-                self.start_cfi_proc()?;
-            }
-            Directive::CfiEndProc => {
-                self.finish_cfi_proc()?;
-            }
-            Directive::CfiDefCfa { .. }
+            Directive::CfiStartProc
+            | Directive::CfiEndProc
+            | Directive::CfiDefCfa { .. }
             | Directive::CfiDefCfaOffset(_)
             | Directive::CfiDefCfaRegister(_)
             | Directive::CfiOffset { .. }
             | Directive::CfiRestore(_)
-            | Directive::CfiAdjustCfaOffset(_) => self.apply_cfi_directive(dir)?,
+            | Directive::CfiAdjustCfaOffset(_) => {}
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
@@ -2000,10 +2019,14 @@ impl Assembler {
     }
 
     fn section_base_addresses(&self) -> Result<Vec<u64>, AsmError> {
-        let mut bases = vec![0u64; self.sections.len()];
+        Self::section_base_addresses_for(&self.sections)
+    }
+
+    fn section_base_addresses_for(sections: &[Section]) -> Result<Vec<u64>, AsmError> {
+        let mut bases = vec![0u64; sections.len()];
         let mut addr = 0u64;
-        for index in section_allocation_order(&self.sections) {
-            let section = &self.sections[index];
+        for index in section_allocation_order(sections) {
+            let section = &sections[index];
             addr = checked_align_value(addr, section.align_pow2)
                 .ok_or_else(|| AsmError("section layout alignment overflows u64".into()))?;
             bases[index] = addr;
@@ -2192,6 +2215,44 @@ impl Assembler {
         self.pending_relocs.push(Vec::new());
     }
 
+    fn unwind_layout_sections(&self) -> Result<Vec<Section>, AsmError> {
+        let mut sections = Vec::new();
+
+        if !self.compact_unwind_rows.is_empty() {
+            let row_count = u64::try_from(self.compact_unwind_rows.len())
+                .map_err(|_| AsmError("compact unwind row count exceeds u64".into()))?;
+            let mut section = Section::new("__LD", "__compact_unwind", SectionKind::CompactUnwind);
+            section.align_pow2 = 3;
+            section.size = row_count
+                .checked_mul(COMPACT_UNWIND_ENTRY_SIZE)
+                .ok_or_else(|| AsmError("compact unwind section size overflows u64".into()))?;
+            sections.push(section);
+        }
+
+        if !self.eh_frame_rows.is_empty() {
+            let mut size = EH_FRAME_CIE_SIZE;
+            for row in &self.eh_frame_rows {
+                let fde_size = EH_FRAME_FDE_FIXED_SIZE
+                    .checked_add(row.instructions.len())
+                    .ok_or_else(|| AsmError("eh_frame FDE size overflows usize".into()))?;
+                u32::try_from(fde_size - 4)
+                    .map_err(|_| AsmError("eh_frame FDE exceeds u32".into()))?;
+                size = size
+                    .checked_add(
+                        u64::try_from(fde_size)
+                            .map_err(|_| AsmError("eh_frame FDE size exceeds u64".into()))?,
+                    )
+                    .ok_or_else(|| AsmError("eh_frame section size overflows u64".into()))?;
+            }
+            let mut section = Section::new("__TEXT", "__eh_frame", SectionKind::EhFrame);
+            section.align_pow2 = 3;
+            section.size = size;
+            sections.push(section);
+        }
+
+        Ok(sections)
+    }
+
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
         if self.active_cfi_proc.is_some() {
             return Err(AsmError(
@@ -2203,6 +2264,11 @@ impl Assembler {
         self.materialize_eh_frame_section()?;
 
         let section_bases = self.section_base_addresses()?;
+        if section_bases != self.section_bases {
+            return Err(AsmError(
+                "section layout changed between assembly passes".into(),
+            ));
+        }
         let absolute_symbols = self.absolute_symbols.clone();
         let mut symbols: Vec<Symbol> = Vec::new();
         let flags = self.metadata_flags();

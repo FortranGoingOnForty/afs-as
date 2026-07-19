@@ -217,6 +217,22 @@ fn cross_section_zerofill_overflow_reports_the_triggering_directive() {
 }
 
 #[test]
+fn generated_unwind_layout_overflow_reports_the_triggering_directive() {
+    let error = assemble_source(
+        ".text\n\
+         _f:\n\
+         .cfi_startproc\n\
+         ret\n\
+         .cfi_endproc\n\
+         .zerofill __DATA,__bss,_a,9223372036854775807,0\n\
+         .zerofill __DATA,__bss,_b,9223372036854775803,0\n",
+    )
+    .expect_err("unwind-plus-zerofill layout overflow unexpectedly assembled");
+    assert_eq!((error.line, error.col), (Some(7), Some(1)));
+    assert_eq!(error.msg, "section layout size overflows u64");
+}
+
+#[test]
 fn preparsed_directives_enforce_the_same_range_contract() {
     let error = assemble_stmts(&[
         Stmt::Directive(Directive::Data),
