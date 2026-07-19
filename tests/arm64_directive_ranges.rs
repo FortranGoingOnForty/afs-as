@@ -233,6 +233,21 @@ fn generated_unwind_layout_overflow_reports_the_triggering_directive() {
 }
 
 #[test]
+fn large_unwind_layout_overflow_reports_the_triggering_directive() {
+    let mut source = String::from(".text\n");
+    for index in 0..4096 {
+        source.push_str(&format!("_f{index}:\n.cfi_startproc\nret\n.cfi_endproc\n"));
+    }
+    let trigger_line = source.lines().count() as u32 + 2;
+    source.push_str(".zerofill __DATA,__bss,_a,9223372036854775807,0\n");
+    source.push_str(".zerofill __DATA,__bss,_b,9223372036854775803,0\n");
+
+    let error = assemble_source(&source).expect_err("large unwind layout unexpectedly assembled");
+    assert_eq!((error.line, error.col), (Some(trigger_line), Some(1)));
+    assert_eq!(error.msg, "section layout size overflows u64");
+}
+
+#[test]
 fn preparsed_directives_enforce_the_same_range_contract() {
     let error = assemble_stmts(&[
         Stmt::Directive(Directive::Data),

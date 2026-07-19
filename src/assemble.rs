@@ -775,16 +775,34 @@ impl Assembler {
     }
 
     fn section_layout_error_location(stmts: &[LocatedStmt]) -> Option<(u32, u32)> {
+        if stmts.is_empty() || !Self::section_layout_overflows(stmts)? {
+            return None;
+        }
+
+        let mut first = 1;
+        let mut past_last = stmts.len();
+        while first < past_last {
+            let middle = first + (past_last - first) / 2;
+            if Self::section_layout_overflows(&stmts[..middle])? {
+                past_last = middle;
+            } else {
+                first = middle + 1;
+            }
+        }
+
+        let stmt = &stmts[first - 1];
+        Some((stmt.line, stmt.col))
+    }
+
+    fn section_layout_overflows(stmts: &[LocatedStmt]) -> Option<bool> {
         let mut probe = Self::new();
         for stmt in stmts {
             probe.collect_layout_stmt(stmt).ok()?;
-            let mut sections = probe.sections.clone();
-            sections.extend(probe.unwind_layout_sections().ok()?);
-            if Self::section_base_addresses_for(&sections).is_err() {
-                return Some((stmt.line, stmt.col));
-            }
         }
-        None
+        let unwind_sections = probe.unwind_layout_sections().ok()?;
+        let mut sections = probe.sections;
+        sections.extend(unwind_sections);
+        Some(Self::section_base_addresses_for(&sections).is_err())
     }
 
     fn process(&mut self, stmts: &[LocatedStmt]) -> Result<(), AsmError> {
