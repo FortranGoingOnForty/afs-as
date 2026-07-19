@@ -395,27 +395,27 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_section_attr(&mut self) -> Result<String, ParseError> {
-        let mut attr = String::new();
-        let mut consumed = false;
-        loop {
-            match self.peek().clone() {
-                Tok::Ident(s) => {
-                    self.advance();
-                    attr.push_str(&s);
-                    consumed = true;
-                }
-                Tok::Integer(n) => {
-                    self.advance();
-                    attr.push_str(&n.to_string());
-                    consumed = true;
-                }
-                _ => break,
+        match self.peek().clone() {
+            Tok::Ident(attr) => {
+                self.advance();
+                Ok(attr)
             }
-        }
-        if consumed {
-            Ok(attr)
-        } else {
-            Err(self.err(format!("expected section attribute, got {}", self.peek())))
+            Tok::Integer(value) => {
+                let start = self.cur().clone();
+                self.advance();
+                let mut attr = value.to_string();
+                let width = u32::try_from(attr.len()).unwrap_or(u32::MAX);
+                let next_is_adjacent = self.cur().line == start.line
+                    && self.cur().col == start.col.saturating_add(width);
+                if next_is_adjacent {
+                    if let Tok::Ident(suffix) = self.peek().clone() {
+                        self.advance();
+                        attr.push_str(&suffix);
+                    }
+                }
+                Ok(attr)
+            }
+            other => Err(self.err(format!("expected section attribute, got {}", other))),
         }
     }
 
@@ -772,13 +772,21 @@ impl<'a> Parser<'a> {
                 let sdk = if self.at_end_of_stmt() {
                     None
                 } else {
-                    let keyword = self.expect_ident()?;
+                    let keyword_start = self.pos;
+                    let keyword = self.peek().clone();
+                    let Tok::Ident(keyword) = &keyword else {
+                        return Err(self.err_at(
+                            keyword_start,
+                            format!("expected sdk_version after .build_version, got {}", keyword),
+                        ));
+                    };
                     if !keyword.eq_ignore_ascii_case("sdk_version") {
-                        return Err(self.err(format!(
-                            "expected sdk_version after .build_version, got {}",
-                            keyword
-                        )));
+                        return Err(self.err_at(
+                            keyword_start,
+                            format!("expected sdk_version after .build_version, got {}", keyword),
+                        ));
                     }
+                    self.advance();
                     Some(self.parse_version_triple("build version SDK")?)
                 };
                 if !self.at_end_of_stmt() {
@@ -10903,6 +10911,19 @@ mod tests {
                 Stmt::Label("named".into()),
                 Stmt::Label(".Ltmp$1$1".into()),
                 Stmt::Instruction(Inst::Ret { rn: X30 }),
+            ]
+        );
+        assert_eq!(
+            parse_stmts(".Llocal: named: 1: .byte 1, 2, 3"),
+            vec![
+                Stmt::Label(".Llocal".into()),
+                Stmt::Label("named".into()),
+                Stmt::Label(".Ltmp$1$1".into()),
+                Stmt::Directive(Directive::Byte(vec![
+                    Expr::Int(1),
+                    Expr::Int(2),
+                    Expr::Int(3),
+                ])),
             ]
         );
     }

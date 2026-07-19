@@ -219,7 +219,7 @@ impl std::fmt::Display for AsmError {
                 )?;
                 if let Some(snippet) = &self.snippet {
                     writeln!(f, "{}", snippet)?;
-                    write!(f, "{}^", " ".repeat(col.saturating_sub(1) as usize))?;
+                    write!(f, "{}^", diagnostic_caret_prefix(snippet, col))?;
                 }
                 Ok(())
             }
@@ -228,6 +228,16 @@ impl std::fmt::Display for AsmError {
             _ => write!(f, "error: {}", self.msg),
         }
     }
+}
+
+fn diagnostic_caret_prefix(snippet: &str, col: u32) -> String {
+    let mut chars = snippet.chars();
+    (0..col.saturating_sub(1))
+        .map(|_| match chars.next() {
+            Some('\t') => '\t',
+            Some(_) | None => ' ',
+        })
+        .collect()
 }
 
 impl std::error::Error for AsmError {}

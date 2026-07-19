@@ -56,6 +56,29 @@ fn snapshot_trailing_arm64_token() {
 }
 
 #[test]
+fn snapshot_trailing_tokens_after_arm64_directives() {
+    run_failure_snapshot(
+        "section-trailing-token.s",
+        ".section __TEXT,__text,regular,pure_instructions nop\n",
+        "<input>:1:50: error: unexpected trailing token: nop\n.section __TEXT,__text,regular,pure_instructions nop\n                                                 ^\n",
+    );
+    run_failure_snapshot(
+        "build-version-trailing-token.s",
+        ".build_version macos, 11, 0 nop\n",
+        "<input>:1:29: error: expected sdk_version after .build_version, got nop\n.build_version macos, 11, 0 nop\n                            ^\n",
+    );
+}
+
+#[test]
+fn snapshot_tabbed_trailing_arm64_token() {
+    run_failure_snapshot(
+        "tabbed-trailing-token.s",
+        ".text\nnop\tret\n",
+        "<input>:2:5: error: unexpected trailing token: ret\nnop\tret\n   \t^\n",
+    );
+}
+
+#[test]
 fn snapshot_unsupported_cfi_directive() {
     run_failure_snapshot(
         "unsupported-cfi.s",
