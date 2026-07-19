@@ -734,7 +734,22 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         }
     }
     // Local .comm allocations.
-    for (sym, (off, size)) in &local_bss {
+    for located in &stmts {
+        let sym = match &located.stmt {
+            Stmt::Directive(Directive::Globl(sym))
+            | Stmt::Directive(Directive::Local(sym))
+            | Stmt::Directive(Directive::Weak(sym)) => sym,
+            Stmt::Directive(Directive::Type { sym, .. })
+            | Stmt::Directive(Directive::Size { sym, .. })
+            | Stmt::Directive(Directive::Comm { sym, .. }) => sym,
+            _ => continue,
+        };
+        let Some(&(off, size)) = local_bss.get(sym) else {
+            continue;
+        };
+        if model_sym_index.contains_key(sym) {
+            continue;
+        }
         let info = syminfo.get(sym).cloned().unwrap_or_default();
         model_sym_index.insert(sym.clone(), obj.symbols.len());
         obj.symbols.push(Symbol {
@@ -743,8 +758,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             typ: info.typ.unwrap_or(STT_OBJECT),
             vis: STV_DEFAULT,
             place: SymbolPlace::Section(model_sec_index[".bss"]),
-            value: *off,
-            size: *size,
+            value: off,
+            size,
         });
     }
     // Global commons.
