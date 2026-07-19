@@ -480,8 +480,7 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
             let target = if prior_count > 0 {
                 Some(indices[prior_count - 1])
             } else {
-                let future = indices.partition_point(|index| *index <= assignment_index);
-                indices.get(future).copied()
+                indices.get(prior_count).copied()
             };
             if let Some(target) = target {
                 return AssignmentDependency::Assignment(target);
@@ -537,14 +536,7 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
                     stack.last_mut().expect("resolution frame").next_dependency += 1;
                 }
                 AssignmentDependency::Undefined => {
-                    let owner = self.assignments[frame.index].0.clone();
-                    self.states[frame.index] = AssignmentResolutionState::Resolved(Err(
-                        AbsoluteAssignmentError::UndefinedSymbol {
-                            owner,
-                            symbol: reference.name,
-                        },
-                    ));
-                    stack.pop();
+                    stack.last_mut().expect("resolution frame").next_dependency += 1;
                 }
                 AssignmentDependency::Assignment(target) => match self.states[target].clone() {
                     AssignmentResolutionState::Unvisited => {
@@ -577,6 +569,7 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
 
     fn evaluate_assignment(&self, index: usize) -> Result<i64, AbsoluteAssignmentError> {
         let mut symbols = BTreeMap::new();
+        let mut unresolved = Vec::new();
         for reference in &self.dependencies[index] {
             let value = match reference.dependency {
                 AssignmentDependency::Assignment(target) => match &self.states[target] {
@@ -588,10 +581,8 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
                 },
                 AssignmentDependency::Base(value) => value,
                 AssignmentDependency::Undefined => {
-                    return Err(AbsoluteAssignmentError::UndefinedSymbol {
-                        owner: self.assignments[index].0.clone(),
-                        symbol: reference.name.clone(),
-                    });
+                    unresolved.push(reference.name.clone());
+                    SymbolValue::Undefined
                 }
             };
             symbols.insert(reference.name.clone(), value);
@@ -600,12 +591,46 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
         let name = &self.assignments[index].0;
         match classify(&self.assignments[index].1, &symbols) {
             Ok(ClassifiedExpr::Absolute(value)) => Ok(value),
+            Err(ClassifyError::Overflow) => Err(AbsoluteAssignmentError::InvalidExpression {
+                owner: name.clone(),
+                error: ClassifyError::Overflow,
+            }),
+            _ if !unresolved.is_empty()
+                && self.can_resolve_with_labels(index, &symbols, &unresolved) =>
+            {
+                Err(AbsoluteAssignmentError::UndefinedSymbol {
+                    owner: name.clone(),
+                    symbol: unresolved[0].clone(),
+                })
+            }
             Ok(_) => Err(AbsoluteAssignmentError::NonAbsolute(name.clone())),
             Err(error) => Err(AbsoluteAssignmentError::InvalidExpression {
                 owner: name.clone(),
                 error,
             }),
         }
+    }
+
+    fn can_resolve_with_labels(
+        &self,
+        index: usize,
+        symbols: &BTreeMap<String, SymbolValue>,
+        unresolved: &[String],
+    ) -> bool {
+        let mut defined = symbols.clone();
+        for symbol in unresolved {
+            defined.insert(
+                symbol.clone(),
+                SymbolValue::Defined {
+                    section: usize::MAX,
+                    value: 0,
+                },
+            );
+        }
+        matches!(
+            classify(&self.assignments[index].1, &defined),
+            Ok(ClassifiedExpr::Absolute(_))
+        )
     }
 }
 

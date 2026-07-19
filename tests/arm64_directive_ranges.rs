@@ -420,6 +420,25 @@ fn absolute_assignment_cycles_report_the_definition() {
     ])
     .expect_err("preparsed cyclic assignments unexpectedly assembled");
     assert_eq!(direct.msg, "absolute symbol 'A' has a cyclic definition");
+
+    for source in [".set X,X\n", ".set X,X+1\n"] {
+        let error = assemble_source(source).expect_err("self-reference unexpectedly assembled");
+        assert_eq!((error.line, error.col), (Some(1), Some(1)));
+        assert_eq!(error.msg, "absolute symbol 'X' has a cyclic definition");
+    }
+
+    for expression in [
+        Expr::Symbol("X".into()),
+        Expr::Add(Box::new(Expr::Symbol("X".into())), Box::new(Expr::Int(1))),
+    ] {
+        let error = assemble_stmts(&[Stmt::Directive(Directive::Set("X".into(), expression))])
+            .expect_err("preparsed self-reference unexpectedly assembled");
+        assert_eq!(error.msg, "absolute symbol 'X' has a cyclic definition");
+    }
+
+    let increment = assemble_source(".set X,1\n.set X,X+1\n.byte X\n")
+        .expect("reassignment unexpectedly treated as self-reference");
+    assert_eq!(increment.text_section().data, [2]);
 }
 
 #[test]
@@ -432,6 +451,18 @@ fn definite_absolute_assignment_errors_report_the_definition() {
         (
             ".set X,.\n",
             "absolute symbol 'X': expression is not representable as a pointer-to-GOT relocation",
+        ),
+        (
+            ".set X,target@GOT\n",
+            "absolute symbol 'X' must resolve to an absolute value",
+        ),
+        (
+            ".set X,a+b\n",
+            "absolute symbol 'X': expression is not representable as an absolute value or relocation",
+        ),
+        (
+            ".set X,target\n",
+            "absolute symbol 'X' must resolve to an absolute value",
         ),
     ] {
         let error = assemble_source(source)
