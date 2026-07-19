@@ -3437,7 +3437,14 @@ fn simd_reduce_4s(base: u32, rn: FpReg, rd: FpReg) -> u32 {
 }
 
 fn simd_lane_imm5(size_log2: u8, index: u8) -> u32 {
+    assert_simd_lane_index(size_log2, index);
     ((1u32) << size_log2) | ((index as u32) << (size_log2 + 1))
+}
+
+fn assert_simd_lane_index(size_log2: u8, index: u8) {
+    assert!(size_log2 <= 3, "SIMD lane element size is invalid");
+    let lane_count = 16 >> size_log2;
+    assert!(index < lane_count, "SIMD lane index is out of range");
 }
 
 fn simd_dup_lane(size_log2: u8, rn: FpReg, index: u8, rd: FpReg) -> u32 {
@@ -3445,6 +3452,7 @@ fn simd_dup_lane(size_log2: u8, rn: FpReg, index: u8, rd: FpReg) -> u32 {
 }
 
 fn simd_ext_16b(rm: FpReg, rn: FpReg, rd: FpReg, index: u8) -> u32 {
+    assert_simd_lane_index(0, index);
     0x6E000000 | (rm.enc() << 16) | ((index as u32) << 11) | (rn.enc() << 5) | rd.enc()
 }
 
@@ -3458,10 +3466,12 @@ fn fp_mov_reg(base: u32, rn: FpReg, rd: FpReg) -> u32 {
 }
 
 fn simd_extract_lane_s(rn: FpReg, index: u8, rd: FpReg) -> u32 {
+    assert_simd_lane_index(2, index);
     0x5E040400 | ((index as u32) << 19) | (rn.enc() << 5) | rd.enc()
 }
 
 fn simd_extract_lane_d(rn: FpReg, index: u8, rd: FpReg) -> u32 {
+    assert_simd_lane_index(3, index);
     0x5E080400 | ((index as u32) << 20) | (rn.enc() << 5) | rd.enc()
 }
 
@@ -3479,18 +3489,26 @@ fn simd_extract_lane_gp_signed(size_log2: u8, rn: FpReg, index: u8, rd: GpReg) -
 }
 
 fn simd_insert_lane_s(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
+    assert_simd_lane_index(2, rn_index);
+    assert_simd_lane_index(2, rd_index);
     0x6E040400 | ((rd_index as u32) << 19) | ((rn_index as u32) << 13) | (rn.enc() << 5) | rd.enc()
 }
 
 fn simd_insert_lane_d(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
+    assert_simd_lane_index(3, rn_index);
+    assert_simd_lane_index(3, rd_index);
     0x6E080400 | ((rd_index as u32) << 20) | ((rn_index as u32) << 14) | (rn.enc() << 5) | rd.enc()
 }
 
 fn simd_insert_lane_h(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
+    assert_simd_lane_index(1, rn_index);
+    assert_simd_lane_index(1, rd_index);
     0x6E020400 | ((rd_index as u32) << 18) | ((rn_index as u32) << 12) | (rn.enc() << 5) | rd.enc()
 }
 
 fn simd_insert_lane_b(rn: FpReg, rn_index: u8, rd: FpReg, rd_index: u8) -> u32 {
+    assert_simd_lane_index(0, rn_index);
+    assert_simd_lane_index(0, rd_index);
     0x6E010400 | ((rd_index as u32) << 17) | ((rn_index as u32) << 11) | (rn.enc() << 5) | rd.enc()
 }
 
@@ -3499,6 +3517,7 @@ fn simd_insert_lane_gp(size_log2: u8, rn: GpReg, index: u8, rd: FpReg) -> u32 {
 }
 
 fn simd_load_lane(size_log2: u8, rn: GpReg, index: u8, rt: FpReg) -> u32 {
+    assert_simd_lane_index(size_log2, index);
     let base = match size_log2 {
         0 => 0x0D400000,
         1 => 0x0D404000,
@@ -3729,6 +3748,81 @@ mod tests {
                     rt2: D1,
                     rn: X2,
                     offset: 1024,
+                },
+            ),
+            (
+                "SIMD duplicate lane",
+                Inst::DupV16B {
+                    rd: D0,
+                    rn: D1,
+                    index: 16,
+                },
+            ),
+            (
+                "SIMD extract index",
+                Inst::ExtV16B {
+                    rd: D0,
+                    rn: D1,
+                    rm: D2,
+                    index: 16,
+                },
+            ),
+            (
+                "SIMD scalar lane extraction",
+                Inst::MovFromLaneS {
+                    rd: D0,
+                    rn: D1,
+                    index: 4,
+                },
+            ),
+            (
+                "SIMD GP lane extraction",
+                Inst::UmovFromLaneH {
+                    rd: W0,
+                    rn: D1,
+                    index: 8,
+                },
+            ),
+            (
+                "SIMD signed GP lane extraction",
+                Inst::SmovFromLaneB {
+                    rd: W0,
+                    rn: D1,
+                    index: 16,
+                },
+            ),
+            (
+                "SIMD lane insertion source",
+                Inst::MovLaneS {
+                    rd: D0,
+                    rd_index: 0,
+                    rn: D1,
+                    rn_index: 4,
+                },
+            ),
+            (
+                "SIMD lane insertion destination",
+                Inst::MovLaneH {
+                    rd: D0,
+                    rd_index: 8,
+                    rn: D1,
+                    rn_index: 0,
+                },
+            ),
+            (
+                "SIMD GP lane insertion",
+                Inst::MovLaneFromGpH {
+                    rd: D0,
+                    rd_index: 8,
+                    rn: W0,
+                },
+            ),
+            (
+                "SIMD lane load",
+                Inst::Ld1LaneD {
+                    rt: D0,
+                    index: 2,
+                    rn: X0,
                 },
             ),
         ];
