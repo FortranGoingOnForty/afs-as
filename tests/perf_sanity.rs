@@ -138,6 +138,18 @@ fn calibrated_relocation_count() -> usize {
     }
 }
 
+fn calibrated_object_count() -> usize {
+    let mut count = 1_000;
+    loop {
+        let src = relocation_source(count);
+        let elapsed = measure_library_pass(&src, 1);
+        if elapsed >= Duration::from_millis(50) || count >= 32_000 {
+            return count;
+        }
+        count *= 2;
+    }
+}
+
 fn run_cli(bin: &Path, input: &Path, output: &Path) -> Duration {
     let start = Instant::now();
     let status = Command::new(bin)
@@ -206,6 +218,27 @@ fn relocation_resolution_scales_near_linearly() {
     assert!(
         large_time <= ratio_ceiling,
         "relocation resolution scaling regressed: medium {:?}, large {:?}, ceiling {:?}",
+        medium_time,
+        large_time,
+        ratio_ceiling
+    );
+}
+
+#[test]
+fn relocation_object_pipeline_scales_near_linearly() {
+    let medium_count = calibrated_object_count();
+    let medium = relocation_source(medium_count);
+    let large = relocation_source(medium_count * 2);
+
+    let _ = measure_library_pass(&large, 1);
+
+    let medium_time = measure_library_pass(&medium, 3);
+    let large_time = measure_library_pass(&large, 3);
+    let ratio_ceiling = medium_time.mul_f64(3.0) + Duration::from_millis(5);
+
+    assert!(
+        large_time <= ratio_ceiling,
+        "relocation object scaling regressed: medium {:?}, large {:?}, ceiling {:?}",
         medium_time,
         large_time,
         ratio_ceiling

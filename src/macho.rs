@@ -4,7 +4,7 @@
 //! Implements the minimum viable subset: header, segment with supported Mach-O
 //! sections, symbol table, dynamic symbol table, build version, and relocations.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Write};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -631,6 +631,48 @@ struct StringTable {
     offsets: BTreeMap<String, u32>,
 }
 
+struct SuffixIndex {
+    edges: HashMap<(usize, u8), usize>,
+    offsets: Vec<Option<usize>>,
+}
+
+impl SuffixIndex {
+    fn new() -> Self {
+        Self {
+            edges: HashMap::new(),
+            offsets: vec![None],
+        }
+    }
+
+    fn offset(&self, name: &str) -> Option<usize> {
+        let mut node = 0;
+        for byte in name.bytes().rev() {
+            node = *self.edges.get(&(node, byte))?;
+        }
+        self.offsets[node]
+    }
+
+    fn record_appended(&mut self, name: &str, start: usize) {
+        let terminator = start + name.len();
+        self.offsets[0].get_or_insert(terminator);
+
+        let mut node = 0;
+        for (index, byte) in name.bytes().rev().enumerate() {
+            let key = (node, byte);
+            node = match self.edges.get(&key) {
+                Some(&child) => child,
+                None => {
+                    let child = self.offsets.len();
+                    self.offsets.push(None);
+                    self.edges.insert(key, child);
+                    child
+                }
+            };
+            self.offsets[node].get_or_insert(terminator - index - 1);
+        }
+    }
+}
+
 fn build_string_table(symbols: &[Symbol]) -> io::Result<StringTable> {
     let mut names: Vec<&str> = symbols.iter().map(|sym| sym.name.as_str()).collect();
     names.sort_unstable();
@@ -642,15 +684,20 @@ fn build_string_table(symbols: &[Symbol]) -> io::Result<StringTable> {
 
     let mut bytes = vec![0u8];
     let mut offsets = BTreeMap::new();
+    let mut suffixes = SuffixIndex::new();
     for name in names {
-        let offset = suffix_string_offset(&bytes, name).unwrap_or_else(|| {
-            let offset = bytes.len();
-            bytes.extend_from_slice(name.as_bytes());
-            bytes.push(0);
-            offset
-        });
-        let offset = usize_to_u32(offset, "string table symbol offset")?;
-        offsets.insert(name.to_string(), offset);
+        let offset = match suffixes.offset(name) {
+            Some(offset) => offset,
+            None => {
+                let offset = bytes.len();
+                bytes.extend_from_slice(name.as_bytes());
+                bytes.push(0);
+                suffixes.record_appended(name, offset);
+                offset
+            }
+        };
+        let encoded_offset = usize_to_u32(offset, "string table symbol offset")?;
+        offsets.insert(name.to_string(), encoded_offset);
     }
 
     // Apple pads the object string table to 8-byte alignment.
@@ -659,23 +706,6 @@ fn build_string_table(symbols: &[Symbol]) -> io::Result<StringTable> {
     }
 
     Ok(StringTable { bytes, offsets })
-}
-
-fn suffix_string_offset(strtab: &[u8], name: &str) -> Option<usize> {
-    let name_bytes = name.as_bytes();
-    let entry_len = name_bytes.len().checked_add(1)?;
-    if strtab.len() < entry_len {
-        return None;
-    }
-
-    for pos in 1..=strtab.len().checked_sub(entry_len)? {
-        if &strtab[pos..pos + name_bytes.len()] == name_bytes && strtab[pos + name_bytes.len()] == 0
-        {
-            return Some(pos);
-        }
-    }
-
-    None
 }
 
 fn write_reloc<W: Write>(w: &mut W, rel: &Relocation) -> io::Result<()> {
@@ -939,6 +969,22 @@ fn write_pad16<W: Write>(w: &mut W, name: &[u8]) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    fn string_symbol(name: &str) -> Symbol {
+        Symbol {
+            name: name.into(),
+            section: 1,
+            value: 0,
+            global: false,
+            undefined: false,
+            absolute: false,
+            common: false,
+            common_align_pow2: 0,
+            private_extern: false,
+            weak_ref: false,
+            weak_def: false,
+        }
+    }
+
     #[test]
     fn empty_object_is_valid_macho() {
         let obj = ObjectFile::new();
@@ -1149,6 +1195,26 @@ mod tests {
         assert_eq!(strtab.offsets["_aaa"], 1);
         assert_eq!(strtab.offsets["aaa"], 2);
         assert_eq!(strtab.offsets["ltmp0"], 6);
+    }
+
+    #[test]
+    fn string_table_reuses_the_earliest_suffix_offset() {
+        let names = ["dba", "cba", "ba", "", "δba", "γba", "a"];
+        let symbols: Vec<_> = names.iter().map(|name| string_symbol(name)).collect();
+        let strtab = build_string_table(&symbols).unwrap();
+
+        for name in names {
+            let name_bytes = name.as_bytes();
+            let expected = (1..strtab.bytes.len() - name_bytes.len()).find(|&offset| {
+                &strtab.bytes[offset..offset + name_bytes.len()] == name_bytes
+                    && strtab.bytes[offset + name_bytes.len()] == 0
+            });
+            assert_eq!(
+                strtab.offsets[name],
+                u32::try_from(expected.expect("name appears as a terminated suffix")).unwrap(),
+                "wrong suffix offset for {name:?}"
+            );
+        }
     }
 
     #[test]
