@@ -867,9 +867,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_cfi_register(&mut self) -> Result<GpReg, ParseError> {
+        let start = self.pos;
         let (register, _, kind) = self.parse_gp_reg_with_size_kind()?;
         if matches!(kind, GpRegKind::Zr) {
-            return Err(self.err("CFI directives do not accept the zero register".into()));
+            return Err(self.err_at(
+                start,
+                "CFI directives do not accept the zero register".into(),
+            ));
         }
         Ok(register)
     }
@@ -1735,13 +1739,7 @@ impl<'a> Parser<'a> {
     fn parse_add_sub_gp_reg_with_size_kind(
         &mut self,
     ) -> Result<(GpReg, bool, GpRegKind), ParseError> {
-        let name = self.expect_ident()?;
-        let lower = name.to_lowercase();
-        if lower == "wsp" {
-            Ok((SP, false, GpRegKind::Sp))
-        } else {
-            self.gp_reg_with_size_kind_from_name(&name, &lower)
-        }
+        self.parse_gp_reg_with_size_kind()
     }
 
     fn gp_reg_with_size_kind_from_name(
@@ -1749,16 +1747,12 @@ impl<'a> Parser<'a> {
         name: &str,
         lower: &str,
     ) -> Result<(GpReg, bool, GpRegKind), ParseError> {
-        if lower == "sp" || lower == "xzr" {
-            let kind = if lower == "sp" {
-                GpRegKind::Sp
-            } else {
-                GpRegKind::Zr
-            };
-            return Ok((parse_gp_reg_name(lower).unwrap(), true, kind));
-        }
-        if lower == "wzr" {
-            return Ok((WZR, false, GpRegKind::Zr));
+        match lower {
+            "sp" => return Ok((SP, true, GpRegKind::Sp)),
+            "wsp" => return Ok((SP, false, GpRegKind::Sp)),
+            "xzr" => return Ok((XZR, true, GpRegKind::Zr)),
+            "wzr" => return Ok((WZR, false, GpRegKind::Zr)),
+            _ => {}
         }
         if lower.starts_with('x') {
             let reg = parse_gp_reg_name(lower)
@@ -1854,26 +1848,35 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_atomic_data_reg(&mut self, context: &str) -> Result<(GpReg, bool), ParseError> {
+        let start = self.pos;
         let (reg, sf, kind) = self.parse_gp_reg_with_size_kind()?;
         if kind == GpRegKind::Sp {
-            return Err(self.err(format!("{} does not allow SP as a data register", context)));
+            return Err(self.err_at(
+                start,
+                format!("{} does not allow SP as a data register", context),
+            ));
         }
         Ok((reg, sf))
     }
 
     fn parse_atomic_wreg(&mut self, context: &str) -> Result<GpReg, ParseError> {
+        let start = self.pos;
         let (reg, sf) = self.parse_atomic_data_reg(context)?;
         if sf {
-            return Err(self.err(format!("{} requires a w-register", context)));
+            return Err(self.err_at(start, format!("{} requires a w-register", context)));
         }
         Ok(reg)
     }
 
     fn parse_atomic_base_reg(&mut self, context: &str) -> Result<GpReg, ParseError> {
         self.expect(&Tok::LBracket)?;
+        let start = self.pos;
         let (rn, sf, kind) = self.parse_gp_reg_with_size_kind()?;
         if !sf || kind == GpRegKind::Zr {
-            return Err(self.err(format!("{} expects an [Xn] or [sp] base register", context)));
+            return Err(self.err_at(
+                start,
+                format!("{} expects an [Xn] or [sp] base register", context),
+            ));
         }
         if !self.eat(&Tok::RBracket) {
             return Err(self.err(format!("{} expects a simple [Xn] memory operand", context)));
@@ -1939,12 +1942,16 @@ impl<'a> Parser<'a> {
     fn parse_atomic_rmw(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
         let (rs, sf) = self.parse_atomic_data_reg(mnemonic)?;
         self.expect(&Tok::Comma)?;
+        let rt_start = self.pos;
         let (rt, rt_sf) = self.parse_atomic_data_reg(mnemonic)?;
         if sf != rt_sf {
-            return Err(self.err(format!(
-                "{} requires source and destination registers of the same width",
-                mnemonic
-            )));
+            return Err(self.err_at(
+                rt_start,
+                format!(
+                    "{} requires source and destination registers of the same width",
+                    mnemonic
+                ),
+            ));
         }
         self.expect(&Tok::Comma)?;
         let rn = self.parse_atomic_base_reg(mnemonic)?;
@@ -2920,31 +2927,48 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_shift(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
         let (rd, sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
         let (rn, rn_sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
 
         if rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp {
-            return Err(self.err(format!("{} does not allow SP", mnemonic)));
+            let start = if rd_kind == GpRegKind::Sp {
+                rd_start
+            } else {
+                rn_start
+            };
+            return Err(self.err_at(start, format!("{} does not allow SP", mnemonic)));
         }
         if sf != rn_sf {
-            return Err(self.err(format!(
-                "{} requires source and destination registers of the same width",
-                mnemonic
-            )));
+            return Err(self.err_at(
+                rn_start,
+                format!(
+                    "{} requires source and destination registers of the same width",
+                    mnemonic
+                ),
+            ));
         }
 
         if self.peek_is_gp_reg() {
+            let rm_start = self.pos;
             let (rm, rm_sf, rm_kind) = self.parse_gp_reg_with_size_kind()?;
             if rm_kind == GpRegKind::Sp {
-                return Err(self.err(format!("{} register form does not allow SP", mnemonic)));
+                return Err(self.err_at(
+                    rm_start,
+                    format!("{} register form does not allow SP", mnemonic),
+                ));
             }
             if sf != rm_sf {
-                return Err(self.err(format!(
-                    "{} register form requires registers of the same width",
-                    mnemonic
-                )));
+                return Err(self.err_at(
+                    rm_start,
+                    format!(
+                        "{} register form requires registers of the same width",
+                        mnemonic
+                    ),
+                ));
             }
             return Ok(match mnemonic {
                 "lsl" => Inst::LslReg { rd, rn, rm, sf },
@@ -2976,24 +3000,34 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_extend_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
         let (rd, rd_sf, rd_kind) = self.parse_gp_reg_with_size_kind()?;
         self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
         let (rn, rn_sf, rn_kind) = self.parse_gp_reg_with_size_kind()?;
 
         if rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp {
-            return Err(self.err(format!("{} does not allow SP", mnemonic)));
+            let start = if rd_kind == GpRegKind::Sp {
+                rd_start
+            } else {
+                rn_start
+            };
+            return Err(self.err_at(start, format!("{} does not allow SP", mnemonic)));
         }
         if rn_sf {
-            return Err(self.err(format!("{} requires a w-register source", mnemonic)));
+            return Err(self.err_at(
+                rn_start,
+                format!("{} requires a w-register source", mnemonic),
+            ));
         }
 
         match mnemonic {
             "sxtw" if rd_sf => Ok(Inst::Sxtw { rd, rn }),
-            "sxtw" => Err(self.err("sxtw requires an x-register destination".into())),
+            "sxtw" => Err(self.err_at(rd_start, "sxtw requires an x-register destination".into())),
             "sxtb" => Ok(Inst::Sxtb { rd, rn, sf: rd_sf }),
             "sxth" => Ok(Inst::Sxth { rd, rn, sf: rd_sf }),
             "uxtw" if rd_sf => Ok(Inst::Uxtw { rd, rn }),
-            "uxtw" => Err(self.err("uxtw requires an x-register destination".into())),
+            "uxtw" => Err(self.err_at(rd_start, "uxtw requires an x-register destination".into())),
             _ => unreachable!(),
         }
     }
@@ -5125,9 +5159,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_fmov(&mut self) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
         self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
 
         if lower.starts_with('d') || lower.starts_with('s') {
             let rd = parse_fp_reg_name(&lower)
@@ -5145,7 +5181,10 @@ impl<'a> Parser<'a> {
                 Tok::Ident(src) if looks_like_fp_register_name(src) => {
                     let (rn, src_is_double) = self.parse_fp_reg_with_size()?;
                     if src_is_double != is_double {
-                        Err(self.err("fmov register copy requires matching FP widths".into()))
+                        Err(self.err_at(
+                            rn_start,
+                            "fmov register copy requires matching FP widths".into(),
+                        ))
                     } else if is_double {
                         Ok(Inst::FmovRegD { rd, rn })
                     } else {
@@ -5156,20 +5195,22 @@ impl<'a> Parser<'a> {
                     // FMOV Dd, Xn or FMOV Sd, Wn (GP → FP)
                     let (rn, sf, kind) = self.parse_gp_reg_with_size_kind()?;
                     if kind == GpRegKind::Sp {
-                        return Err(self.err("fmov does not allow SP".into()));
+                        return Err(self.err_at(rn_start, "fmov does not allow SP".into()));
                     }
                     if is_double {
                         if !sf {
-                            return Err(
-                                self.err("fmov dN, ... requires an x-register source".into())
-                            );
+                            return Err(self.err_at(
+                                rn_start,
+                                "fmov dN, ... requires an x-register source".into(),
+                            ));
                         }
                         Ok(Inst::FmovToD { rd, rn })
                     } else {
                         if sf {
-                            return Err(
-                                self.err("fmov sN, ... requires a w-register source".into())
-                            );
+                            return Err(self.err_at(
+                                rn_start,
+                                "fmov sN, ... requires a w-register source".into(),
+                            ));
                         }
                         Ok(Inst::FmovToS { rd, rn })
                     }
@@ -5179,14 +5220,19 @@ impl<'a> Parser<'a> {
             // FMOV Xd, Dn or FMOV Wd, Sn (FP → GP)
             let (rd, sf, kind) = self.gp_reg_with_size_kind_from_name(&name, &lower)?;
             if kind == GpRegKind::Sp {
-                return Err(self.err("fmov does not allow SP".into()));
+                return Err(self.err_at(rd_start, "fmov does not allow SP".into()));
             }
             let (rn, is_double) = self.parse_fp_reg_with_size()?;
             match (sf, is_double) {
                 (true, true) => Ok(Inst::FmovFromD { rd, rn }),
                 (false, false) => Ok(Inst::FmovFromS { rd, rn }),
-                (true, false) => Err(self.err("fmov xN, ... requires a d-register source".into())),
-                (false, true) => Err(self.err("fmov wN, ... requires an s-register source".into())),
+                (true, false) => {
+                    Err(self.err_at(rn_start, "fmov xN, ... requires a d-register source".into()))
+                }
+                (false, true) => Err(self.err_at(
+                    rn_start,
+                    "fmov wN, ... requires an s-register source".into(),
+                )),
             }
         }
     }
@@ -11338,6 +11384,18 @@ mod tests {
             stmts,
             vec![Stmt::Directive(Directive::CfiDefCfa {
                 register: W29,
+                offset: 16,
+            })]
+        );
+    }
+
+    #[test]
+    fn parse_cfi_def_cfa_with_wsp() {
+        let stmts = parse_stmts(".cfi_def_cfa wsp, 16");
+        assert_eq!(
+            stmts,
+            vec![Stmt::Directive(Directive::CfiDefCfa {
+                register: SP,
                 offset: 16,
             })]
         );

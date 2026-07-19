@@ -264,6 +264,51 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "<input>:2:7: error: umull destination must be an X register\numull w0, w1, w2\n      ^\n",
         ),
         (
+            "umull-first-source-width.s",
+            "umull x0, x1, w2",
+            "<input>:2:11: error: umull sources must be W registers\numull x0, x1, w2\n          ^\n",
+        ),
+        (
+            "umull-second-source-width.s",
+            "umull x0, w1, x2",
+            "<input>:2:15: error: umull sources must be W registers\numull x0, w1, x2\n              ^\n",
+        ),
+        (
+            "extend-source-width.s",
+            "sxtw x0, x1",
+            "<input>:2:10: error: sxtw requires a w-register source\nsxtw x0, x1\n         ^\n",
+        ),
+        (
+            "extend-destination-width.s",
+            "uxtw w0, w1",
+            "<input>:2:6: error: uxtw requires an x-register destination\nuxtw w0, w1\n     ^\n",
+        ),
+        (
+            "extend-stack-pointer-destination.s",
+            "sxtb sp, w1",
+            "<input>:2:6: error: sxtb does not allow SP\nsxtb sp, w1\n     ^\n",
+        ),
+        (
+            "immediate-zero-register-destination.s",
+            "add xzr, x1, #1",
+            "<input>:2:5: error: add/sub immediate forms require a register or sp destination, not xzr/wzr\nadd xzr, x1, #1\n    ^\n",
+        ),
+        (
+            "immediate-zero-register-base.s",
+            "add x0, xzr, #1",
+            "<input>:2:9: error: add/sub immediate forms require a register or sp base, not xzr/wzr\nadd x0, xzr, #1\n        ^\n",
+        ),
+        (
+            "extended-zero-register-destination.s",
+            "add xzr, x1, w2, uxtw",
+            "<input>:2:5: error: extended add/sub forms require a register or sp destination, not xzr/wzr\nadd xzr, x1, w2, uxtw\n    ^\n",
+        ),
+        (
+            "extended-zero-register-base.s",
+            "add x0, xzr, w2, uxtw",
+            "<input>:2:9: error: extended add/sub forms require an x-register or sp base operand, not xzr/wzr\nadd x0, xzr, w2, uxtw\n        ^\n",
+        ),
+        (
             "ldrsw-destination-width.s",
             "ldrsw w0, [x1]",
             "<input>:2:7: error: ldrsw destination must be an x-register\nldrsw w0, [x1]\n      ^\n",
@@ -277,6 +322,76 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "register-offset-stack-pointer.s",
             "ldr x0, [x1, sp]",
             "<input>:2:14: error: register offset does not allow sp\nldr x0, [x1, sp]\n             ^\n",
+        ),
+        (
+            "wsp-data-operand.s",
+            "ldr wsp, [x0]",
+            "<input>:2:5: error: ldr/str data operand does not allow sp as a data register\nldr wsp, [x0]\n    ^\n",
+        ),
+        (
+            "wsp-memory-base.s",
+            "ldr x0, [wsp]",
+            "<input>:2:10: error: ldr/str memory base requires an x-register or sp base\nldr x0, [wsp]\n         ^\n",
+        ),
+        (
+            "wsp-register-offset.s",
+            "ldr x0, [x1, wsp]",
+            "<input>:2:14: error: register offset does not allow sp\nldr x0, [x1, wsp]\n             ^\n",
+        ),
+        (
+            "wsp-atomic-data.s",
+            "stlr wsp, [x0]",
+            "<input>:2:6: error: stlr does not allow SP as a data register\nstlr wsp, [x0]\n     ^\n",
+        ),
+        (
+            "wsp-atomic-base.s",
+            "stlr w0, [wsp]",
+            "<input>:2:11: error: stlr expects an [Xn] or [sp] base register\nstlr w0, [wsp]\n          ^\n",
+        ),
+        (
+            "wsp-shift-operand.s",
+            "lsl w0, wsp, #1",
+            "<input>:2:9: error: lsl does not allow SP\nlsl w0, wsp, #1\n        ^\n",
+        ),
+        (
+            "wsp-fmov-source.s",
+            "fmov s0, wsp",
+            "<input>:2:10: error: fmov does not allow SP\nfmov s0, wsp\n         ^\n",
+        ),
+        (
+            "wsp-fmov-destination.s",
+            "fmov wsp, s0",
+            "<input>:2:6: error: fmov does not allow SP\nfmov wsp, s0\n     ^\n",
+        ),
+        (
+            "atomic-narrow-data-width.s",
+            "ldaprb x0, [x1]",
+            "<input>:2:8: error: ldaprb requires a w-register\nldaprb x0, [x1]\n       ^\n",
+        ),
+        (
+            "atomic-rmw-width.s",
+            "ldaddal x0, w1, [x2]",
+            "<input>:2:13: error: ldaddal requires source and destination registers of the same width\nldaddal x0, w1, [x2]\n            ^\n",
+        ),
+        (
+            "shift-source-width.s",
+            "lsl x0, w1, #1",
+            "<input>:2:9: error: lsl requires source and destination registers of the same width\nlsl x0, w1, #1\n        ^\n",
+        ),
+        (
+            "shift-register-width.s",
+            "lsl x0, x1, w2",
+            "<input>:2:13: error: lsl register form requires registers of the same width\nlsl x0, x1, w2\n            ^\n",
+        ),
+        (
+            "fmov-gp-source-width.s",
+            "fmov d0, w1",
+            "<input>:2:10: error: fmov dN, ... requires an x-register source\nfmov d0, w1\n         ^\n",
+        ),
+        (
+            "fmov-fp-source-width.s",
+            "fmov x0, s1",
+            "<input>:2:10: error: fmov xN, ... requires a d-register source\nfmov x0, s1\n         ^\n",
         ),
     ] {
         run_failure_snapshot(name, &format!(".text\n{}\n", instruction), expected);
