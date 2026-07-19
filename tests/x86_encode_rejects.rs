@@ -2,7 +2,8 @@
 //! instruction must now be rejected — matching gas, which rejects them
 //! too. A2: `movhlps` with a memory operand became movlps. A3: a
 //! base+disp displacement past the 32-bit signed range truncated. A4:
-//! `%ch/%dh/%bh` as a variable shift count became `%cl`.
+//! `%ch/%dh/%bh` as a variable shift count became `%cl`. Qword TEST
+//! immediates outside the signed imm32 encoding range also truncated.
 
 #[path = "common/elf.rs"]
 mod celf;
@@ -25,6 +26,10 @@ const REJECTED: &[&str] = &[
     "shlq %ch, %rax",
     "shrl %dh, %ebx",
     "sarq %bh, %rcx",
+    // TEST r/m64, imm32 sign-extends its immediate.
+    "testq $2147483648, %rax",
+    "testq $-2147483649, %r11",
+    "testq $4294967296, %rax",
 ];
 
 fn encode_line(line: &str) -> afs_as::x86::encode::EncodeResult {

@@ -1055,6 +1055,9 @@ fn encode_test(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
         }
         [Operand::Imm(imm), Operand::Reg(r)] => {
             check_width(*r, w, mnemonic)?;
+            if w == Width::Q && i32::try_from(*imm).is_err() {
+                return Err(format!("{} immediate does not fit i32", mnemonic));
+            }
             if r.num == 0 && r.class == RegClass::Gp {
                 // gas uses the accumulator short form A8/A9 for al/ax/eax/rax.
                 // TEST has no sign-extended-imm8 form, so it is always full

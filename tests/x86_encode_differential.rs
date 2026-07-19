@@ -89,6 +89,8 @@ const CASES: &[&str] = &[
     "testw $5, %ax",
     "testl $5, %eax",
     "testq $5, %rax",
+    "testq $2147483647, %rax",
+    "testq $-2147483648, %r11",
     // push/pop/ret
     "pushq %rbp",
     "pushq %r15",
