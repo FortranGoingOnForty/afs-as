@@ -174,6 +174,18 @@ fn branch_relaxation_matches_gas() {
                 pad(100)
             ),
         ),
+        (
+            "strong_global_jmp",
+            ".text\n.globl foo\nfoo:\n    ret\n.globl caller\ncaller:\n    jmp foo\n".into(),
+        ),
+        (
+            "weak_jmp",
+            ".text\n.weak foo\nfoo:\n    ret\n.globl caller\ncaller:\n    jmp foo\n".into(),
+        ),
+        (
+            "weak_jcc",
+            ".text\n.weak foo\nfoo:\n    ret\n.globl caller\ncaller:\n    je foo\n".into(),
+        ),
     ];
     let tmp = celf::TempArtifacts::new("afs_x86_relax");
     let mut failures = Vec::new();
@@ -208,18 +220,73 @@ fn large_bss_space_matches_gas_without_materializing() {
 }
 
 #[test]
-fn space_and_skip_fill_bytes_match_gas() {
+fn explicit_fill_bytes_match_gas() {
     let Some(gas) = celf::gas_path() else {
         celf::skip(
             "x86_assemble_differential",
-            "space_and_skip_fill_bytes_match_gas",
+            "explicit_fill_bytes_match_gas",
             "no GNU assembler on this host",
         );
         return;
     };
     let tmp = celf::TempArtifacts::new("afs_x86_space_fill");
-    let src = ".text\n.globl f\nf:\n.space 4,0x90\n.skip 3,0xab\nret\n.data\nd:\n.space 4,0x7f\n";
-    if let Some(f) = diff_one("space_skip_fill", src, &gas, &tmp) {
+    let src = ".text\n.globl f\nf:\n.byte 0\n.p2align 2,,3\n.byte 0\n.p2align 2,0xcc\n.space 4,0x90\n.skip 3,0xab\nret\n.data\nd:\n.byte 0\n.p2align 2,0x5a\n.space 4,0x7f\n";
+    if let Some(f) = diff_one("explicit_fill", src, &gas, &tmp) {
         panic!("{f}");
     }
+}
+
+#[test]
+fn default_common_alignment_matches_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "default_common_alignment_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_common_alignment");
+    let src = ".text\nret\n.comm c0,0\n.comm c1,1\n.comm c2,2\n.comm c3,3\n.comm c5,5\n.comm c9,9\n.comm c16,16\n.comm c32,32\n";
+    if let Some(f) = diff_one("default_common_alignment", src, &gas, &tmp) {
+        panic!("{f}");
+    }
+}
+
+#[test]
+fn exported_dot_l_symbols_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "exported_dot_l_symbols_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let cases = [
+        (
+            "global_dot_l_call",
+            ".text\n.globl .Lfoo\ncaller: call .Lfoo\n.Lfoo: ret\n",
+        ),
+        (
+            "global_dot_l_jmp",
+            ".text\n.globl .Lfoo\ncaller: jmp .Lfoo\n.Lfoo: ret\n",
+        ),
+        (
+            "weak_dot_l_call",
+            ".text\n.weak .Lfoo\ncaller: call .Lfoo\n.Lfoo: ret\n",
+        ),
+        (
+            "weak_dot_l_jmp",
+            ".text\n.weak .Lfoo\ncaller: jmp .Lfoo\n.Lfoo: ret\n",
+        ),
+    ];
+    let tmp = celf::TempArtifacts::new("afs_x86_exported_dot_l");
+    let mut failures = Vec::new();
+    for (name, src) in cases {
+        if let Some(failure) = diff_one(name, src, &gas, &tmp) {
+            failures.push(failure);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }

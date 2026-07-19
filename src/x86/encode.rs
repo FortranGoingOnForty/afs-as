@@ -325,10 +325,22 @@ impl Parts {
 pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
     match mnemonic {
         "ret" | "retq" => {
+            let bytes = match ops {
+                [] => vec![0xc3],
+                [Operand::Imm(imm)]
+                    if i16::try_from(*imm).is_ok() || u16::try_from(*imm).is_ok() =>
+                {
+                    let mut bytes = vec![0xc2];
+                    bytes.extend_from_slice(&(*imm as u16).to_le_bytes());
+                    bytes
+                }
+                [Operand::Imm(_)] => return Err("ret immediate does not fit 16 bits".into()),
+                _ => return Err("ret expects zero operands or one immediate".into()),
+            };
             return Ok(Encoded {
-                bytes: vec![0xc3],
+                bytes,
                 ..Default::default()
-            })
+            });
         }
         "cqto" | "cqo" => {
             return Ok(Encoded {
@@ -1055,6 +1067,9 @@ fn encode_test(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
         }
         [Operand::Imm(imm), Operand::Reg(r)] => {
             check_width(*r, w, mnemonic)?;
+            if w == Width::Q && i32::try_from(*imm).is_err() {
+                return Err(format!("{} immediate does not fit i32", mnemonic));
+            }
             if r.num == 0 && r.class == RegClass::Gp {
                 // gas uses the accumulator short form A8/A9 for al/ax/eax/rax.
                 // TEST has no sign-extended-imm8 form, so it is always full

@@ -16,7 +16,7 @@
 //! the addend. Global and weak symbols always keep a symbol
 //! relocation (they can be preempted).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::super::elf::{
     self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, EM_X86_64, SHF_ALLOC,
@@ -56,10 +56,13 @@ enum Item {
     Fill { size: u64, byte: u8 },
     /// Relaxable branch to a section-local label.
     Branch { kind: BranchKind, label: String },
-    /// .p2align: pad to 1<<p2, but skip the alignment entirely when the
-    /// padding would exceed the optional max-skip (`.p2align N,,M`). Text
-    /// sections fill with NOPs, data with zeros.
-    Align(u32, Option<u64>),
+    /// `.p2align`: pad to `1 << pow`, subject to an optional maximum skip.
+    /// An omitted fill selects text NOPs or data zeros.
+    Align {
+        pow: u32,
+        fill: Option<u8>,
+        max_skip: Option<u64>,
+    },
     /// `.size sym, .-base`: records the dot position at the
     /// directive so the size is exact even with padding or local
     /// labels after the body. Zero width.
@@ -98,6 +101,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let mut syminfo: HashMap<String, SymInfo> = HashMap::new();
     // (sym, size, align, line)
     let mut commons: Vec<(String, u64, u64, u32)> = Vec::new();
+    let mut common_names: HashSet<String> = HashSet::new();
     // label -> section index (for cross-section checks + reloc targets)
     let mut label_section: HashMap<String, usize> = HashMap::new();
 
@@ -125,6 +129,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         let line = located.line;
         match &located.stmt {
             Stmt::Label(name) => {
+                if common_names.contains(name) {
+                    return Err(err(line, format!("symbol '{}' is already defined", name)));
+                }
                 if current == usize::MAX {
                     current = ensure_sec(".text", &mut secs, &mut sec_index);
                 }
@@ -167,16 +174,28 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     }
                 }
                 Directive::Comm { sym, size, align } => {
+                    if label_section.contains_key(sym) {
+                        return Err(err(line, format!("symbol '{}' is already defined", sym)));
+                    }
+                    common_names.insert(sym.clone());
                     commons.push((sym.clone(), *size, *align, line))
                 }
                 Directive::File(_) => {}
-                Directive::P2Align { pow, max_skip } => {
+                Directive::P2Align {
+                    pow,
+                    fill,
+                    max_skip,
+                } => {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
                     let sb = &mut secs[current].1;
                     sb.max_align = sb.max_align.max(1u64 << pow);
-                    sb.items.push(Item::Align(*pow, *max_skip));
+                    sb.items.push(Item::Align {
+                        pow: *pow,
+                        fill: *fill,
+                        max_skip: *max_skip,
+                    });
                 }
                 Directive::Byte(items)
                 | Directive::Short(items)
@@ -352,6 +371,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 (BranchKind::Jcc(_), true) => 6,
             }
         };
+        let is_local_branch = |label: &str| {
+            sb.labels.contains_key(label)
+                && !syminfo.get(label).map(|info| info.weak).unwrap_or(false)
+        };
         // Fixed-point.
         loop {
             // Compute offsets under current sizing.
@@ -364,14 +387,13 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
                     Item::Branch { kind, label } => {
-                        let external = !sb.labels.contains_key(label);
-                        if external {
-                            5 // always rel32 + reloc (jcc external unsupported below)
-                        } else {
+                        if is_local_branch(label) {
                             branch_len(*kind, long[i])
+                        } else {
+                            branch_len(*kind, true)
                         }
                     }
-                    Item::Align(p2, max_skip) => align_pad(pos, *p2, *max_skip),
+                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip),
                     Item::SizeDot(_) => 0,
                 };
             }
@@ -380,7 +402,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             let mut grew = false;
             for (i, item) in sb.items.iter().enumerate() {
                 if let Item::Branch { kind, label } = item {
-                    if long[i] || !sb.labels.contains_key(label) {
+                    if long[i] || !is_local_branch(label) {
                         continue;
                     }
                     let target_item = sb.labels[label];
@@ -412,13 +434,13 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
                     Item::Branch { kind, label } => {
-                        if sb.labels.contains_key(label) {
+                        if is_local_branch(label) {
                             branch_len(*kind, long[i])
                         } else {
-                            5
+                            branch_len(*kind, true)
                         }
                     }
-                    Item::Align(p2, max_skip) => align_pad(pos, *p2, *max_skip),
+                    Item::Align { pow, max_skip, .. } => align_pad(pos, *pow, *max_skip),
                     Item::SizeDot(_) => 0,
                 };
             }
@@ -477,7 +499,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     pos += *size;
                 }
                 Item::Branch { kind, label } => {
-                    if let Some(&target_item) = sb.labels.get(label) {
+                    if is_local_branch(label) {
+                        let target_item = sb.labels[label];
                         let target = item_offsets.get(target_item).copied().unwrap_or(pos);
                         let here = pos;
                         if long[i] {
@@ -505,34 +528,36 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             pos += 2;
                         }
                     } else {
-                        // External target: jmp only (tail call shape).
-                        match kind {
-                            BranchKind::Jmp => {
-                                relocs.push(InsnReloc {
-                                    offset: reloc_offset(pos + 1)?,
-                                    sym: label.clone(),
-                                    r_type: R_X86_64_PLT32,
-                                    addend: -4,
-                                });
-                                if !is_bss {
-                                    bytes.push(0xe9);
-                                    bytes.extend_from_slice(&0i32.to_le_bytes());
-                                }
-                                pos += 5;
-                            }
-                            BranchKind::Jcc(_) => {
-                                return Err(err(0, format!("jcc to undefined label '{}'", label)))
-                            }
+                        let (head, disp_offset): (&[u8], u64) = match kind {
+                            BranchKind::Jmp => (&[0xe9], 1),
+                            BranchKind::Jcc(cc) => (&[0x0f, 0x80 + cc], 2),
+                        };
+                        relocs.push(InsnReloc {
+                            offset: reloc_offset(pos + disp_offset)?,
+                            sym: label.clone(),
+                            r_type: R_X86_64_PLT32,
+                            addend: -4,
+                        });
+                        if !is_bss {
+                            bytes.extend_from_slice(head);
+                            bytes.extend_from_slice(&0i32.to_le_bytes());
                         }
+                        pos += head.len() as u64 + 4;
                     }
                 }
-                Item::Align(p2, max_skip) => {
-                    let pad = align_pad(pos, *p2, *max_skip);
+                Item::Align {
+                    pow,
+                    fill,
+                    max_skip,
+                } => {
+                    let pad = align_pad(pos, *pow, *max_skip);
                     if !is_bss {
                         let len = usize::try_from(pad)
                             .map_err(|_| err(0, format!("alignment fill too large: {}", pad)))?;
                         let here = bytes.len();
-                        if is_text {
+                        if let Some(byte) = fill {
+                            bytes.resize(here + len, *byte);
+                        } else if is_text {
                             fill_nops(&mut bytes, len);
                         } else {
                             bytes.resize(here + len, 0);
@@ -622,21 +647,21 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         }
     }
 
-    // Symbols: file-local labels (.L*) stay out of the symtab; all
-    // other defined labels become symbols with recorded binding/type/
-    // size. Section symbols are synthesized on demand for local-label
-    // relocations.
+    // Symbols: unexported file-local labels (.L*) stay out of the symtab;
+    // explicitly global or weak definitions remain visible. All other
+    // defined labels carry their recorded binding/type/size. Section symbols
+    // are synthesized on demand for local-label relocations.
     let mut model_sym_index: HashMap<String, usize> = HashMap::new();
     let mut section_sym: HashMap<usize, usize> = HashMap::new();
 
     for (li, l) in laid.iter().enumerate() {
         // Deterministic: label_order from the build.
         for label in secs[li].1.label_order.iter() {
-            if label.starts_with(".L") {
+            let info = syminfo.get(label).cloned().unwrap_or_default();
+            if label.starts_with(".L") && !info.globl && !info.weak {
                 continue;
             }
             let off = l.labels[label];
-            let info = syminfo.get(label).cloned().unwrap_or_default();
             let bind = if info.weak {
                 STB_WEAK
             } else if info.globl {
@@ -775,7 +800,12 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     };
                     (ss, rt, r.addend + off as i64)
                 }
-                Some((_, _, false)) => (model_sym_index[&r.sym], r.r_type, r.addend),
+                Some((_, _, false)) => {
+                    let sym_idx = model_sym_index.get(&r.sym).copied().ok_or_else(|| {
+                        err(0, format!("missing symbol table entry for '{}'", r.sym))
+                    })?;
+                    (sym_idx, r.r_type, r.addend)
+                }
                 None => {
                     if let Some(&idx) = model_sym_index.get(&r.sym) {
                         // Defined elsewhere in the model (e.g. a
