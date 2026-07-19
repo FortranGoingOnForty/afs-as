@@ -1655,6 +1655,18 @@ impl<'a> Parser<'a> {
         Ok((reg, is_64bit))
     }
 
+    fn parse_gp_reg_matching_width(
+        &mut self,
+        expected_64bit: bool,
+        context: &str,
+    ) -> Result<GpReg, ParseError> {
+        let (reg, is_64bit) = self.parse_gp_reg_with_size()?;
+        if is_64bit != expected_64bit {
+            return Err(self.err(format!("{} requires registers of the same width", context)));
+        }
+        Ok(reg)
+    }
+
     fn parse_gp_reg_with_size_kind(&mut self) -> Result<(GpReg, bool, GpRegKind), ParseError> {
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
@@ -1737,6 +1749,18 @@ impl<'a> Parser<'a> {
         } else {
             Err(self.err(format!("expected FP register, got '{}'", name)))
         }
+    }
+
+    fn parse_fp_reg_matching_width(
+        &mut self,
+        expected_double: bool,
+        context: &str,
+    ) -> Result<FpReg, ParseError> {
+        let (reg, is_double) = self.parse_fp_reg_with_size()?;
+        if is_double != expected_double {
+            return Err(self.err(format!("{} requires registers of the same width", context)));
+        }
+        Ok(reg)
     }
 
     fn parse_fp_mem_reg_with_width(&mut self) -> Result<(FpReg, FpMemWidth), ParseError> {
@@ -2252,7 +2276,7 @@ impl<'a> Parser<'a> {
                 sf,
             })
         } else {
-            let (rm, _) = self.parse_gp_reg_with_size()?;
+            let rm = self.parse_gp_reg_matching_width(sf, "tst")?;
             Ok(Inst::AndsReg {
                 rd: XZR,
                 rn,
@@ -2270,6 +2294,9 @@ impl<'a> Parser<'a> {
             return Err(self.err("neg does not allow sp operands".into()));
         }
         let modifier = self.parse_optional_add_sub_modifier(sf, rm_is_64bit)?;
+        if !matches!(modifier, Some(AddSubModifier::Extend(..))) && rm_is_64bit != sf {
+            return Err(self.err("neg requires registers of the same width".into()));
+        }
         self.validate_add_sub_extended_base_reg(GpRegKind::Zr, modifier)?;
         if let Some(modifier) = modifier {
             Ok(match modifier {
@@ -2303,7 +2330,7 @@ impl<'a> Parser<'a> {
     fn parse_mvn(&mut self) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
+        let rm = self.parse_gp_reg_matching_width(sf, "mvn")?;
         Ok(Inst::OrnReg {
             rd,
             rn: XZR,
@@ -2315,9 +2342,9 @@ impl<'a> Parser<'a> {
     fn parse_cond_select(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
+        let rm = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
@@ -2384,7 +2411,7 @@ impl<'a> Parser<'a> {
     fn parse_cond_select_unary_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
@@ -2504,9 +2531,9 @@ impl<'a> Parser<'a> {
     fn parse_3reg(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
+        let rm = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         Ok(match mnemonic {
             "mul" => Inst::Mul { rd, rn, rm, sf },
             "sdiv" => Inst::Sdiv { rd, rn, rm, sf },
@@ -2518,11 +2545,11 @@ impl<'a> Parser<'a> {
     fn parse_madd_sub(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_gp_reg_with_size()?;
+        let rm = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (ra, _) = self.parse_gp_reg_with_size()?;
+        let ra = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         Ok(match mnemonic {
             "madd" => Inst::Madd { rd, rn, rm, ra, sf },
             "msub" => Inst::Msub { rd, rn, rm, ra, sf },
@@ -2555,7 +2582,7 @@ impl<'a> Parser<'a> {
     fn parse_logic(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
         if self.starts_immediate_expr() {
             let imm = self.parse_logical_immediate_value(sf)?;
@@ -2567,7 +2594,7 @@ impl<'a> Parser<'a> {
                 _ => unreachable!(),
             })
         } else {
-            let (rm, _) = self.parse_gp_reg_with_size()?;
+            let rm = self.parse_gp_reg_matching_width(sf, mnemonic)?;
             Ok(match mnemonic {
                 "and" => Inst::AndReg { rd, rn, rm, sf },
                 "orr" => Inst::OrrReg { rd, rn, rm, sf },
@@ -2595,7 +2622,10 @@ impl<'a> Parser<'a> {
                 )))
             }
         } else {
-            let (rm, _, rm_kind) = self.parse_gp_reg_with_size_kind()?;
+            let (rm, rm_is_64bit, rm_kind) = self.parse_gp_reg_with_size_kind()?;
+            if rm_is_64bit != sf {
+                return Err(self.err("mov requires registers of the same width".into()));
+            }
             if rm_kind == GpRegKind::Sp || rd_kind == GpRegKind::Sp {
                 // MOV involving SP → ADD Xd, Xn, #0 (SP can't be used in ORR shifted reg)
                 Ok(Inst::AddImm {
@@ -2860,7 +2890,7 @@ impl<'a> Parser<'a> {
     fn parse_bitfield_alias(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, sf) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_gp_reg_with_size()?;
+        let rn = self.parse_gp_reg_matching_width(sf, mnemonic)?;
         self.expect(&Tok::Comma)?;
         let lsb_start = self.pos;
         let lsb = self.parse_immediate_const_expr("bitfield lsb")?;
@@ -4368,9 +4398,9 @@ impl<'a> Parser<'a> {
     fn parse_fp_arith(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
+        let rn = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_fp_reg_with_size()?;
+        let rm = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         Ok(match (mnemonic, is_double) {
             ("fadd", true) => Inst::FaddD { rd, rn, rm },
             ("fadd", false) => Inst::FaddS { rd, rn, rm },
@@ -4888,7 +4918,7 @@ impl<'a> Parser<'a> {
     fn parse_fp_unary(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
+        let rn = self.parse_fp_reg_matching_width(is_double, mnemonic)?;
         Ok(match (mnemonic, is_double) {
             ("fneg", true) => Inst::FnegD { rd, rn },
             ("fneg", false) => Inst::FnegS { rd, rn },
@@ -4903,7 +4933,7 @@ impl<'a> Parser<'a> {
     fn parse_fcmp(&mut self) -> Result<Inst, ParseError> {
         let (rn, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_fp_reg_with_size()?;
+        let rm = self.parse_fp_reg_matching_width(is_double, "fcmp")?;
         if is_double {
             Ok(Inst::FcmpD { rn, rm })
         } else {
@@ -4914,9 +4944,9 @@ impl<'a> Parser<'a> {
     fn parse_fcsel(&mut self) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
+        let rn = self.parse_fp_reg_matching_width(is_double, "fcsel")?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_fp_reg_with_size()?;
+        let rm = self.parse_fp_reg_matching_width(is_double, "fcsel")?;
         self.expect(&Tok::Comma)?;
         let cond_name = self.expect_ident()?;
         let cond = parse_condition(&cond_name)
@@ -4931,11 +4961,11 @@ impl<'a> Parser<'a> {
     fn parse_fmadd(&mut self) -> Result<Inst, ParseError> {
         let (rd, is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
-        let (rn, _) = self.parse_fp_reg_with_size()?;
+        let rn = self.parse_fp_reg_matching_width(is_double, "fmadd")?;
         self.expect(&Tok::Comma)?;
-        let (rm, _) = self.parse_fp_reg_with_size()?;
+        let rm = self.parse_fp_reg_matching_width(is_double, "fmadd")?;
         self.expect(&Tok::Comma)?;
-        let (ra, _) = self.parse_fp_reg_with_size()?;
+        let ra = self.parse_fp_reg_matching_width(is_double, "fmadd")?;
         if is_double {
             Ok(Inst::FmaddD { rd, rn, rm, ra })
         } else {
@@ -5383,6 +5413,9 @@ impl<'a> Parser<'a> {
         }
 
         let uses_sp = rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp;
+        if !uses_sp && rn_is_64bit != sf {
+            return Err(self.err("add/sub requires registers of the same width".into()));
+        }
         let modifier = if uses_sp {
             if rn_is_64bit != sf {
                 return Err(self.err(
@@ -5427,6 +5460,10 @@ impl<'a> Parser<'a> {
             modifier
         };
 
+        if !uses_sp && !matches!(modifier, Some(AddSubModifier::Extend(..))) && rm_is_64bit != sf {
+            return Err(self.err("add/sub requires registers of the same width".into()));
+        }
+
         if matches!(modifier, Some(AddSubModifier::Extend(..))) {
             self.validate_add_sub_extended_base_reg(rn_kind, modifier)?;
             match (sets_flags, rd_kind) {
@@ -5456,9 +5493,13 @@ impl<'a> Parser<'a> {
     ) -> Result<(), ParseError> {
         let (rd_is_64bit, rd_kind) = rd;
         let (rn_is_64bit, rn_kind) = rn;
-        if (rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp) && rd_is_64bit != rn_is_64bit {
-            return Err(self
-                .err("add/sub immediate operands involving sp must have matching widths".into()));
+        if rd_is_64bit != rn_is_64bit {
+            let message = if rd_kind == GpRegKind::Sp || rn_kind == GpRegKind::Sp {
+                "add/sub immediate operands involving sp must have matching widths"
+            } else {
+                "add/sub immediate operands must have matching widths"
+            };
+            return Err(self.err(message.into()));
         }
         if rn_kind == GpRegKind::Zr {
             return Err(self
