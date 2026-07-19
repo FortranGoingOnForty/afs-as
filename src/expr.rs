@@ -591,6 +591,9 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
         let name = &self.assignments[index].0;
         match classify(&self.assignments[index].1, &symbols) {
             Ok(ClassifiedExpr::Absolute(value)) => Ok(value),
+            Ok(ClassifiedExpr::UnsignedAbsolute(value)) => {
+                Ok(i64::from_le_bytes(value.to_le_bytes()))
+            }
             Err(ClassifyError::Overflow) => Err(AbsoluteAssignmentError::InvalidExpression {
                 owner: name.clone(),
                 error: ClassifyError::Overflow,

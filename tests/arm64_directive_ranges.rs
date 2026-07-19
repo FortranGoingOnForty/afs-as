@@ -1,5 +1,6 @@
 use afs_as::assemble::{assemble_source, assemble_stmts};
 use afs_as::expr::Expr;
+use afs_as::macho::ARM64_RELOC_UNSIGNED;
 use afs_as::parse::{parse, Directive, Stmt};
 
 #[test]
@@ -401,6 +402,71 @@ fn quad_absolute_symbols_use_the_value_visible_at_each_directive() {
         .collect();
     assert_eq!(source.text_section().data, expected);
     assert_eq!(direct.text_section().data, source.text_section().data);
+}
+
+#[test]
+fn full_width_absolute_symbols_preserve_64_bit_patterns() {
+    let object = assemble_source(
+        ".set ALL_ONES,0xffffffffffffffff\n\
+         .equ ALIAS,ALL_ONES\n\
+         .set MIN,-9223372036854775808\n\
+         .data\n\
+         .quad ALL_ONES,ALIAS,MIN\n\
+         .quad _external + ALL_ONES\n",
+    )
+    .expect("full-width absolute symbols unexpectedly rejected");
+
+    let data = object.section("__DATA", "__data").unwrap();
+    let expected: Vec<_> = [u64::MAX, u64::MAX, 1_u64 << 63, u64::MAX]
+        .into_iter()
+        .flat_map(u64::to_le_bytes)
+        .collect();
+    assert_eq!(data.data, expected);
+    assert_eq!(data.relocations.len(), 1);
+    assert_eq!(data.relocations[0].reloc_type, ARM64_RELOC_UNSIGNED);
+
+    for (name, value) in [
+        ("ALL_ONES", u64::MAX),
+        ("ALIAS", u64::MAX),
+        ("MIN", 1_u64 << 63),
+    ] {
+        let symbol = object
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == name)
+            .unwrap();
+        assert!(symbol.absolute);
+        assert_eq!(symbol.value, value, "symbol: {name}");
+    }
+
+    let direct = assemble_stmts(&[
+        Stmt::Directive(Directive::Set("ALL_ONES".into(), Expr::Unsigned(u64::MAX))),
+        Stmt::Directive(Directive::Quad(vec![Expr::Symbol("ALL_ONES".into())])),
+    ])
+    .expect("preparsed full-width assignment unexpectedly rejected");
+    assert_eq!(direct.text_section().data, u64::MAX.to_le_bytes());
+    let symbol = direct
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "ALL_ONES")
+        .unwrap();
+    assert!(symbol.absolute);
+    assert_eq!(symbol.value, u64::MAX);
+}
+
+#[test]
+fn full_width_assignments_keep_checked_arithmetic() {
+    let source = assemble_source(".set X,--9223372036854775808\n")
+        .expect_err("overflowing signed-minimum negation unexpectedly assembled");
+    assert_eq!((source.line, source.col), (Some(1), Some(1)));
+    assert_eq!(source.msg, "absolute symbol 'X': expression overflows i64");
+
+    let direct = assemble_stmts(&[Stmt::Directive(Directive::Set(
+        "X".into(),
+        Expr::Add(Box::new(Expr::Unsigned(u64::MAX)), Box::new(Expr::Int(1))),
+    ))])
+    .expect_err("overflowing preparsed full-width arithmetic unexpectedly assembled");
+    assert_eq!(direct.msg, "absolute symbol 'X': expression overflows i64");
 }
 
 #[test]

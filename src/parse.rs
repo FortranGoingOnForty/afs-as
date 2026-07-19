@@ -320,7 +320,7 @@ fn scan_absolute_assignments(tokens: &[Token]) -> Vec<AbsoluteAssignmentPreview>
         let parsed = (|| {
             let name = parser.expect_ident()?;
             parser.expect(&Tok::Comma)?;
-            let expr = parser.parse_expr()?;
+            let expr = parser.parse_absolute_assignment_expr()?;
             if !parser.at_end_of_stmt() {
                 return Err(parser.err("invalid absolute assignment".into()));
             }
@@ -701,7 +701,7 @@ impl<'a> Parser<'a> {
             ".set" | ".equ" => {
                 let sym = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
-                let expr = self.parse_expr()?;
+                let expr = self.parse_absolute_assignment_expr()?;
                 match self.absolute_assignment_values.get(&(line, col)).cloned() {
                     Some(Ok(value)) => {
                         self.absolute_symbols.insert(sym.clone(), value);
@@ -1299,6 +1299,15 @@ impl<'a> Parser<'a> {
         self.parse_expr_with_standalone_unsigned("standalone .quad values")
     }
 
+    fn parse_absolute_assignment_expr(&mut self) -> Result<Expr, ParseError> {
+        let expr =
+            self.parse_expr_with_standalone_unsigned("standalone absolute assignment values")?;
+        Ok(match expr {
+            Expr::Unsigned(value) => Expr::Int(i64::from_le_bytes(value.to_le_bytes())),
+            expr => expr,
+        })
+    }
+
     fn parse_expr_with_standalone_unsigned(
         &mut self,
         restriction: &str,
@@ -1366,7 +1375,14 @@ impl<'a> Parser<'a> {
             minus_count += 1;
         }
 
-        let parsed = self.parse_primary_expr(allow_wide_unsigned, nesting)?;
+        let signed_min_literal = minus_count > 0
+            && matches!(self.peek(), Tok::UnsignedInteger(value) if *value == 1_u64 << 63);
+        let parsed = if signed_min_literal {
+            self.advance();
+            ParsedExpr::leaf(Expr::Int(i64::MIN))
+        } else {
+            self.parse_primary_expr(allow_wide_unsigned, nesting)?
+        };
         if parsed.depth > MAX_EXPRESSION_DEPTH - minus_count {
             let offending_minus = first_minus + (MAX_EXPRESSION_DEPTH - parsed.depth);
             return Err(self.expression_depth_error(offending_minus));
@@ -1374,7 +1390,8 @@ impl<'a> Parser<'a> {
 
         let depth = parsed.depth + minus_count;
         let mut expr = parsed.expr;
-        for _ in 0..minus_count {
+        let wrapping_minuses = minus_count - usize::from(signed_min_literal);
+        for _ in 0..wrapping_minuses {
             expr = Expr::UnaryMinus(Box::new(expr));
         }
         Ok(ParsedExpr { expr, depth })
@@ -11464,6 +11481,42 @@ mod tests {
                 Stmt::Directive(Directive::Quad(vec![Expr::Unsigned(u64::MAX)])),
             ]
         );
+    }
+
+    #[test]
+    fn signed_minimum_and_full_width_assignments_preserve_their_bits() {
+        assert_eq!(
+            parse_stmts(".quad -9223372036854775808"),
+            vec![Stmt::Directive(Directive::Quad(vec![Expr::Int(i64::MIN)]))]
+        );
+        assert_eq!(
+            parse_stmts(".set ALL_ONES, 0xffffffffffffffff"),
+            vec![Stmt::Directive(Directive::Set(
+                "ALL_ONES".into(),
+                Expr::Int(-1),
+            ))]
+        );
+
+        let error = parse(".quad -9223372036854775809").unwrap_err();
+        assert_eq!((error.line, error.col), (1, 8));
+        assert_eq!(
+            error.msg,
+            "unsigned integer literals above i64::MAX must be standalone .quad values"
+        );
+    }
+
+    #[test]
+    fn full_width_assignments_reject_compound_unsigned_expressions() {
+        for source in [
+            ".set X,0xffffffffffffffff + 1",
+            ".equ X,1 + 0xffffffffffffffff",
+        ] {
+            let error = parse(source).unwrap_err();
+            assert_eq!(
+                error.msg,
+                "unsigned integer literals above i64::MAX must be standalone absolute assignment values"
+            );
+        }
     }
 
     #[test]
