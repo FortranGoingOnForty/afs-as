@@ -110,6 +110,8 @@ fn bitfield_alias_immediates_reject_values_before_narrowing() {
 fn w_logical_immediates_preserve_32_bit_source_values() {
     assert_encoding("and w0, w1, #-2", 0x121F_7820);
     assert_encoding("and w0, w1, #4294967294", 0x121F_7820);
+    assert_encoding("and w0, w1, #-2147483649", 0x1200_7820);
+    assert_encoding("and w0, w1, #-4294967295", 0x1200_0020);
 }
 
 #[test]
@@ -117,7 +119,7 @@ fn w_logical_immediates_reject_truncating_source_values() {
     for source in [
         "and w0, w1, #4294967296",
         "and w0, w1, #8589934590",
-        "and w0, w1, #-2147483649",
+        "and w0, w1, #-4294967296",
         "and w0, w1, #-4294967298",
     ] {
         assert_rejected(source, "32-bit logical immediate");

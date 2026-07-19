@@ -203,7 +203,17 @@ fn snapshot_invalid_arm64_immediates() {
         (
             "logical-immediate-out-of-range.s",
             "and w0, w1, #8589934590",
-            "<input>:2:13: error: 32-bit logical immediate must be in the range -2147483648..=4294967295, got 8589934590\nand w0, w1, #8589934590\n            ^\n",
+            "<input>:2:13: error: 32-bit logical immediate must be in the range -4294967295..=4294967295, got 8589934590\nand w0, w1, #8589934590\n            ^\n",
+        ),
+        (
+            "bitfield-lsb-out-of-range.s",
+            "ubfiz x0, x1, #-1, #1",
+            "<input>:2:15: error: ubfiz lsb -1 is out of range for 64-bit register\nubfiz x0, x1, #-1, #1\n              ^\n",
+        ),
+        (
+            "bitfield-width-out-of-range.s",
+            "bfi w0, w1, #0, #0",
+            "<input>:2:17: error: bfi width must be at least 1\nbfi w0, w1, #0, #0\n                ^\n",
         ),
     ] {
         run_failure_snapshot(name, &format!(".text\n{}\n", instruction), expected);

@@ -1036,14 +1036,14 @@ impl<'a> Parser<'a> {
         let raw = if sf {
             imm as u64
         } else {
-            if !(i64::from(i32::MIN)..=i64::from(u32::MAX)).contains(&imm) {
+            let min = -i64::from(u32::MAX);
+            let max = i64::from(u32::MAX);
+            if !(min..=max).contains(&imm) {
                 return Err(self.err_at(
                     start,
                     format!(
                         "32-bit logical immediate must be in the range {}..={}, got {}",
-                        i32::MIN,
-                        u32::MAX,
-                        imm
+                        min, max, imm
                     ),
                 ));
             }
@@ -2862,10 +2862,12 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rn, _) = self.parse_gp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
+        let lsb_start = self.pos;
         let lsb = self.parse_immediate_const_expr("bitfield lsb")?;
         self.expect(&Tok::Comma)?;
+        let width_start = self.pos;
         let width = self.parse_immediate_const_expr("bitfield width")?;
-        self.validate_bitfield_alias_args(mnemonic, sf, lsb, width)?;
+        self.validate_bitfield_alias_args(mnemonic, sf, lsb, width, lsb_start, width_start)?;
         let lsb = u8::try_from(lsb)
             .map_err(|_| self.err(format!("{} lsb does not fit in u8", mnemonic)))?;
         let width = u8::try_from(width)
@@ -5492,22 +5494,33 @@ impl<'a> Parser<'a> {
         sf: bool,
         lsb: i64,
         width: i64,
+        lsb_start: usize,
+        width_start: usize,
     ) -> Result<(), ParseError> {
         let bits = if sf { 64i64 } else { 32i64 };
         if width <= 0 {
-            return Err(self.err(format!("{} width must be at least 1", mnemonic)));
+            return Err(self.err_at(
+                width_start,
+                format!("{} width must be at least 1", mnemonic),
+            ));
         }
         if !(0..bits).contains(&lsb) {
-            return Err(self.err(format!(
-                "{} lsb {} is out of range for {}-bit register",
-                mnemonic, lsb, bits
-            )));
+            return Err(self.err_at(
+                lsb_start,
+                format!(
+                    "{} lsb {} is out of range for {}-bit register",
+                    mnemonic, lsb, bits
+                ),
+            ));
         }
         if width > bits - lsb {
-            return Err(self.err(format!(
-                "{} width {} with lsb {} exceeds {}-bit register width",
-                mnemonic, width, lsb, bits
-            )));
+            return Err(self.err_at(
+                width_start,
+                format!(
+                    "{} width {} with lsb {} exceeds {}-bit register width",
+                    mnemonic, width, lsb, bits
+                ),
+            ));
         }
         Ok(())
     }
