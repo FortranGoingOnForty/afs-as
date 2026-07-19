@@ -352,6 +352,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 (BranchKind::Jcc(_), true) => 6,
             }
         };
+        let is_local_branch = |label: &str| {
+            sb.labels.contains_key(label)
+                && !syminfo.get(label).map(|info| info.weak).unwrap_or(false)
+        };
         // Fixed-point.
         loop {
             // Compute offsets under current sizing.
@@ -364,11 +368,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
                     Item::Branch { kind, label } => {
-                        let external = !sb.labels.contains_key(label);
-                        if external {
-                            5 // always rel32 + reloc (jcc external unsupported below)
-                        } else {
+                        if is_local_branch(label) {
                             branch_len(*kind, long[i])
+                        } else {
+                            branch_len(*kind, true)
                         }
                     }
                     Item::Align(p2, max_skip) => align_pad(pos, *p2, *max_skip),
@@ -380,7 +383,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             let mut grew = false;
             for (i, item) in sb.items.iter().enumerate() {
                 if let Item::Branch { kind, label } = item {
-                    if long[i] || !sb.labels.contains_key(label) {
+                    if long[i] || !is_local_branch(label) {
                         continue;
                     }
                     let target_item = sb.labels[label];
@@ -412,10 +415,10 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
                     Item::Branch { kind, label } => {
-                        if sb.labels.contains_key(label) {
+                        if is_local_branch(label) {
                             branch_len(*kind, long[i])
                         } else {
-                            5
+                            branch_len(*kind, true)
                         }
                     }
                     Item::Align(p2, max_skip) => align_pad(pos, *p2, *max_skip),
@@ -477,7 +480,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     pos += *size;
                 }
                 Item::Branch { kind, label } => {
-                    if let Some(&target_item) = sb.labels.get(label) {
+                    if is_local_branch(label) {
+                        let target_item = sb.labels[label];
                         let target = item_offsets.get(target_item).copied().unwrap_or(pos);
                         let here = pos;
                         if long[i] {
@@ -505,25 +509,21 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             pos += 2;
                         }
                     } else {
-                        // External target: jmp only (tail call shape).
-                        match kind {
-                            BranchKind::Jmp => {
-                                relocs.push(InsnReloc {
-                                    offset: reloc_offset(pos + 1)?,
-                                    sym: label.clone(),
-                                    r_type: R_X86_64_PLT32,
-                                    addend: -4,
-                                });
-                                if !is_bss {
-                                    bytes.push(0xe9);
-                                    bytes.extend_from_slice(&0i32.to_le_bytes());
-                                }
-                                pos += 5;
-                            }
-                            BranchKind::Jcc(_) => {
-                                return Err(err(0, format!("jcc to undefined label '{}'", label)))
-                            }
+                        let (head, disp_offset): (&[u8], u64) = match kind {
+                            BranchKind::Jmp => (&[0xe9], 1),
+                            BranchKind::Jcc(cc) => (&[0x0f, 0x80 + cc], 2),
+                        };
+                        relocs.push(InsnReloc {
+                            offset: reloc_offset(pos + disp_offset)?,
+                            sym: label.clone(),
+                            r_type: R_X86_64_PLT32,
+                            addend: -4,
+                        });
+                        if !is_bss {
+                            bytes.extend_from_slice(head);
+                            bytes.extend_from_slice(&0i32.to_le_bytes());
                         }
+                        pos += head.len() as u64 + 4;
                     }
                 }
                 Item::Align(p2, max_skip) => {

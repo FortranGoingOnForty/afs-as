@@ -174,6 +174,18 @@ fn branch_relaxation_matches_gas() {
                 pad(100)
             ),
         ),
+        (
+            "strong_global_jmp",
+            ".text\n.globl foo\nfoo:\n    ret\n.globl caller\ncaller:\n    jmp foo\n".into(),
+        ),
+        (
+            "weak_jmp",
+            ".text\n.weak foo\nfoo:\n    ret\n.globl caller\ncaller:\n    jmp foo\n".into(),
+        ),
+        (
+            "weak_jcc",
+            ".text\n.weak foo\nfoo:\n    ret\n.globl caller\ncaller:\n    je foo\n".into(),
+        ),
     ];
     let tmp = celf::TempArtifacts::new("afs_x86_relax");
     let mut failures = Vec::new();
