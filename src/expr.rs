@@ -1,6 +1,6 @@
 //! Expression AST and constant evaluation for assembler directives and operands.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,19 +353,84 @@ fn push_plain_term(terms: &mut Vec<(String, i32)>, symbol: String, delta: i32) {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AbsoluteAssignmentError {
+    UndefinedSymbol { owner: String, symbol: String },
+    CyclicDefinition(String),
+    NonAbsolute(String),
+    InvalidExpression { owner: String, error: ClassifyError },
+}
+
+impl AbsoluteAssignmentError {
+    pub(crate) fn may_resolve_with_labels(&self) -> bool {
+        matches!(self, Self::UndefinedSymbol { .. })
+    }
+}
+
+impl fmt::Display for AbsoluteAssignmentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UndefinedSymbol { owner, symbol } => write!(
+                f,
+                "absolute symbol '{}' references undefined symbol '{}'",
+                owner, symbol
+            ),
+            Self::CyclicDefinition(symbol) => {
+                write!(f, "absolute symbol '{}' has a cyclic definition", symbol)
+            }
+            Self::NonAbsolute(symbol) => {
+                write!(
+                    f,
+                    "absolute symbol '{}' must resolve to an absolute value",
+                    symbol
+                )
+            }
+            Self::InvalidExpression { owner, error } => {
+                write!(f, "absolute symbol '{}': {}", owner, error)
+            }
+        }
+    }
+}
+
+impl std::error::Error for AbsoluteAssignmentError {}
+
 pub(crate) fn resolve_absolute_assignments(
     assignments: &[(String, Expr)],
     base_symbols: &BTreeMap<String, SymbolValue>,
-) -> Vec<Result<i64, String>> {
+) -> Vec<Result<i64, AbsoluteAssignmentError>> {
     AbsoluteAssignmentResolver::new(assignments, base_symbols).resolve_all()
 }
 
 struct AbsoluteAssignmentResolver<'a> {
     assignments: &'a [(String, Expr)],
-    base_symbols: &'a BTreeMap<String, SymbolValue>,
-    positions: BTreeMap<String, Vec<usize>>,
-    resolved: Vec<Option<Result<i64, String>>>,
-    visiting: Vec<usize>,
+    dependencies: Vec<Vec<ReferencedAssignmentSymbol>>,
+    states: Vec<AssignmentResolutionState>,
+}
+
+#[derive(Debug, Clone)]
+struct ReferencedAssignmentSymbol {
+    name: String,
+    dependency: AssignmentDependency,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AssignmentDependency {
+    Assignment(usize),
+    Base(SymbolValue),
+    Undefined,
+}
+
+#[derive(Debug, Clone)]
+enum AssignmentResolutionState {
+    Unvisited,
+    Visiting,
+    Resolved(Result<i64, AbsoluteAssignmentError>),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AssignmentResolutionFrame {
+    index: usize,
+    next_dependency: usize,
 }
 
 impl<'a> AbsoluteAssignmentResolver<'a> {
@@ -377,73 +442,40 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
         for (index, (name, _)) in assignments.iter().enumerate() {
             positions.entry(name.clone()).or_default().push(index);
         }
+        let dependencies = assignments
+            .iter()
+            .enumerate()
+            .map(|(index, (_, expression))| {
+                let mut seen = BTreeSet::new();
+                referenced_symbols(expression)
+                    .into_iter()
+                    .filter(|symbol| seen.insert(symbol.clone()))
+                    .map(|name| ReferencedAssignmentSymbol {
+                        dependency: Self::dependency_for_symbol(
+                            &name,
+                            index,
+                            &positions,
+                            base_symbols,
+                        ),
+                        name,
+                    })
+                    .collect()
+            })
+            .collect();
         Self {
             assignments,
-            base_symbols,
-            positions,
-            resolved: vec![None; assignments.len()],
-            visiting: Vec::new(),
+            dependencies,
+            states: vec![AssignmentResolutionState::Unvisited; assignments.len()],
         }
     }
 
-    fn resolve_all(mut self) -> Vec<Result<i64, String>> {
-        for index in 0..self.assignments.len() {
-            let _ = self.resolve_assignment(index);
-        }
-        self.resolved
-            .into_iter()
-            .map(|value| value.expect("every absolute assignment was visited"))
-            .collect()
-    }
-
-    fn resolve_assignment(&mut self, index: usize) -> Result<i64, String> {
-        if let Some(value) = &self.resolved[index] {
-            return value.clone();
-        }
-
-        let name = self.assignments[index].0.clone();
-        if self.visiting.contains(&index) {
-            return Err(format!(
-                "absolute symbol '{}' has a cyclic definition",
-                name
-            ));
-        }
-
-        self.visiting.push(index);
-        let result = self.resolve_assignment_expr(index, &name);
-        self.visiting.pop();
-        self.resolved[index] = Some(result.clone());
-        result
-    }
-
-    fn resolve_assignment_expr(&mut self, index: usize, name: &str) -> Result<i64, String> {
-        let references = referenced_symbols(&self.assignments[index].1);
-        let mut symbols = BTreeMap::new();
-        for referenced in references {
-            if symbols.contains_key(&referenced) {
-                continue;
-            }
-            let value = self.resolve_symbol_before_assignment(&referenced, index, name)?;
-            symbols.insert(referenced, value);
-        }
-
-        match classify(&self.assignments[index].1, &symbols) {
-            Ok(ClassifiedExpr::Absolute(value)) => Ok(value),
-            Ok(_) => Err(format!(
-                "absolute symbol '{}' must resolve to an absolute value",
-                name
-            )),
-            Err(error) => Err(format!("absolute symbol '{}': {}", name, error)),
-        }
-    }
-
-    fn resolve_symbol_before_assignment(
-        &mut self,
+    fn dependency_for_symbol(
         symbol: &str,
         assignment_index: usize,
-        owner: &str,
-    ) -> Result<SymbolValue, String> {
-        if let Some(indices) = self.positions.get(symbol) {
+        positions: &BTreeMap<String, Vec<usize>>,
+        base_symbols: &BTreeMap<String, SymbolValue>,
+    ) -> AssignmentDependency {
+        if let Some(indices) = positions.get(symbol) {
             let prior_count = indices.partition_point(|index| *index < assignment_index);
             let target = if prior_count > 0 {
                 Some(indices[prior_count - 1])
@@ -452,16 +484,128 @@ impl<'a> AbsoluteAssignmentResolver<'a> {
                 indices.get(future).copied()
             };
             if let Some(target) = target {
-                return self.resolve_assignment(target).map(SymbolValue::Absolute);
+                return AssignmentDependency::Assignment(target);
             }
         }
 
-        self.base_symbols.get(symbol).copied().ok_or_else(|| {
-            format!(
-                "absolute symbol '{}' references undefined symbol '{}'",
-                owner, symbol
-            )
-        })
+        base_symbols
+            .get(symbol)
+            .copied()
+            .map(AssignmentDependency::Base)
+            .unwrap_or(AssignmentDependency::Undefined)
+    }
+
+    fn resolve_all(mut self) -> Vec<Result<i64, AbsoluteAssignmentError>> {
+        for index in 0..self.assignments.len() {
+            self.resolve_assignment(index);
+        }
+        self.states
+            .into_iter()
+            .map(|state| match state {
+                AssignmentResolutionState::Resolved(value) => value,
+                AssignmentResolutionState::Unvisited | AssignmentResolutionState::Visiting => {
+                    unreachable!("every absolute assignment was visited")
+                }
+            })
+            .collect()
+    }
+
+    fn resolve_assignment(&mut self, root: usize) {
+        if !matches!(self.states[root], AssignmentResolutionState::Unvisited) {
+            return;
+        }
+
+        self.states[root] = AssignmentResolutionState::Visiting;
+        let mut stack = vec![AssignmentResolutionFrame {
+            index: root,
+            next_dependency: 0,
+        }];
+
+        while let Some(frame) = stack.last().copied() {
+            let Some(reference) = self.dependencies[frame.index]
+                .get(frame.next_dependency)
+                .cloned()
+            else {
+                let result = self.evaluate_assignment(frame.index);
+                self.states[frame.index] = AssignmentResolutionState::Resolved(result);
+                stack.pop();
+                continue;
+            };
+
+            match reference.dependency {
+                AssignmentDependency::Base(_) => {
+                    stack.last_mut().expect("resolution frame").next_dependency += 1;
+                }
+                AssignmentDependency::Undefined => {
+                    let owner = self.assignments[frame.index].0.clone();
+                    self.states[frame.index] = AssignmentResolutionState::Resolved(Err(
+                        AbsoluteAssignmentError::UndefinedSymbol {
+                            owner,
+                            symbol: reference.name,
+                        },
+                    ));
+                    stack.pop();
+                }
+                AssignmentDependency::Assignment(target) => match self.states[target].clone() {
+                    AssignmentResolutionState::Unvisited => {
+                        self.states[target] = AssignmentResolutionState::Visiting;
+                        stack.push(AssignmentResolutionFrame {
+                            index: target,
+                            next_dependency: 0,
+                        });
+                    }
+                    AssignmentResolutionState::Visiting => {
+                        let error = AbsoluteAssignmentError::CyclicDefinition(
+                            self.assignments[target].0.clone(),
+                        );
+                        for frame in stack.drain(..) {
+                            self.states[frame.index] =
+                                AssignmentResolutionState::Resolved(Err(error.clone()));
+                        }
+                    }
+                    AssignmentResolutionState::Resolved(Ok(_)) => {
+                        stack.last_mut().expect("resolution frame").next_dependency += 1;
+                    }
+                    AssignmentResolutionState::Resolved(Err(error)) => {
+                        self.states[frame.index] = AssignmentResolutionState::Resolved(Err(error));
+                        stack.pop();
+                    }
+                },
+            }
+        }
+    }
+
+    fn evaluate_assignment(&self, index: usize) -> Result<i64, AbsoluteAssignmentError> {
+        let mut symbols = BTreeMap::new();
+        for reference in &self.dependencies[index] {
+            let value = match reference.dependency {
+                AssignmentDependency::Assignment(target) => match &self.states[target] {
+                    AssignmentResolutionState::Resolved(Ok(value)) => SymbolValue::Absolute(*value),
+                    AssignmentResolutionState::Resolved(Err(error)) => return Err(error.clone()),
+                    AssignmentResolutionState::Unvisited | AssignmentResolutionState::Visiting => {
+                        unreachable!("assignment dependencies resolve before evaluation")
+                    }
+                },
+                AssignmentDependency::Base(value) => value,
+                AssignmentDependency::Undefined => {
+                    return Err(AbsoluteAssignmentError::UndefinedSymbol {
+                        owner: self.assignments[index].0.clone(),
+                        symbol: reference.name.clone(),
+                    });
+                }
+            };
+            symbols.insert(reference.name.clone(), value);
+        }
+
+        let name = &self.assignments[index].0;
+        match classify(&self.assignments[index].1, &symbols) {
+            Ok(ClassifiedExpr::Absolute(value)) => Ok(value),
+            Ok(_) => Err(AbsoluteAssignmentError::NonAbsolute(name.clone())),
+            Err(error) => Err(AbsoluteAssignmentError::InvalidExpression {
+                owner: name.clone(),
+                error,
+            }),
+        }
     }
 }
 
@@ -678,12 +822,39 @@ mod tests {
     }
 
     #[test]
-    fn absolute_assignment_resolution_handles_large_linear_timelines() {
-        let assignments: Vec<_> = (0..10_000)
-            .map(|index| (format!("X{index}"), Expr::Int(index)))
+    fn absolute_assignment_resolution_handles_deep_alias_chains() {
+        const COUNT: usize = 20_000;
+        let assignments: Vec<_> = (0..COUNT)
+            .map(|index| {
+                let expression = if index + 1 == COUNT {
+                    Expr::Int(7)
+                } else {
+                    Expr::Symbol(format!("X{}", index + 1))
+                };
+                (format!("X{index}"), expression)
+            })
             .collect();
         let resolved = resolve_absolute_assignments(&assignments, &BTreeMap::new());
         assert_eq!(resolved.len(), assignments.len());
-        assert_eq!(resolved.last(), Some(&Ok(9_999)));
+        assert!(resolved.iter().all(|value| value == &Ok(7)));
+    }
+
+    #[test]
+    fn absolute_assignment_resolution_handles_deep_cycles() {
+        const COUNT: usize = 20_000;
+        let assignments: Vec<_> = (0..COUNT)
+            .map(|index| {
+                (
+                    format!("X{index}"),
+                    Expr::Symbol(format!("X{}", (index + 1) % COUNT)),
+                )
+            })
+            .collect();
+        let resolved = resolve_absolute_assignments(&assignments, &BTreeMap::new());
+        assert_eq!(resolved.len(), assignments.len());
+        assert!(resolved.iter().all(|value| matches!(
+            value,
+            Err(AbsoluteAssignmentError::CyclicDefinition(symbol)) if symbol == "X0"
+        )));
     }
 }

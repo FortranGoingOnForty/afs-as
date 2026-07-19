@@ -405,3 +405,51 @@ fn forward_absolute_aliases_work_in_parser_resolved_directives() {
         [1, 0xaa, 0xaa, 0xaa]
     );
 }
+
+#[test]
+fn absolute_assignment_cycles_report_the_definition() {
+    for source in [".set A,B\n.set B,A\n", ".set A,B\n.set B,A\n.space A\n"] {
+        let error = assemble_source(source).expect_err("cyclic assignments unexpectedly assembled");
+        assert_eq!((error.line, error.col), (Some(1), Some(1)));
+        assert_eq!(error.msg, "absolute symbol 'A' has a cyclic definition");
+    }
+
+    let direct = assemble_stmts(&[
+        Stmt::Directive(Directive::Set("A".into(), Expr::Symbol("B".into()))),
+        Stmt::Directive(Directive::Set("B".into(), Expr::Symbol("A".into()))),
+    ])
+    .expect_err("preparsed cyclic assignments unexpectedly assembled");
+    assert_eq!(direct.msg, "absolute symbol 'A' has a cyclic definition");
+}
+
+#[test]
+fn definite_absolute_assignment_errors_report_the_definition() {
+    for (source, message) in [
+        (
+            ".set X,9223372036854775807 + 1\n",
+            "absolute symbol 'X': expression overflows i64",
+        ),
+        (
+            ".set X,.\n",
+            "absolute symbol 'X': expression is not representable as a pointer-to-GOT relocation",
+        ),
+    ] {
+        let error = assemble_source(source)
+            .expect_err("invalid absolute assignment unexpectedly assembled");
+        assert_eq!((error.line, error.col), (Some(1), Some(1)));
+        assert_eq!(error.msg, message);
+    }
+}
+
+#[test]
+fn label_dependent_absolute_assignments_are_deferred_to_assembly() {
+    let object = assemble_source(
+        ".set X,end-start\n\
+         start:\n\
+         .byte 0\n\
+         end:\n\
+         .byte X\n",
+    )
+    .expect("same-section label difference unexpectedly rejected during parsing");
+    assert_eq!(object.text_section().data, [0, 1]);
+}

@@ -273,11 +273,11 @@ pub fn parse_with_locations(src: &str) -> Result<Vec<LocatedStmt>, ParseError> {
     let mut p = Parser::new(&tokens);
     let mut first_assignments = BTreeMap::new();
     for (preview, value) in previews.iter().zip(resolved) {
-        let value = value.ok();
+        let first_value = value.as_ref().ok().copied();
         p.absolute_assignment_values
             .insert((preview.line, preview.col), value);
         if first_assignments.insert(preview.name.clone(), ()).is_none() {
-            if let Some(value) = value {
+            if let Some(value) = first_value {
                 p.absolute_symbols.insert(preview.name.clone(), value);
             }
         }
@@ -329,7 +329,7 @@ struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     absolute_symbols: BTreeMap<String, i64>,
-    absolute_assignment_values: BTreeMap<(u32, u32), Option<i64>>,
+    absolute_assignment_values: BTreeMap<(u32, u32), Result<i64, expr::AbsoluteAssignmentError>>,
     numeric_labels: BTreeMap<u32, u32>,
 }
 
@@ -682,12 +682,19 @@ impl<'a> Parser<'a> {
                 let sym = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
                 let expr = self.parse_expr()?;
-                match self.absolute_assignment_values.get(&(line, col)) {
-                    Some(Some(value)) => {
-                        self.absolute_symbols.insert(sym.clone(), *value);
+                match self.absolute_assignment_values.get(&(line, col)).cloned() {
+                    Some(Ok(value)) => {
+                        self.absolute_symbols.insert(sym.clone(), value);
                     }
-                    Some(None) => {
+                    Some(Err(error)) if error.may_resolve_with_labels() => {
                         self.absolute_symbols.remove(&sym);
+                    }
+                    Some(Err(error)) => {
+                        return Err(ParseError {
+                            line,
+                            col,
+                            msg: error.to_string(),
+                        });
                     }
                     None => {
                         if let Ok(value) = expr::eval_with_symbols(&expr, &self.absolute_symbols) {

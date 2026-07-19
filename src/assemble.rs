@@ -706,7 +706,7 @@ impl Assembler {
         self.final_absolute_symbols.clear();
         self.absolute_assignment_values.clear();
         for ((name, _), result) in self.absolute_assignments.iter().zip(assignment_results) {
-            let value = result.map_err(AsmError)?;
+            let value = result.map_err(|error| AsmError(error.to_string()))?;
             if first_names.insert(name.clone(), ()).is_none() {
                 self.initial_absolute_symbols.insert(name.clone(), value);
             }
