@@ -333,7 +333,7 @@ pub fn write_macho<W: Write>(obj: &ObjectFile, w: &mut W) -> io::Result<()> {
             ));
         }
         for relocation in &section.relocations {
-            validate_relocation(section, relocation)?;
+            validate_relocation(obj, section, relocation)?;
         }
 
         vm_cursor = checked_align_value(vm_cursor, section.align_pow2).ok_or_else(|| {
@@ -725,7 +725,7 @@ fn relocation_address(rel: &Relocation) -> io::Result<i32> {
     })
 }
 
-fn validate_relocation(section: &Section, rel: &Relocation) -> io::Result<()> {
+fn validate_relocation(obj: &ObjectFile, section: &Section, rel: &Relocation) -> io::Result<()> {
     relocation_address(rel)?;
     if rel.length > 3 {
         return Err(invalid_input(format!(
@@ -743,6 +743,37 @@ fn validate_relocation(section: &Section, rel: &Relocation) -> io::Result<()> {
             "relocation at offset {} with width {} exceeds section {},{} size {}",
             rel.offset, width, section.segment, section.name, section.size
         )));
+    }
+
+    if rel.reloc_type == ARM64_RELOC_ADDEND {
+        if rel.extern_ {
+            return Err(invalid_input(
+                "ARM64_RELOC_ADDEND must use a non-external r_symbolnum payload",
+            ));
+        }
+        return Ok(());
+    }
+
+    if rel.extern_ {
+        let symbol_index = usize::try_from(rel.symbol_idx)
+            .map_err(|_| invalid_input("external relocation symbol index exceeds usize"))?;
+        if symbol_index >= obj.symbols.len() {
+            return Err(invalid_input(format!(
+                "external relocation symbol index {} exceeds symbol table size {}",
+                rel.symbol_idx,
+                obj.symbols.len()
+            )));
+        }
+    } else {
+        let section_ordinal = usize::try_from(rel.symbol_idx)
+            .map_err(|_| invalid_input("local relocation section ordinal exceeds usize"))?;
+        if section_ordinal == 0 || section_ordinal > obj.sections.len() {
+            return Err(invalid_input(format!(
+                "local relocation section ordinal {} is outside 1..={}",
+                rel.symbol_idx,
+                obj.sections.len()
+            )));
+        }
     }
     Ok(())
 }
@@ -1110,6 +1141,81 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "relocation at offset 2147483644 with width 4 exceeds section __DATA,__bss size 2147483647"
+        );
+    }
+
+    fn object_with_text_relocation(relocation: Relocation) -> ObjectFile {
+        let mut obj = ObjectFile::new();
+        let text = obj.text_section_mut();
+        text.data = vec![0; 4];
+        text.size = 4;
+        text.relocations.push(relocation);
+        obj
+    }
+
+    #[test]
+    fn external_relocation_target_must_exist() {
+        let obj = object_with_text_relocation(Relocation {
+            offset: 0,
+            symbol_idx: 99,
+            pcrel: true,
+            length: 2,
+            extern_: true,
+            reloc_type: ARM64_RELOC_PAGE21,
+        });
+        let error = write_macho(&obj, &mut Vec::new()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "external relocation symbol index 99 exceeds symbol table size 0"
+        );
+    }
+
+    #[test]
+    fn local_relocation_target_must_be_a_section_ordinal() {
+        for ordinal in [0, 2] {
+            let obj = object_with_text_relocation(Relocation {
+                offset: 0,
+                symbol_idx: ordinal,
+                pcrel: false,
+                length: 2,
+                extern_: false,
+                reloc_type: ARM64_RELOC_UNSIGNED,
+            });
+            let error = write_macho(&obj, &mut Vec::new()).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert_eq!(
+                error.to_string(),
+                format!("local relocation section ordinal {ordinal} is outside 1..=1")
+            );
+        }
+    }
+
+    #[test]
+    fn addend_relocation_uses_a_raw_nonexternal_payload() {
+        let obj = object_with_text_relocation(Relocation {
+            offset: 0,
+            symbol_idx: 0x00ff_ffff,
+            pcrel: false,
+            length: 2,
+            extern_: false,
+            reloc_type: ARM64_RELOC_ADDEND,
+        });
+        write_macho(&obj, &mut Vec::new()).unwrap();
+
+        let invalid = object_with_text_relocation(Relocation {
+            offset: 0,
+            symbol_idx: 1,
+            pcrel: false,
+            length: 2,
+            extern_: true,
+            reloc_type: ARM64_RELOC_ADDEND,
+        });
+        let error = write_macho(&invalid, &mut Vec::new()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(
+            error.to_string(),
+            "ARM64_RELOC_ADDEND must use a non-external r_symbolnum payload"
         );
     }
 
