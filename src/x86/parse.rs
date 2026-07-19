@@ -94,7 +94,7 @@ pub enum Directive {
     Data,
     Bss,
     /// `.section name` (only bare names the backend emits: `.rodata`,
-    /// `.note.GNU-stack` with optional `"",@progbits` args).
+    /// `.note.GNU-stack` with optional flags and `@progbits` type.
     Section {
         name: String,
     },
@@ -134,8 +134,9 @@ pub enum Directive {
         align: u64,
     },
     File(String),
-    /// Recognized and ignored (writer synthesizes the real thing).
-    NoteGnuStack,
+    NoteGnuStack {
+        executable: bool,
+    },
 }
 
 pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
@@ -473,9 +474,31 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         "data" => Directive::Data,
         "bss" => Directive::Bss,
         "section" => {
-            let sec = args.split(',').next().unwrap_or("").trim().to_string();
+            let mut fields = args.split(',').map(str::trim);
+            let sec = fields.next().unwrap_or("").to_string();
             if sec == ".note.GNU-stack" {
-                Directive::NoteGnuStack
+                let executable = match fields.next() {
+                    None | Some("\"\"") => false,
+                    Some("\"x\"") => true,
+                    Some(flags) => {
+                        return Err(err(format!(
+                            "unsupported .note.GNU-stack flags '{}'",
+                            flags
+                        )))
+                    }
+                };
+                if let Some(kind) = fields.next() {
+                    if kind != "@progbits" && kind != "%progbits" {
+                        return Err(err(format!("unsupported .note.GNU-stack type '{}'", kind)));
+                    }
+                }
+                if let Some(extra) = fields.next() {
+                    return Err(err(format!(
+                        "unexpected .note.GNU-stack argument '{}'",
+                        extra
+                    )));
+                }
+                Directive::NoteGnuStack { executable }
             } else if sec == ".rodata" || sec == ".text" || sec == ".data" || sec == ".bss" {
                 Directive::Section { name: sec }
             } else {
@@ -778,6 +801,36 @@ mod tests {
             stmts[5].stmt,
             Stmt::Directive(Directive::Extern("ext".into()))
         );
+    }
+
+    #[test]
+    fn gnu_stack_section_flags_are_preserved() {
+        let stmts = parse(
+            ".section .note.GNU-stack\n\
+             .section .note.GNU-stack,\"\",@progbits\n\
+             .section .note.GNU-stack,\"x\",%progbits\n",
+        )
+        .unwrap();
+        assert_eq!(
+            stmts[0].stmt,
+            Stmt::Directive(Directive::NoteGnuStack { executable: false })
+        );
+        assert_eq!(
+            stmts[1].stmt,
+            Stmt::Directive(Directive::NoteGnuStack { executable: false })
+        );
+        assert_eq!(
+            stmts[2].stmt,
+            Stmt::Directive(Directive::NoteGnuStack { executable: true })
+        );
+
+        for source in [
+            ".section .note.GNU-stack,\"w\",@progbits\n",
+            ".section .note.GNU-stack,\"x\",@nobits\n",
+            ".section .note.GNU-stack,\"x\",@progbits,extra\n",
+        ] {
+            assert!(parse(source).is_err(), "must reject {source:?}");
+        }
     }
 
     #[test]

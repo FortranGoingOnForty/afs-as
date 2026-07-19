@@ -82,6 +82,7 @@ pub fn corpus_files() -> Vec<PathBuf> {
 pub struct Normalized {
     pub osabi: u8,
     pub machine: u16,
+    pub gnu_stack_flags: Option<u64>,
     /// name -> (sh_type, sh_flags, content bytes, nobits size)
     pub sections: BTreeMap<String, (u32, u64, Vec<u8>, u64)>,
     /// (section, offset, r_type, symbol name, addend), sorted.
@@ -181,6 +182,7 @@ pub fn normalize(obj: &ObjectFile) -> Normalized {
     Normalized {
         osabi: obj.osabi,
         machine: obj.machine,
+        gnu_stack_flags: obj.gnu_stack_flags,
         sections,
         relocs,
         symbols,

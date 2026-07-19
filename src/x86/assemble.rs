@@ -100,6 +100,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let mut sec_index: HashMap<String, usize> = HashMap::new();
     let mut current: usize = usize::MAX;
     let mut syminfo: HashMap<String, SymInfo> = HashMap::new();
+    let mut gnu_stack_flags: Option<u64> = None;
     // (sym, size, align, line)
     let mut commons: Vec<(String, u64, u64, u32)> = Vec::new();
     let mut common_names: HashSet<String> = HashSet::new();
@@ -150,7 +151,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 Directive::Section { name } => {
                     current = ensure_sec(name, &mut secs, &mut sec_index)
                 }
-                Directive::NoteGnuStack => { /* writer synthesizes */ }
+                Directive::NoteGnuStack { executable } => {
+                    gnu_stack_flags.get_or_insert(if *executable { SHF_EXECINSTR } else { 0 });
+                }
                 Directive::Globl(s) => syminfo.entry(s.clone()).or_default().globl = true,
                 Directive::Extern(s) => {
                     syminfo.entry(s.clone()).or_default();
@@ -595,6 +598,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
 
     // ---- Build the ELF model ---------------------------------------
     let mut obj = ObjectFile::new(EM_X86_64, osabi);
+    obj.gnu_stack_flags = gnu_stack_flags;
     let mut model_sec_index: HashMap<String, usize> = HashMap::new();
     for l in &laid {
         let (sh_flags, align_default) = match l.name.as_str() {

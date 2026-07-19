@@ -11,8 +11,8 @@
 mod celf;
 
 use afs_as::elf::{
-    parse_elf, SymbolPlace, ELFOSABI_FREEBSD, ELFOSABI_NONE, STB_GLOBAL, STB_WEAK, STT_FUNC,
-    STT_NOTYPE, STT_OBJECT,
+    parse_elf, SymbolPlace, ELFOSABI_FREEBSD, ELFOSABI_NONE, SHF_EXECINSTR, STB_GLOBAL, STB_WEAK,
+    STT_FUNC, STT_NOTYPE, STT_OBJECT,
 };
 use afs_as::x86::assemble::assemble_x86;
 
@@ -378,4 +378,51 @@ fn undefined_symbol_metadata_matches_gas() {
     ) {
         panic!("{failure}");
     }
+}
+
+#[test]
+fn gnu_stack_intent_matches_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "gnu_stack_intent_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let cases = [
+        ("absent", ".text\nret\n", None),
+        (
+            "non_executable",
+            ".text\nret\n.section .note.GNU-stack,\"\",@progbits\n",
+            Some(0),
+        ),
+        (
+            "executable",
+            ".text\nret\n.section .note.GNU-stack,\"x\",@progbits\n",
+            Some(SHF_EXECINSTR),
+        ),
+        (
+            "first_non_executable",
+            ".section .note.GNU-stack,\"\",@progbits\n\
+             .section .note.GNU-stack,\"x\",@progbits\n",
+            Some(0),
+        ),
+        (
+            "first_executable",
+            ".section .note.GNU-stack,\"x\",@progbits\n\
+             .section .note.GNU-stack,\"\",@progbits\n",
+            Some(SHF_EXECINSTR),
+        ),
+    ];
+    let tmp = celf::TempArtifacts::new("afs_x86_gnu_stack");
+    let mut failures = Vec::new();
+    for (name, src, expected) in cases {
+        let ours = assemble_x86(src, host_osabi()).expect("assemble GNU-stack case");
+        assert_eq!(ours.gnu_stack_flags, expected, "stack intent for {name}");
+        if let Some(failure) = diff_one(name, src, &gas, &tmp) {
+            failures.push(failure);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }

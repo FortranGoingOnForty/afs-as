@@ -519,6 +519,10 @@ pub struct ObjectFile {
     /// ELFOSABI_FREEBSD on FreeBSD targets, ELFOSABI_NONE on Linux —
     /// gas brands relocatables per OS and the differential compares it.
     pub osabi: u8,
+    /// `.note.GNU-stack` flags. `None` preserves an absent marker;
+    /// `Some(0)` requests a non-executable stack and
+    /// `Some(SHF_EXECINSTR)` requests an executable stack.
+    pub gnu_stack_flags: Option<u64>,
     pub sections: Vec<Section>,
     pub symbols: Vec<Symbol>,
 }
@@ -528,6 +532,7 @@ impl ObjectFile {
         Self {
             machine,
             osabi,
+            gnu_stack_flags: Some(0),
             sections: Vec::new(),
             symbols: Vec::new(),
         }
@@ -623,8 +628,8 @@ fn align_up(v: u64, align: u64) -> u64 {
 /// File layout: ehdr, section contents (model order, 8-byte aligned,
 /// NOBITS consuming no bytes but taking the current offset like gas),
 /// symtab, strtab, rela bodies, shstrtab, then the section header
-/// table: [null, contents..., .note.GNU-stack, .symtab, .strtab,
-/// .rela.X..., .shstrtab].
+/// table: [null, contents..., optional .note.GNU-stack, .symtab,
+/// .strtab, .rela.X..., .shstrtab].
 pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     validate(obj)?;
 
@@ -685,12 +690,11 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     // --- Section header list assembly. Order:
     // [0] null
     // [1..=n] content sections (model order)
-    // [n+1] .note.GNU-stack
-    // [n+2] .symtab, [n+3] .strtab
+    // [n+1] optional .note.GNU-stack
+    // then .symtab, .strtab
     // then one .rela.X per relocated content section, then .shstrtab.
     let n_contents = obj.sections.len();
-    let note_idx = 1 + n_contents;
-    let symtab_idx = note_idx + 1;
+    let symtab_idx = 1 + n_contents + usize::from(obj.gnu_stack_flags.is_some());
     let strtab_idx = symtab_idx + 1;
     let relocated: Vec<usize> = (0..n_contents)
         .filter(|&i| !obj.sections[i].relas.is_empty())
@@ -750,22 +754,22 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
         });
     }
 
-    // .note.GNU-stack: empty PROGBITS, no flags — absence makes GNU ld
-    // warn about executable stacks.
-    let note_name = shstrtab.intern(".note.GNU-stack");
-    let note_off = base + body.len() as u64;
-    shdrs.push(Elf64Shdr {
-        sh_name: note_name,
-        sh_type: SHT_PROGBITS,
-        sh_flags: 0,
-        sh_addr: 0,
-        sh_offset: note_off,
-        sh_size: 0,
-        sh_link: 0,
-        sh_info: 0,
-        sh_addralign: 1,
-        sh_entsize: 0,
-    });
+    if let Some(flags) = obj.gnu_stack_flags {
+        let note_name = shstrtab.intern(".note.GNU-stack");
+        let note_off = base + body.len() as u64;
+        shdrs.push(Elf64Shdr {
+            sh_name: note_name,
+            sh_type: SHT_PROGBITS,
+            sh_flags: flags,
+            sh_addr: 0,
+            sh_offset: note_off,
+            sh_size: 0,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+    }
 
     let symtab_name = shstrtab.intern(".symtab");
     let symtab_off = place(&mut body, 8, &symtab_body);
@@ -921,7 +925,7 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
 
     // First pass: identify symtab/strtab and content sections. Content
     // = everything that is not NULL/SYMTAB/STRTAB/RELA and not
-    // .note.GNU-stack (synthesized by the writer).
+    // .note.GNU-stack is represented separately from content sections.
     let mut symtab: Option<(usize, &Elf64Shdr)> = None;
     for (i, sh) in shdrs.iter().enumerate() {
         if sh.sh_type == SHT_SYMTAB {
@@ -947,13 +951,24 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
     // Map file section index -> model content index.
     let mut file_to_model: HashMap<usize, usize> = HashMap::new();
     let mut sections: Vec<Section> = Vec::new();
+    let mut gnu_stack_flags: Option<u64> = None;
     for (i, sh) in shdrs.iter().enumerate() {
         let keep = !matches!(sh.sh_type, SHT_NULL | SHT_SYMTAB | SHT_STRTAB | SHT_RELA);
         if !keep {
             continue;
         }
         let name = sec_name(sh)?;
-        if name == ".note.GNU-stack" || name == ".comment" || name.starts_with(".note.gnu") {
+        if name == ".note.GNU-stack" {
+            if sh.sh_type != SHT_PROGBITS {
+                return Err(ElfError::new(format!(
+                    ".note.GNU-stack has unexpected section type {}",
+                    sh.sh_type
+                )));
+            }
+            gnu_stack_flags.get_or_insert(sh.sh_flags);
+            continue;
+        }
+        if name == ".comment" || name.starts_with(".note.gnu") {
             continue;
         }
         let data = if sh.sh_type == SHT_NOBITS {
@@ -1093,6 +1108,7 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
     Ok(ObjectFile {
         machine: ehdr.e_machine,
         osabi: ehdr.osabi,
+        gnu_stack_flags,
         sections,
         symbols,
     })
@@ -1316,6 +1332,25 @@ mod tests {
         assert_eq!(cmn.place, SymbolPlace::Common);
         assert_eq!(cmn.value, 8);
         assert_eq!(cmn.size, 128);
+    }
+
+    #[test]
+    fn gnu_stack_intent_roundtrips() {
+        for flags in [None, Some(0), Some(SHF_EXECINSTR)] {
+            let mut obj = sample_object();
+            obj.gnu_stack_flags = flags;
+            let bytes = write_elf(&obj).unwrap();
+            let back = parse_elf(&bytes).unwrap();
+            assert_eq!(back.gnu_stack_flags, flags);
+        }
+    }
+
+    #[test]
+    fn new_object_defaults_to_non_executable_stack() {
+        let obj = ObjectFile::new(EM_X86_64, ELFOSABI_NONE);
+        assert_eq!(obj.gnu_stack_flags, Some(0));
+        let back = parse_elf(&write_elf(&obj).unwrap()).unwrap();
+        assert_eq!(back.gnu_stack_flags, Some(0));
     }
 
     #[test]

@@ -6,8 +6,7 @@
 //! and both objects are compared in normalized form: per-section
 //! content bytes and type/flags, relocation tuples with symbol names,
 //! and the symbol set. Explicitly not compared: sh_offset, section
-//! and symbol order, e_shnum, padding, .comment, .note.* (dropped by
-//! the reader on both sides).
+//! and symbol order, e_shnum, padding, .comment, and non-stack notes.
 //!
 //! The link gate goes further: a freestanding _start program is
 //! assembled by gas, lifted, re-emitted, and BOTH objects are linked
@@ -20,7 +19,7 @@ mod celf;
 use std::path::PathBuf;
 use std::process::Command;
 
-use afs_as::elf::{parse_elf, reloc::x86_64::*, write_elf};
+use afs_as::elf::{parse_elf, reloc::x86_64::*, write_elf, SHF_EXECINSTR};
 
 #[test]
 fn corpus_lift_reemit_matches_gas_under_policy() {
@@ -55,6 +54,33 @@ fn corpus_lift_reemit_matches_gas_under_policy() {
             src.display()
         );
     }
+}
+
+#[test]
+fn executable_stack_marker_survives_lift_and_reemit() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "elf_differential",
+            "executable_stack_marker_survives_lift_and_reemit",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_elf_exec_stack");
+    let src = tmp.path(".s");
+    let gas_obj = tmp.path("_gas.o");
+    std::fs::write(
+        &src,
+        ".text\nret\n.section .note.GNU-stack,\"x\",@progbits\n",
+    )
+    .expect("write source");
+    celf::assemble_with_gas(&gas, &src, &gas_obj);
+
+    let lifted = parse_elf(&std::fs::read(&gas_obj).unwrap()).expect("lift gas object");
+    assert_eq!(lifted.gnu_stack_flags, Some(SHF_EXECINSTR));
+    let reparsed =
+        parse_elf(&write_elf(&lifted).expect("re-emit object")).expect("parse re-emitted object");
+    assert_eq!(reparsed.gnu_stack_flags, Some(SHF_EXECINSTR));
 }
 
 #[test]

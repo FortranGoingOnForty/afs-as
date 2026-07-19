@@ -11,6 +11,7 @@ use afs_as::elf::{
     self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, ELFOSABI_FREEBSD,
     ELFOSABI_NONE, EM_X86_64, STB_GLOBAL, STB_LOCAL, STT_FUNC, STT_OBJECT, STV_DEFAULT,
 };
+use afs_as::x86::assemble::assemble_x86;
 
 fn host_osabi() -> u8 {
     if cfg!(target_os = "freebsd") {
@@ -157,4 +158,84 @@ fn system_linker_accepts_relocatable_link() {
     );
     let _ = std::fs::remove_file(&obj_path);
     let _ = std::fs::remove_file(&out_path);
+}
+
+#[test]
+fn gnu_linker_preserves_stack_intent() {
+    if !cfg!(target_os = "linux") {
+        eprintln!(
+            "\nHARNESS_SKIP suite=elf_smoke test=gnu_linker_preserves_stack_intent count=1 reason=\"needs Linux GNU ld semantics\""
+        );
+        return;
+    }
+    let Ok(version) = Command::new("ld").arg("--version").output() else {
+        eprintln!(
+            "\nHARNESS_SKIP suite=elf_smoke test=gnu_linker_preserves_stack_intent count=1 reason=\"no ld on PATH\""
+        );
+        return;
+    };
+    if !version.status.success() || !String::from_utf8_lossy(&version.stdout).contains("GNU ld") {
+        eprintln!(
+            "\nHARNESS_SKIP suite=elf_smoke test=gnu_linker_preserves_stack_intent count=1 reason=\"ld is not GNU ld\""
+        );
+        return;
+    }
+    if Command::new("readelf").arg("--version").output().is_err() {
+        eprintln!(
+            "\nHARNESS_SKIP suite=elf_smoke test=gnu_linker_preserves_stack_intent count=1 reason=\"no readelf on PATH\""
+        );
+        return;
+    }
+
+    let cases = [
+        (
+            "non_executable",
+            ".section .note.GNU-stack,\"\",@progbits\n",
+            "RW",
+        ),
+        (
+            "executable",
+            ".section .note.GNU-stack,\"x\",@progbits\n",
+            "RWE",
+        ),
+    ];
+    let dir = std::env::temp_dir();
+    for (name, marker, expected_flags) in cases {
+        let src = format!(".text\n.globl _start\n_start:\n    ret\n{}", marker);
+        let obj = assemble_x86(&src, host_osabi()).expect("assemble stack-intent source");
+        let stem = format!("afs_elf_stack_{}_{}", std::process::id(), name);
+        let obj_path = dir.join(format!("{stem}.o"));
+        let exe_path = dir.join(stem);
+        std::fs::write(&obj_path, elf::write_elf(&obj).expect("write object"))
+            .expect("write object file");
+        let linked = Command::new("ld")
+            .args(["-o"])
+            .arg(&exe_path)
+            .args(["-e", "_start"])
+            .arg(&obj_path)
+            .output()
+            .expect("run GNU ld");
+        assert!(
+            linked.status.success(),
+            "GNU ld rejected {name}:\n{}",
+            String::from_utf8_lossy(&linked.stderr)
+        );
+        let headers = Command::new("readelf")
+            .args(["-W", "-l"])
+            .arg(&exe_path)
+            .output()
+            .expect("read program headers");
+        assert!(headers.status.success(), "readelf rejected {name}");
+        let text = String::from_utf8_lossy(&headers.stdout);
+        let line = text
+            .lines()
+            .find(|line| line.contains("GNU_STACK"))
+            .unwrap_or_else(|| panic!("missing GNU_STACK for {name}:\n{text}"));
+        assert!(
+            line.split_whitespace().any(|field| field == expected_flags),
+            "GNU_STACK flags for {name} are not {expected_flags}: {line}"
+        );
+        let _ = std::fs::remove_file(obj_path);
+        let _ = std::fs::remove_file(exe_path);
+    }
 }
