@@ -379,6 +379,37 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
             return encode_jcc(cc, ops);
         }
     }
+    // cmovcc r/m, r (0F 40+cc /r). AT&T suffixes: `cmovneq` = cc "ne" +
+    // width q; a bare `cmovne` takes the width from the destination.
+    // Longest-cc-first disambiguation: "cmovll" is cc "l" width l (the
+    // whole "ll" is not a condition), "cmovle" is cc "le".
+    if let Some(rest) = mnemonic.strip_prefix("cmov") {
+        let (cc, w) = match rest.as_bytes().last() {
+            Some(b'b' | b'w' | b'l' | b'q')
+                if cond_code(&rest[..rest.len() - 1]).is_some() =>
+            {
+                let w = match rest.as_bytes()[rest.len() - 1] {
+                    b'w' => Width::W,
+                    b'l' => Width::L,
+                    b'q' => Width::Q,
+                    _ => return Err("cmov has no 8-bit form".into()),
+                };
+                (&rest[..rest.len() - 1], Some(w))
+            }
+            _ => (rest, None),
+        };
+        if let Some(code) = cond_code(cc) {
+            let w = match (w, ops.last()) {
+                (Some(w), _) => w,
+                (None, Some(Operand::Reg(r))) => r.width,
+                _ => return Err(format!("cannot infer width for '{}'", mnemonic)),
+            };
+            if w == Width::B || w == Width::X {
+                return Err("cmov has no 8-bit form".into());
+            }
+            return encode_rm_0f(0x40 + code, w, ops, mnemonic);
+        }
+    }
     if mnemonic == "pushq" || mnemonic == "popq" {
         let r = gp_reg(ops.first().ok_or("push/pop needs an operand")?)
             .ok_or("push/pop supports register operands only")?;
@@ -444,10 +475,110 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
         return Ok(enc);
     }
 
+    // x87: the closed long-double whitelist (load-op-store discipline
+    // upstream; nothing else is sanctioned).
+    if let Some(enc) = encode_x87(mnemonic, ops)? {
+        return Ok(enc);
+    }
+
     Err(format!(
         "unsupported mnemonic '{}' — grow the encoder with corpus evidence",
         mnemonic
     ))
+}
+
+// -------------------------------------------------------------------
+// x87 (long double only — the whitelist is CLOSED)
+// -------------------------------------------------------------------
+
+/// No-operand x87 forms: two fixed bytes.
+const X87_NULLARY: &[(&str, [u8; 2])] = &[
+    ("faddp", [0xde, 0xc1]),
+    ("fmulp", [0xde, 0xc9]),
+    // THE gas AT&T x87 swap, differential-pinned: for the pop forms gas
+    // maps fsubp -> DE E1 (Intel FSUBRP) and fsubrp -> DE E9 (Intel
+    // FSUBP); likewise fdivp -> DE F1 and fdivrp -> DE F9. An emitter
+    // wanting "st1 := st1 OP st0, pop" must SPELL it fsubrp/fdivrp —
+    // cgfried's Sprint 24 mnemonic table carries this.
+    ("fsubp", [0xde, 0xe1]),
+    ("fsubrp", [0xde, 0xe9]),
+    ("fdivp", [0xde, 0xf1]),
+    ("fdivrp", [0xde, 0xf9]),
+    ("fchs", [0xd9, 0xe0]),
+    ("fabs", [0xd9, 0xe1]),
+    ("fldz", [0xd9, 0xee]),
+    ("fld1", [0xd9, 0xe8]),
+    // fucomip (bare) = fucomip %st(1), %st
+    ("fucomip", [0xdf, 0xe9]),
+];
+
+/// Memory x87 forms: opcode byte + ModRM /digit, width from mnemonic.
+const X87_MEM: &[(&str, u8, u8)] = &[
+    ("flds", 0xd9, 0),
+    ("fldl", 0xdd, 0),
+    ("fldt", 0xdb, 5),
+    ("fstps", 0xd9, 3),
+    ("fstpl", 0xdd, 3),
+    ("fstpt", 0xdb, 7),
+    ("fildl", 0xdb, 0),
+    ("fildq", 0xdf, 5),
+    ("fildll", 0xdf, 5),
+    ("fistpl", 0xdb, 3),
+    ("fistpq", 0xdf, 7),
+    ("fistpll", 0xdf, 7),
+    ("fnstcw", 0xd9, 7),
+    ("fldcw", 0xd9, 5),
+];
+
+fn encode_x87(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String> {
+    for (name, bytes) in X87_NULLARY {
+        if *name == mnemonic {
+            if !ops.is_empty() {
+                // Accept the explicit gas spellings too:
+                //   fucomip %st(1), %st ; f*p %st, %st(1)
+                if mnemonic == "fucomip" {
+                    if let [Operand::Reg(r)] | [Operand::Reg(r), Operand::Reg(_)] = ops {
+                        if r.class == RegClass::St && r.num == 1 {
+                            return Ok(Some(Encoded {
+                                bytes: bytes.to_vec(),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                }
+                return Err(format!("'{}' takes no operands here", mnemonic));
+            }
+            return Ok(Some(Encoded {
+                bytes: bytes.to_vec(),
+                ..Default::default()
+            }));
+        }
+    }
+    // fstp %st(i): DD D8+i (the pop-discard).
+    if mnemonic == "fstp" {
+        if let [Operand::Reg(r)] = ops {
+            if r.class == RegClass::St {
+                return Ok(Some(Encoded {
+                    bytes: vec![0xdd, 0xd8 + r.num],
+                    ..Default::default()
+                }));
+            }
+        }
+        return Err("fstp expects %st(i) (memory forms are fstpt/fstpl/fstps)".into());
+    }
+    for (name, opc, digit) in X87_MEM {
+        if *name == mnemonic {
+            let m = match ops {
+                [Operand::Mem(m)] => m,
+                _ => return Err(format!("'{}' expects one memory operand", mnemonic)),
+            };
+            let mut p = Parts::new();
+            p.opcode.push(*opc);
+            p.mem(*digit, m)?;
+            return p.finish().map(Some);
+        }
+    }
+    Ok(None)
 }
 
 // -------------------------------------------------------------------

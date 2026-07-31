@@ -36,6 +36,9 @@ pub enum RegClass {
     /// ah/ch/dh/bh — encodings 4..7 without REX; REX-forbidden.
     GpHigh8,
     Xmm,
+    /// x87 stack registers %st, %st(0)..%st(7) — the closed long-double
+    /// arm (fstp %st(0), fucomip %st(1)). Width is nominal.
+    St,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -137,6 +140,30 @@ impl Reg {
                 });
             }
         }
+        // x87: st, st(0)..st(7)
+        if name == "st" {
+            return Some(Reg {
+                num: 0,
+                width: Width::X,
+                class: RegClass::St,
+                forces_rex: false,
+            });
+        }
+        if let Some(rest) = name.strip_prefix("st(") {
+            if let Some(digit) = rest.strip_suffix(')') {
+                if let Ok(n) = digit.parse::<u8>() {
+                    if n < 8 && digit.len() == 1 {
+                        return Some(Reg {
+                            num: n,
+                            width: Width::X,
+                            class: RegClass::St,
+                            forces_rex: false,
+                        });
+                    }
+                }
+            }
+            return None;
+        }
         // xmm
         if let Some(rest) = name.strip_prefix("xmm") {
             if let Ok(n) = rest.parse::<u8>() {
@@ -176,6 +203,7 @@ impl fmt::Display for Reg {
         let name = match (self.class, self.width) {
             (RegClass::GpHigh8, _) => ["ah", "ch", "dh", "bh"][self.num as usize].to_string(),
             (RegClass::Xmm, _) => format!("xmm{}", self.num),
+            (RegClass::St, _) => format!("st({})", self.num),
             (RegClass::Gp, Width::Q) => Q[self.num as usize].to_string(),
             (RegClass::Gp, Width::L) => L[self.num as usize].to_string(),
             (RegClass::Gp, Width::W) => W[self.num as usize].to_string(),
