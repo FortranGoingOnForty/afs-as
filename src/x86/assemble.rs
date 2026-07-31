@@ -1100,9 +1100,10 @@ fn align_pad(
 }
 
 /// gas-style multi-byte NOP fill for text alignment. Single NOPs run
-/// up to 11 bytes (66/2e-prefixed nopw forms), longer fills go
-/// longest-first. Table measured from gas 2.44 output for every fill
-/// size 1..=15.
+/// up to 11 bytes (66/2e-prefixed nopw forms); longer fills emit the
+/// REMAINDER-sized NOP first, then 11-byte NOPs — the order gas 2.44
+/// actually produces (measured for n = 12, 13, 14, 25; the cgfried
+/// object differential caught the longest-first divergence).
 fn fill_nops(out: &mut Vec<u8>, mut n: usize) {
     const NOPS: [&[u8]; 11] = [
         &[0x90],
@@ -1119,6 +1120,10 @@ fn fill_nops(out: &mut Vec<u8>, mut n: usize) {
             0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
         ],
     ];
+    if n > 11 && n % 11 != 0 {
+        out.extend_from_slice(NOPS[n % 11 - 1]);
+        n -= n % 11;
+    }
     while n > 0 {
         let take = n.min(11);
         out.extend_from_slice(NOPS[take - 1]);
