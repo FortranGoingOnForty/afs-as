@@ -270,6 +270,12 @@ const CASES: &[&str] = &[
     "fucomip",
     "fstp %st(0)",
     "fstp %st(1)",
+    // Sprint 24 (cgfried): imul immediate 3-operand form
+    "imulq $4, %rdx, %rdx",
+    "imulq $1, %rax, %rax",
+    "imull $1000, %ecx, %edx",
+    "imulq $-8, %r12, %r12",
+    "imulq $305419896, %rsi, %rsi",
 ];
 
 fn our_bytes(line: &str) -> (Vec<u8>, Option<afs_as::x86::encode::InsnReloc>) {

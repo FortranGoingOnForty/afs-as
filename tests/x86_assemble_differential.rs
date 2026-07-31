@@ -223,6 +223,33 @@ fn large_bss_space_matches_gas_without_materializing() {
 }
 
 #[test]
+fn nop_fill_decomposition_matches_gas() {
+    // Every pad size 1..=31 against a 32-byte alignment: gas emits the
+    // REMAINDER-sized nop FIRST, then 11-byte nops (the cgfried object
+    // differential caught the longest-first divergence).
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "nop_fill_decomposition_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_nop_fill");
+    for n in 1usize..=31 {
+        let mut src = String::from(".text\nf:\n");
+        for _ in 0..(32 - n) {
+            src.push_str("nop\n");
+        }
+        src.push_str(".p2align 5\ng:\nret\n");
+        let name = format!("nop_fill_{}", n);
+        if let Some(f) = diff_one(&name, &src, &gas, &tmp) {
+            panic!("{f}");
+        }
+    }
+}
+
+#[test]
 fn explicit_fill_bytes_match_gas() {
     let Some(gas) = celf::gas_path() else {
         celf::skip(
