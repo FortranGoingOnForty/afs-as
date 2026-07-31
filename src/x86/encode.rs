@@ -450,8 +450,16 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
                 return encode_arith(stem, w, ops, mnemonic)
             }
             "test" => return encode_test(w, ops, mnemonic),
-            // Two-byte-opcode RM forms sharing one shape.
-            "imul" => return encode_rm_0f(0xaf, w, ops, mnemonic),
+            // Two-byte-opcode RM forms sharing one shape; the
+            // immediate form (69/6B) is its own AT&T 3-operand shape
+            // `imul $imm, r/m, r` (cgfried emits it for scaled
+            // address arithmetic).
+            "imul" => {
+                if let [Operand::Imm(_), ..] = ops {
+                    return encode_imul_imm(w, ops, mnemonic);
+                }
+                return encode_rm_0f(0xaf, w, ops, mnemonic);
+            }
             "bsr" => return encode_rm_0f(0xbd, w, ops, mnemonic),
             "bsf" => return encode_rm_0f(0xbc, w, ops, mnemonic),
             "idiv" | "div" | "neg" | "not" | "mul" => {
@@ -1221,6 +1229,45 @@ fn encode_test(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
 }
 
 /// Shared 0F-xx RM shape: imul (AF), bsr (BD), bsf (BC) — rm -> reg.
+/// imul $imm, r/m, r — opcode 6B (imm8 sign-extended) or 69 (imm32).
+fn encode_imul_imm(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
+    let (imm, src, dst) = match ops {
+        [Operand::Imm(i), Operand::Reg(s), Operand::Reg(d)] => (*i, *s, *d),
+        _ => {
+            return Err(format!(
+                "'{}' immediate form expects $imm, %r, %r",
+                mnemonic
+            ))
+        }
+    };
+    if w == Width::B {
+        return Err("imul immediate form has no 8-bit variant".into());
+    }
+    check_width(src, w, mnemonic)?;
+    check_width(dst, w, mnemonic)?;
+    let mut p = Parts::new();
+    width_setup(w, &mut p.rex, &mut p.prefix);
+    p.rex.merge_reg(dst, RexSlot::R);
+    p.rex.merge_reg(src, RexSlot::B);
+    let imm8 = i8::try_from(imm).is_ok();
+    p.opcode.push(if imm8 { 0x6b } else { 0x69 });
+    p.tail.push(0b11 << 6 | dst.low3() << 3 | src.low3());
+    if imm8 {
+        p.tail.push(imm as i8 as u8);
+    } else if w == Width::W {
+        if i16::try_from(imm).is_err() && u16::try_from(imm).is_err() {
+            return Err("imul immediate does not fit 16 bits".into());
+        }
+        p.tail.extend_from_slice(&(imm as u16).to_le_bytes());
+    } else {
+        if i32::try_from(imm).is_err() {
+            return Err("imul immediate does not fit simm32".into());
+        }
+        p.tail.extend_from_slice(&(imm as i32).to_le_bytes());
+    }
+    p.finish()
+}
+
 fn encode_rm_0f(op2: u8, w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
     let mut p = Parts::new();
     width_setup(w, &mut p.rex, &mut p.prefix);
