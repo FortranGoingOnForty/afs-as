@@ -385,9 +385,7 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
     // whole "ll" is not a condition), "cmovle" is cc "le".
     if let Some(rest) = mnemonic.strip_prefix("cmov") {
         let (cc, w) = match rest.as_bytes().last() {
-            Some(b'b' | b'w' | b'l' | b'q')
-                if cond_code(&rest[..rest.len() - 1]).is_some() =>
-            {
+            Some(b'b' | b'w' | b'l' | b'q') if cond_code(&rest[..rest.len() - 1]).is_some() => {
                 let w = match rest.as_bytes()[rest.len() - 1] {
                     b'w' => Width::W,
                     b'l' => Width::L,
