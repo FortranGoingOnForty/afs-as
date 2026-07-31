@@ -1120,7 +1120,7 @@ fn fill_nops(out: &mut Vec<u8>, mut n: usize) {
             0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
         ],
     ];
-    if n > 11 && n % 11 != 0 {
+    if n > 11 && !n.is_multiple_of(11) {
         out.extend_from_slice(NOPS[n % 11 - 1]);
         n -= n % 11;
     }
