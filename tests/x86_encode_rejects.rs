@@ -37,6 +37,31 @@ const REJECTED: &[&str] = &[
     "ret $8, $16",
 ];
 
+const ZERO_OPERAND_MNEMONICS: &[&str] = &["cqto", "cqo", "cltd", "cdq", "syscall"];
+
+const SETCC_MNEMONICS: &[&str] = &[
+    "seto", "setno", "setb", "setc", "setnae", "setae", "setnb", "setnc", "sete", "setz", "setne",
+    "setnz", "setbe", "setna", "seta", "setnbe", "sets", "setns", "setp", "setpe", "setnp",
+    "setpo", "setl", "setnge", "setge", "setnl", "setle", "setng", "setg", "setnle",
+];
+
+fn fixed_arity_surplus_forms() -> Vec<String> {
+    ZERO_OPERAND_MNEMONICS
+        .iter()
+        .map(|mnemonic| format!("{mnemonic} %rax"))
+        .chain(
+            ["pushq", "popq"]
+                .into_iter()
+                .map(|mnemonic| format!("{mnemonic} %rax, %rbx")),
+        )
+        .chain(
+            SETCC_MNEMONICS
+                .iter()
+                .map(|mnemonic| format!("{mnemonic} %al, %bl")),
+        )
+        .collect()
+}
+
 fn encode_line(line: &str) -> afs_as::x86::encode::EncodeResult {
     let stmts = parse(&format!("{}\n", line)).unwrap_or_else(|e| panic!("{}: parse: {}", line, e));
     let (m, ops) = match &stmts[0].stmt {
@@ -53,6 +78,55 @@ fn encoder_rejects_silently_wrong_forms() {
             encode_line(line).is_err(),
             "{}: encoder accepted a form it must reject (would emit the wrong instruction)",
             line
+        );
+    }
+}
+
+#[test]
+fn fixed_arity_encoders_require_exact_operand_counts() {
+    for mnemonic in ZERO_OPERAND_MNEMONICS {
+        assert!(
+            encode_line(mnemonic).is_ok(),
+            "{mnemonic}: rejected its operand-free form"
+        );
+        let extra = format!("{mnemonic} %rax");
+        assert!(
+            encode_line(&extra).is_err(),
+            "{extra}: encoder silently discarded the operand"
+        );
+    }
+
+    for mnemonic in ["pushq", "popq"] {
+        assert!(
+            encode_line(mnemonic).is_err(),
+            "{mnemonic}: accepted a missing operand"
+        );
+        let exact = format!("{mnemonic} %rax");
+        assert!(
+            encode_line(&exact).is_ok(),
+            "{exact}: rejected its supported unary form"
+        );
+        let extra = format!("{mnemonic} %rax, %rbx");
+        assert!(
+            encode_line(&extra).is_err(),
+            "{extra}: encoder silently discarded the trailing operand"
+        );
+    }
+
+    for mnemonic in SETCC_MNEMONICS {
+        assert!(
+            encode_line(mnemonic).is_err(),
+            "{mnemonic}: accepted a missing operand"
+        );
+        let exact = format!("{mnemonic} %al");
+        assert!(
+            encode_line(&exact).is_ok(),
+            "{exact}: rejected its supported unary form"
+        );
+        let extra = format!("{mnemonic} %al, %bl");
+        assert!(
+            encode_line(&extra).is_err(),
+            "{extra}: encoder silently discarded the trailing operand"
         );
     }
 }
@@ -84,6 +158,37 @@ fn gas_also_rejects_those_forms() {
         assert!(
             !out.status.success(),
             "gas accepted {:?} — expected rejection:\n{}",
+            line,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn gas_rejects_fixed_arity_surplus_operands() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_encode_rejects",
+            "gas_rejects_fixed_arity_surplus_operands",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_fixed_arity_reject");
+    for (i, line) in fixed_arity_surplus_forms().iter().enumerate() {
+        let src = tmp.path(&format!("_{}.s", i));
+        let obj = tmp.path(&format!("_{}.o", i));
+        std::fs::write(&src, format!(".text\n{}\n", line)).unwrap();
+        let out = Command::new(&gas)
+            .arg("--64")
+            .arg("-o")
+            .arg(&obj)
+            .arg(&src)
+            .output()
+            .expect("run gas");
+        assert!(
+            !out.status.success(),
+            "gas accepted {:?} — expected operand-count rejection:\n{}",
             line,
             String::from_utf8_lossy(&out.stderr)
         );

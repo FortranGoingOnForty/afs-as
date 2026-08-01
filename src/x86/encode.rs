@@ -343,16 +343,22 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
             });
         }
         "cqto" | "cqo" => {
+            if !ops.is_empty() {
+                return Err(format!("{} expects no operands", mnemonic));
+            }
             return Ok(Encoded {
                 bytes: vec![0x48, 0x99],
                 ..Default::default()
-            })
+            });
         }
         "cltd" | "cdq" => {
+            if !ops.is_empty() {
+                return Err(format!("{} expects no operands", mnemonic));
+            }
             return Ok(Encoded {
                 bytes: vec![0x99],
                 ..Default::default()
-            })
+            });
         }
         "nop" => {
             return Ok(Encoded {
@@ -361,10 +367,13 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
             })
         }
         "syscall" => {
+            if !ops.is_empty() {
+                return Err("syscall expects no operands".into());
+            }
             return Ok(Encoded {
                 bytes: vec![0x0f, 0x05],
                 ..Default::default()
-            })
+            });
         }
         "call" | "callq" => return encode_call_jmp(ops, 0xe8, "call"),
         "jmp" => return encode_call_jmp(ops, 0xe9, "jmp"),
@@ -380,8 +389,12 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
         }
     }
     if mnemonic == "pushq" || mnemonic == "popq" {
-        let r = gp_reg(ops.first().ok_or("push/pop needs an operand")?)
-            .ok_or("push/pop supports register operands only")?;
+        let operand = match ops {
+            [operand] => operand,
+            [] => return Err("push/pop needs an operand".into()),
+            _ => return Err("push/pop expects one operand".into()),
+        };
+        let r = gp_reg(operand).ok_or("push/pop supports register operands only")?;
         check_width(r, Width::Q, mnemonic)?;
         let mut p = Parts::new();
         p.rex.merge_reg(r, RexSlot::B);
@@ -840,8 +853,12 @@ fn encode_jcc(cc: &str, ops: &[Operand]) -> EncodeResult {
 
 fn encode_setcc(cc: &str, ops: &[Operand]) -> EncodeResult {
     let code = cond_code(cc).ok_or_else(|| format!("unknown condition '{}'", cc))?;
-    let r = gp_reg(ops.first().ok_or("setcc needs an operand")?)
-        .ok_or("setcc supports byte registers only")?;
+    let operand = match ops {
+        [operand] => operand,
+        [] => return Err("setcc needs an operand".into()),
+        _ => return Err("setcc expects one operand".into()),
+    };
+    let r = gp_reg(operand).ok_or("setcc supports byte registers only")?;
     check_width(r, Width::B, "setcc")?;
     let mut p = Parts::new();
     p.rex.merge_reg(r, RexSlot::B);
