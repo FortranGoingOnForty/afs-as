@@ -737,6 +737,13 @@ fn sorted_relocations(section: &Section) -> Vec<&Relocation> {
 }
 
 fn validate_relocations(obj: &ObjectFile, section: &Section) -> io::Result<()> {
+    if section.kind.is_zerofill() && !section.relocations.is_empty() {
+        return Err(invalid_input(format!(
+            "zerofill section {},{} cannot contain relocations",
+            section.segment, section.name
+        )));
+    }
+
     let relocations = sorted_relocations(section);
     for relocation in &relocations {
         validate_relocation(obj, section, relocation)?;
@@ -1220,34 +1227,53 @@ mod tests {
         assert_eq!((info >> 28) & 0xF, 3); // type = PAGE21
     }
 
-    fn zerofill_object_with_relocation(size: u64, offset: u32) -> ObjectFile {
-        let mut obj = ObjectFile::new();
-        let mut section = Section::new("__DATA", "__bss", SectionKind::ZeroFill);
-        section.size = size;
-        section.relocations.push(Relocation {
+    fn local_unsigned_relocation(offset: u32) -> Relocation {
+        Relocation {
             offset,
             symbol_idx: 1,
             pcrel: false,
             length: 3,
             extern_: false,
             reloc_type: ARM64_RELOC_UNSIGNED,
-        });
-        obj.sections.push(section);
-        obj
+        }
+    }
+
+    #[test]
+    fn zerofill_sections_reject_relocations() {
+        for (name, kind) in [
+            ("__bss", SectionKind::ZeroFill),
+            ("__thread_bss", SectionKind::ThreadLocalZeroFill),
+        ] {
+            let mut obj = ObjectFile::new();
+            let mut section = Section::new("__DATA", name, kind);
+            section.size = 8;
+            section.relocations.push(local_unsigned_relocation(0));
+            obj.sections.push(section);
+
+            let mut output = Vec::new();
+            let error = write_macho(&obj, &mut output).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert_eq!(
+                error.to_string(),
+                format!("zerofill section __DATA,{name} cannot contain relocations")
+            );
+            assert!(output.is_empty(), "writer emitted bytes before rejection");
+        }
     }
 
     #[test]
     fn relocation_address_accepts_the_signed_boundary() {
         let max = i32::MAX as u32;
-        let obj = zerofill_object_with_relocation(u64::from(max) + 8, max);
-        write_macho(&obj, &mut Vec::new()).unwrap();
+        assert_eq!(
+            relocation_address(&local_unsigned_relocation(max)).unwrap(),
+            i32::MAX
+        );
     }
 
     #[test]
     fn relocation_address_rejects_the_scattered_bit() {
         let offset = i32::MAX as u32 + 1;
-        let obj = zerofill_object_with_relocation(u64::from(offset) + 8, offset);
-        let error = write_macho(&obj, &mut Vec::new()).unwrap_err();
+        let error = relocation_address(&local_unsigned_relocation(offset)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(
             error.to_string(),
@@ -1259,15 +1285,18 @@ mod tests {
     fn relocation_extent_must_fit_its_section() {
         let offset = i32::MAX as u32 - 7;
         let exact_size = u64::from(offset) + 8;
-        let exact = zerofill_object_with_relocation(exact_size, offset);
-        write_macho(&exact, &mut Vec::new()).unwrap();
+        let obj = ObjectFile::new();
+        let mut section = Section::new("__DATA", "__data", SectionKind::Data);
+        section.size = exact_size;
+        section.relocations.push(local_unsigned_relocation(offset));
+        validate_relocations(&obj, &section).unwrap();
 
-        let outside = zerofill_object_with_relocation(exact_size - 1, offset);
-        let error = write_macho(&outside, &mut Vec::new()).unwrap_err();
+        section.size = exact_size - 1;
+        let error = validate_relocations(&obj, &section).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(
             error.to_string(),
-            "relocation at offset 2147483640 with width 8 exceeds section __DATA,__bss size 2147483647"
+            "relocation at offset 2147483640 with width 8 exceeds section __DATA,__data size 2147483647"
         );
     }
 
