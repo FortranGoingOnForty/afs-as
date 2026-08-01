@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -57,7 +58,7 @@ fn main() {
 }
 
 fn run() -> Result<(), (i32, String)> {
-    match parse_args(env::args().skip(1)) {
+    match parse_args(env::args_os().skip(1)) {
         Ok(Command::Help) => {
             println!("{}", USAGE);
             Ok(())
@@ -78,7 +79,7 @@ fn run() -> Result<(), (i32, String)> {
     }
 }
 
-fn parse_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
+fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
     let mut input: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
     let mut target = Target::Arm64Macho;
@@ -86,37 +87,41 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Command, String> {
 
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--" if parsing_options => {
-                parsing_options = false;
+        let arg_os = arg.as_os_str();
+        if parsing_options && arg_os == OsStr::new("--") {
+            parsing_options = false;
+        } else if parsing_options && (arg_os == OsStr::new("--help") || arg_os == OsStr::new("-h"))
+        {
+            return Ok(Command::Help);
+        } else if parsing_options
+            && (arg_os == OsStr::new("--version") || arg_os == OsStr::new("-V"))
+        {
+            return Ok(Command::Version);
+        } else if parsing_options && arg_os == OsStr::new("--64") {
+            target = Target::X8664Elf;
+        } else if parsing_options && arg_os == OsStr::new("-o") {
+            let Some(path) = args.next() else {
+                return Err("option '-o' requires an output path".into());
+            };
+            output = Some(PathBuf::from(path));
+        } else if arg_os == OsStr::new("-") {
+            if input.is_some() {
+                return Err("multiple input files are not supported (extra input '-')".into());
             }
-            "--help" | "-h" if parsing_options => return Ok(Command::Help),
-            "--version" | "-V" if parsing_options => return Ok(Command::Version),
-            "--64" if parsing_options => target = Target::X8664Elf,
-            "-o" if parsing_options => {
-                let Some(path) = args.next() else {
-                    return Err("option '-o' requires an output path".into());
-                };
-                output = Some(PathBuf::from(path));
+            input = Some(PathBuf::from(arg));
+        } else if parsing_options && arg_os.as_encoded_bytes().starts_with(b"-") {
+            return Err(format!(
+                "unrecognized option '{}'",
+                Path::new(arg_os).display()
+            ));
+        } else {
+            if input.is_some() {
+                return Err(format!(
+                    "multiple input files are not supported (extra input '{}')",
+                    Path::new(arg_os).display()
+                ));
             }
-            "-" => {
-                if input.is_some() {
-                    return Err("multiple input files are not supported (extra input '-')".into());
-                }
-                input = Some(PathBuf::from(arg));
-            }
-            _ if parsing_options && arg.starts_with('-') => {
-                return Err(format!("unrecognized option '{}'", arg));
-            }
-            _ => {
-                if input.is_some() {
-                    return Err(format!(
-                        "multiple input files are not supported (extra input '{}')",
-                        arg
-                    ));
-                }
-                input = Some(PathBuf::from(arg));
-            }
+            input = Some(PathBuf::from(arg));
         }
     }
 
@@ -238,12 +243,13 @@ fn assemble_cli(input: &Path, output: &Path) -> Result<(), afs_as::assemble::Asm
 #[cfg(test)]
 mod tests {
     use super::{default_output_path, parse_args, Command, Target};
+    use std::ffi::OsString;
     use std::path::PathBuf;
 
     fn parse<I, S>(args: I) -> Result<Command, String>
     where
         I: IntoIterator<Item = S>,
-        S: Into<String>,
+        S: Into<OsString>,
     {
         parse_args(args.into_iter().map(Into::into))
     }

@@ -4,6 +4,11 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(unix)]
+use std::ffi::OsString;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
+
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_root(prefix: &str) -> PathBuf {
@@ -119,6 +124,67 @@ fn default_output_path_is_created_next_to_input() {
     );
     assert!(output.exists(), "expected {} to exist", output.display());
     assert!(!fs::read(&output).expect("read output").is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_input_and_output_paths_are_preserved() {
+    let root = temp_root("afs_cli_non_utf8_paths");
+    let input = root.join(OsString::from_vec(b"input-\xff.s".to_vec()));
+    let output = root.join(OsString::from_vec(b"output-\xfe.o".to_vec()));
+    fs::write(&input, ".text\n.globl f\nf:\nret\n").expect("write raw-byte input");
+
+    let result = afs_as()
+        .args(["--64", "-o"])
+        .arg(&output)
+        .arg(&input)
+        .output()
+        .expect("run afs-as with raw-byte paths");
+
+    assert!(result.status.success(), "stderr bytes: {:?}", result.stderr);
+    assert!(output.exists(), "raw-byte output path was not created");
+    assert!(!fs::read(&output).expect("read raw-byte output").is_empty());
+    fs::remove_dir_all(&root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_dash_prefixed_path_requires_double_dash() {
+    let root = temp_root("afs_cli_non_utf8_dash_path");
+    let input_name = OsString::from_vec(b"-input-\xff.s".to_vec());
+    let input = root.join(&input_name);
+    let output = root.join(OsString::from_vec(b"-input-\xff.o".to_vec()));
+    fs::write(&input, ".text\n.globl _entry\n_entry:\nret\n")
+        .expect("write dash-prefixed raw-byte input");
+
+    let rejected = afs_as()
+        .current_dir(&root)
+        .arg(&input_name)
+        .output()
+        .expect("run afs-as without --");
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("afs-as: unrecognized option"),
+        "stderr bytes: {:?}",
+        rejected.stderr
+    );
+
+    let accepted = afs_as()
+        .current_dir(&root)
+        .arg("--")
+        .arg(&input_name)
+        .output()
+        .expect("run afs-as with --");
+    assert!(
+        accepted.status.success(),
+        "stderr bytes: {:?}",
+        accepted.stderr
+    );
+    assert!(
+        output.exists(),
+        "default raw-byte output path was not created"
+    );
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
