@@ -12,11 +12,15 @@
 // every helper; silence per-binary dead-code noise.
 #![allow(dead_code)]
 
+#[path = "owned_temp_dir.rs"]
+mod owned_temp_dir;
+
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use afs_as::elf::{ObjectFile, SymbolPlace, SHT_NOBITS, STT_SECTION};
+use owned_temp_dir::OwnedTempDir;
 
 pub fn gas_path() -> Option<PathBuf> {
     let candidates: &[&str] = if cfg!(target_os = "freebsd") {
@@ -279,30 +283,21 @@ fn normalize_impl(
 }
 
 pub struct TempArtifacts {
-    pub dir: PathBuf,
-    pub stem: String,
+    directory: OwnedTempDir,
 }
 
 impl TempArtifacts {
     pub fn new(stem: &str) -> Self {
         Self {
-            dir: std::env::temp_dir(),
-            stem: format!("{}_{}", stem, std::process::id()),
+            directory: OwnedTempDir::new(stem),
         }
     }
-    pub fn path(&self, suffix: &str) -> PathBuf {
-        self.dir.join(format!("{}{}", self.stem, suffix))
-    }
-}
 
-impl Drop for TempArtifacts {
-    fn drop(&mut self) {
-        if let Ok(entries) = std::fs::read_dir(&self.dir) {
-            for e in entries.flatten() {
-                if e.file_name().to_string_lossy().starts_with(&self.stem) {
-                    let _ = std::fs::remove_file(e.path());
-                }
-            }
-        }
+    pub fn path(&self, suffix: &str) -> PathBuf {
+        self.directory.path(&format!("artifact{suffix}"))
+    }
+
+    pub fn root(&self) -> &Path {
+        self.directory.as_ref()
     }
 }
