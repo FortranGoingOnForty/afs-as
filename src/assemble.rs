@@ -439,6 +439,8 @@ struct LinkerOptimizationHint {
 struct CfiProcState {
     start_section: usize,
     start_offset: u64,
+    start_line: u32,
+    start_col: u32,
     function_symbol: String,
     cfa_register: GpReg,
     cfa_offset: i64,
@@ -490,10 +492,18 @@ const EH_FRAME_CIE_SIZE: u64 = 20;
 const EH_FRAME_FDE_FIXED_SIZE: usize = 25;
 
 impl CfiProcState {
-    fn new(start_section: usize, start_offset: u64, function_symbol: String) -> Self {
+    fn new(
+        start_section: usize,
+        start_offset: u64,
+        start_line: u32,
+        start_col: u32,
+        function_symbol: String,
+    ) -> Self {
         Self {
             start_section,
             start_offset,
+            start_line,
+            start_col,
             function_symbol,
             cfa_register: SP,
             cfa_offset: 0,
@@ -501,6 +511,11 @@ impl CfiProcState {
             compact_unwind_forbidden: false,
             events: Vec::new(),
         }
+    }
+
+    fn unterminated_error(&self) -> AsmError {
+        AsmError::new("unterminated .cfi_startproc before end of file".into())
+            .with_loc_if_absent(self.start_line, self.start_col)
     }
 
     fn code_offset(&self, current_offset: u64) -> u64 {
@@ -791,10 +806,8 @@ impl Assembler {
             self.collect_layout_stmt(stmt)?;
         }
 
-        if self.active_cfi_proc.is_some() {
-            return Err(AsmError(
-                "unterminated .cfi_startproc before end of file".into(),
-            ));
+        if let Some(proc) = &self.active_cfi_proc {
+            return Err(proc.unterminated_error());
         }
 
         Ok(())
@@ -819,7 +832,7 @@ impl Assembler {
                 }
             }
             Stmt::Directive(dir) => {
-                self.collect_directive_layout(dir)
+                self.collect_directive_layout(dir, stmt.line, stmt.col)
                     .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
             }
             Stmt::Instruction(_) | Stmt::InstructionWithReloc(_, _) => {
@@ -906,7 +919,12 @@ impl Assembler {
         Ok(())
     }
 
-    fn collect_directive_layout(&mut self, dir: &Directive) -> Result<(), AsmError> {
+    fn collect_directive_layout(
+        &mut self,
+        dir: &Directive,
+        line: u32,
+        col: u32,
+    ) -> Result<(), AsmError> {
         match dir {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
@@ -991,7 +1009,7 @@ impl Assembler {
             } => {
                 self.reserve_zerofill(segment, section, symbol.as_deref(), *size, *align_pow2)?;
             }
-            Directive::CfiStartProc => self.start_cfi_proc()?,
+            Directive::CfiStartProc => self.start_cfi_proc(line, col)?,
             Directive::CfiEndProc => self.finish_cfi_proc()?,
             Directive::CfiDefCfa { .. }
             | Directive::CfiDefCfaOffset(_)
@@ -1177,7 +1195,7 @@ impl Assembler {
             .map(str::to_string)
     }
 
-    fn start_cfi_proc(&mut self) -> Result<(), AsmError> {
+    fn start_cfi_proc(&mut self, line: u32, col: u32) -> Result<(), AsmError> {
         if self.active_cfi_proc.is_some() {
             return Err(AsmError(
                 "nested .cfi_startproc directives are not supported".into(),
@@ -1195,6 +1213,8 @@ impl Assembler {
         self.active_cfi_proc = Some(CfiProcState::new(
             self.section,
             start_offset,
+            line,
+            col,
             function_symbol,
         ));
         Ok(())
@@ -2424,10 +2444,8 @@ impl Assembler {
     }
 
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
-        if self.active_cfi_proc.is_some() {
-            return Err(AsmError(
-                "unterminated .cfi_startproc before end of file".into(),
-            ));
+        if let Some(proc) = &self.active_cfi_proc {
+            return Err(proc.unterminated_error());
         }
 
         self.materialize_compact_unwind_section();
@@ -3976,13 +3994,18 @@ mod tests {
 
     #[test]
     fn assemble_unterminated_cfi_proc_is_rejected() {
-        let err =
-            assemble_source(".text\nunterminated_target:\n.cfi_startproc\nret\n").unwrap_err();
+        let source = ".text\nunterminated_target:\n.cfi_startproc\nret\n";
+        let err = assemble_source(source).unwrap_err();
+        assert_eq!((err.line, err.col), (Some(3), Some(1)));
         assert!(
             err.msg.contains("unterminated .cfi_startproc"),
             "got: {}",
             err
         );
+
+        let stmts = parse::parse(source).unwrap();
+        let unlocated = assemble_stmts(&stmts).unwrap_err();
+        assert_eq!((unlocated.line, unlocated.col), (None, None));
     }
 
     #[test]

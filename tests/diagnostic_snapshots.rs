@@ -102,6 +102,15 @@ fn snapshot_unsupported_cfi_directive() {
 }
 
 #[test]
+fn snapshot_unterminated_cfi_proc() {
+    run_failure_snapshot(
+        "unterminated-cfi.s",
+        ".text\n.globl _f\n_f:\n.cfi_startproc\nret\n",
+        "<input>:4:1: error: unterminated .cfi_startproc before end of file\n.cfi_startproc\n^\n",
+    );
+}
+
+#[test]
 fn snapshot_unsupported_relocation_modifier_for_adrp() {
     run_failure_snapshot(
         "unsupported-reloc-modifier.s",
