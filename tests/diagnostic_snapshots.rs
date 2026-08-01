@@ -47,6 +47,20 @@ fn snapshot_unsupported_directive() {
 }
 
 #[test]
+fn snapshot_unsupported_arm64_string_escapes() {
+    run_failure_snapshot(
+        "unsupported-bel-escape.s",
+        ".ascii \"\\a\"\n",
+        "<input>:1:8: error: invalid escape sequence (unrecognized character)\n.ascii \"\\a\"\n       ^\n",
+    );
+    run_failure_snapshot(
+        "unsupported-vertical-tab-escape.s",
+        ".asciz \"\\v\"\n",
+        "<input>:1:8: error: invalid escape sequence (unrecognized character)\n.asciz \"\\v\"\n       ^\n",
+    );
+}
+
+#[test]
 fn snapshot_trailing_arm64_token() {
     run_failure_snapshot(
         "trailing-token.s",

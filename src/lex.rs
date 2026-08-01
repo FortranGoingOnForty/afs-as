@@ -452,13 +452,18 @@ impl<'a> Lexer<'a> {
                 }
                 let esc = self.advance();
                 match esc {
-                    b'a' => buf.push(0x07),
+                    b'a' | b'v' => {
+                        return Err(LexError {
+                            line,
+                            col,
+                            msg: "invalid escape sequence (unrecognized character)".into(),
+                        });
+                    }
                     b'b' => buf.push(0x08),
                     b'f' => buf.push(0x0c),
                     b'n' => buf.push(b'\n'),
                     b't' => buf.push(b'\t'),
                     b'r' => buf.push(b'\r'),
-                    b'v' => buf.push(0x0b),
                     b'0'..=b'7' => {
                         let mut value = (esc - b'0') as u16;
                         for _ in 0..2 {
@@ -766,14 +771,27 @@ mod tests {
     }
 
     #[test]
-    fn directive_ascii_octal_and_c_escapes() {
+    fn directive_ascii_octal_and_supported_named_escapes() {
         assert_eq!(
-            tok_kinds(".ascii \"\\b\\t\\n\\013\\f\\r\\016\\017\""),
+            tok_kinds(".ascii \"\\007\\b\\t\\n\\013\\f\\r\\016\\017\""),
             vec![
                 Tok::Ident(".ascii".into()),
-                Tok::StringLit(vec![0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f]),
+                Tok::StringLit(vec![0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,]),
             ]
         );
+    }
+
+    #[test]
+    fn directive_strings_reject_unsupported_named_control_escapes() {
+        for (directive, escape) in [(".ascii", "\\a"), (".asciz", "\\v")] {
+            let source = format!("{directive} \"{escape}\"");
+            let err = Lexer::tokenize(&source).unwrap_err();
+            assert_eq!((err.line, err.col), (1, 8), "{source}");
+            assert_eq!(
+                err.msg, "invalid escape sequence (unrecognized character)",
+                "{source}"
+            );
+        }
     }
 
     #[test]
