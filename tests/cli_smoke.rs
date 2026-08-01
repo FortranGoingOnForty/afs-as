@@ -377,6 +377,21 @@ fn parse_errors_include_file_line_source_and_caret() {
 }
 
 #[test]
+fn utf8_source_diagnostics_use_scalar_columns_and_aligned_carets() {
+    let output = run_with_stdin(&["-", "-o", "-"], ".text\n.ascii \"é\" garbage\n");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("diagnostic is UTF-8"),
+        concat!(
+            "<stdin>:2:12: error: unexpected trailing token: garbage\n",
+            ".ascii \"é\" garbage\n",
+            "           ^\n",
+        )
+    );
+}
+
+#[test]
 fn excessive_expression_depth_exits_with_a_located_error() {
     let unary = format!(".data\n.quad {}1\n", "-".repeat(100_000));
     let parenthesized = format!(

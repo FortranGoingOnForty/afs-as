@@ -200,8 +200,12 @@ impl AsmError {
         self = self.with_path(path);
         if self.snippet.is_none() {
             if let Some(line) = self.line {
-                self.snippet = source_line_bytes(src, line)
-                    .map(|line| String::from_utf8_lossy(line).into_owned());
+                if let Some(source_line) = source_line_bytes(src, line) {
+                    if let Some(byte_col) = self.col {
+                        self.col = Some(scalar_column(source_line, byte_col));
+                    }
+                    self.snippet = Some(String::from_utf8_lossy(source_line).into_owned());
+                }
             }
         }
         self
@@ -220,6 +224,22 @@ fn source_line_bytes(src: &[u8], line: u32) -> Option<&[u8]> {
     src.split(|byte| *byte == b'\n')
         .nth(line.saturating_sub(1) as usize)
         .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+}
+
+/// Convert the parsers' one-based byte column into the one-based Unicode
+/// scalar column used by rendered diagnostics. Invalid byte sequences count
+/// exactly as the replacement characters shown in the lossy source snippet.
+fn scalar_column(line: &[u8], byte_col: u32) -> u32 {
+    let byte_offset = usize::try_from(byte_col.saturating_sub(1))
+        .unwrap_or(usize::MAX)
+        .min(line.len());
+    u32::try_from(
+        String::from_utf8_lossy(&line[..byte_offset])
+            .chars()
+            .count(),
+    )
+    .unwrap_or(u32::MAX)
+    .saturating_add(1)
 }
 
 #[allow(non_snake_case)]
