@@ -394,6 +394,136 @@ fn exported_dot_l_symbols_match_gas() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+const DEFINED_TEMPORARY_METADATA: &str = ".text
+.type .Ltyped,@function
+.Ltyped:
+ret
+.Lsized:
+.byte 0x90
+.size .Lsized,.-.Lsized
+.local .Llocal
+.type .Llocal,@object
+.Llocal:
+.byte 0
+.size .Llocal,.-.Llocal
+.globl .Lexported
+.type .Lexported,@function
+.Lexported:
+ret
+.size .Lexported,.-.Lexported
+.weak .Lweak
+.type .Lweak,@function
+.Lweak:
+ret
+.size .Lweak,.-.Lweak
+.quad .Ltyped
+";
+
+#[test]
+fn defined_temporary_metadata_is_elided_without_hiding_exports() {
+    let object =
+        assemble_x86(DEFINED_TEMPORARY_METADATA, host_osabi()).expect("assemble .L metadata");
+    let dot_l_symbols: Vec<_> = object
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.name.starts_with(".L"))
+        .collect();
+
+    assert_eq!(
+        dot_l_symbols.len(),
+        2,
+        "only exported .L labels belong in symtab"
+    );
+    for (symbol, name, bind, value) in [
+        (dot_l_symbols[0], ".Lexported", STB_GLOBAL, 3),
+        (dot_l_symbols[1], ".Lweak", STB_WEAK, 4),
+    ] {
+        assert_eq!(symbol.name, name);
+        assert_eq!(symbol.bind, bind, "binding for {name}");
+        assert_eq!(symbol.typ, STT_FUNC, "type for {name}");
+        assert!(
+            matches!(symbol.place, SymbolPlace::Section(_)),
+            "{name} must remain defined"
+        );
+        assert_eq!(symbol.value, value, "value for {name}");
+        assert_eq!(symbol.size, 1, "size for {name}");
+    }
+}
+
+#[test]
+fn defined_temporary_metadata_matches_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "defined_temporary_metadata_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_defined_temporary_metadata");
+    if let Some(failure) = diff_one(
+        "defined_temporary_metadata",
+        DEFINED_TEMPORARY_METADATA,
+        &gas,
+        &tmp,
+    ) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
+fn invalid_defined_temporary_sizes_are_rejected_like_gas() {
+    let cases = [
+        (
+            "missing_base",
+            ".text\n.Lfoo:\nret\n.size .Lfoo,.-missing\n",
+            4,
+            "base 'missing' not defined in this section",
+        ),
+        (
+            "cross_section_base",
+            ".data\nbase:\n.byte 0\n.text\n.Lfoo:\nret\n.size .Lfoo,.-base\n",
+            7,
+            "base 'base' not defined in this section",
+        ),
+    ];
+    let gas = celf::gas_path();
+    let tmp = celf::TempArtifacts::new("afs_x86_invalid_temporary_size");
+
+    for (name, source, line, message) in cases {
+        let error = assemble_x86(source, host_osabi())
+            .expect_err("invalid temporary .size unexpectedly assembled");
+        assert_eq!(error.line, Some(line), "line for {name}");
+        assert_eq!(error.col, Some(1), "column for {name}");
+        assert_eq!(error.msg, format!(".size .Lfoo: {message}"));
+
+        if let Some(gas) = &gas {
+            let source_path = tmp.path(&format!("_{name}.s"));
+            let object_path = tmp.path(&format!("_{name}.o"));
+            std::fs::write(&source_path, source).expect("write gas input");
+            let output = std::process::Command::new(gas)
+                .arg("--64")
+                .arg("-o")
+                .arg(&object_path)
+                .arg(&source_path)
+                .output()
+                .expect("run gas");
+            assert!(
+                !output.status.success(),
+                "gas unexpectedly accepted invalid temporary .size {name}"
+            );
+        }
+    }
+
+    if gas.is_none() {
+        celf::skip(
+            "x86_assemble_differential",
+            "invalid_defined_temporary_sizes_are_rejected_like_gas",
+            "no GNU assembler on this host",
+        );
+    }
+}
+
 const UNDEFINED_SYMBOL_METADATA: &str = ".text
 .globl globl_only
 .globl ext_func

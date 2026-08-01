@@ -914,6 +914,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         // Deterministic: label_order from the build.
         for label in secs[li].1.label_order.iter() {
             let info = syminfo.get(label).cloned().unwrap_or_default();
+            // Validate metadata even when the temporary itself is omitted
+            // from the symbol table.
+            let size = symbol_size(label, &info, Some(li))?;
             if label.starts_with(".L") && !info.globl && !info.weak {
                 continue;
             }
@@ -925,9 +928,6 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             } else {
                 STB_LOCAL
             };
-            // `.size sym, .-base`: dot recorded at the directive, so
-            // padding and local labels after the body don't skew it.
-            let size = symbol_size(label, &info, Some(li))?;
             model_sym_index.insert(label.clone(), obj.symbols.len());
             obj.symbols.push(Symbol {
                 name: label.clone(),
@@ -1007,7 +1007,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             | Stmt::Directive(Directive::Size { sym, .. }) => sym,
             _ => continue,
         };
-        if model_sym_index.contains_key(symbol) {
+        // A defined label either already has a symbol-table entry or is an
+        // intentionally elided local temporary. Neither case is undefined.
+        if model_sym_index.contains_key(symbol) || label_section.contains_key(symbol) {
             continue;
         }
         let info = &syminfo[symbol];
