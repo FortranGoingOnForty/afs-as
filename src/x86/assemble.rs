@@ -114,6 +114,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     // (sym, size, align, line, column)
     let mut commons: Vec<(String, u64, u64, u32, u32)> = Vec::new();
     let mut common_names: HashSet<String> = HashSet::new();
+    let mut global_common_names: HashSet<String> = HashSet::new();
     // label -> section index (for cross-section checks + reloc targets)
     let mut label_section: HashMap<String, usize> = HashMap::new();
 
@@ -173,7 +174,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 Directive::Extern(s) => {
                     syminfo.entry(s.clone()).or_default();
                 }
-                Directive::Weak(s) => syminfo.entry(s.clone()).or_default().weak = true,
+                Directive::Weak(s) => {
+                    if global_common_names.contains(s) {
+                        return Err(err(
+                            line,
+                            col,
+                            format!("symbol '{}' can not be both weak and common", s),
+                        ));
+                    }
+                    syminfo.entry(s.clone()).or_default().weak = true;
+                }
                 Directive::Local(s) => syminfo.entry(s.clone()).or_default().local = true,
                 Directive::Type { sym, kind } => {
                     syminfo.entry(sym.clone()).or_default().typ = Some(match kind {
@@ -205,6 +215,17 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             col,
                             format!("symbol '{}' is already defined", sym),
                         ));
+                    }
+                    let info = syminfo.get(sym);
+                    if info.is_some_and(|info| info.weak && !info.local) {
+                        return Err(err(
+                            line,
+                            col,
+                            format!("symbol '{}' can not be both weak and common", sym),
+                        ));
+                    }
+                    if !info.is_some_and(|info| info.local) {
+                        global_common_names.insert(sym.clone());
                     }
                     common_names.insert(sym.clone());
                     commons.push((sym.clone(), *size, *align, line, col))
