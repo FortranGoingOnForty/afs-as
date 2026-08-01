@@ -6,8 +6,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Write};
-use std::process::Command;
-use std::sync::OnceLock;
 
 // ---- Mach-O Constants ----
 
@@ -85,31 +83,12 @@ impl Default for BuildVersion {
     fn default() -> Self {
         Self {
             platform: PLATFORM_MACOS,
-            minos: default_host_minos(),
+            // Implicit metadata is a target policy, not a property of the host
+            // running the assembler. Use `.build_version` to select another target.
+            minos: pack_version(15, 0, 0),
             sdk: 0,
         }
     }
-}
-
-fn default_host_minos() -> u32 {
-    static HOST_MINOS: OnceLock<u32> = OnceLock::new();
-    *HOST_MINOS.get_or_init(|| {
-        Command::new("sw_vers")
-            .arg("-productVersion")
-            .output()
-            .ok()
-            .and_then(|out| out.status.success().then_some(out.stdout))
-            .and_then(|stdout| {
-                let version = String::from_utf8(stdout).ok()?;
-                version
-                    .trim()
-                    .split('.')
-                    .next()
-                    .and_then(|major| major.parse::<u32>().ok())
-            })
-            .map(|major| pack_version(major, 0, 0))
-            .unwrap_or_else(|| pack_version(15, 0, 0))
-    })
 }
 
 /// A symbol in the object file.
@@ -1836,6 +1815,18 @@ mod tests {
     fn version_packing() {
         assert_eq!(pack_version(15, 0, 0), 0x000F0000);
         assert_eq!(pack_version(14, 5, 1), 0x000E0501);
+    }
+
+    #[test]
+    fn default_build_version_is_destination_fixed() {
+        assert_eq!(
+            BuildVersion::default(),
+            BuildVersion {
+                platform: PLATFORM_MACOS,
+                minos: pack_version(15, 0, 0),
+                sdk: 0,
+            }
+        );
     }
 
     #[test]
