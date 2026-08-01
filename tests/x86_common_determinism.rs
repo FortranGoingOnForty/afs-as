@@ -159,6 +159,51 @@ fn duplicate_local_commons_keep_one_final_allocation_symbol() {
 }
 
 #[test]
+fn repeated_global_commons_emit_one_symbol_and_relocation_target() {
+    let source = ".comm duplicate,8,8\n\
+                  .comm duplicate,3,16\n\
+                  .data\n\
+                  .quad duplicate\n";
+    let obj = assemble_x86(source, host_osabi()).expect("assemble repeated global common");
+    let symbols: Vec<_> = obj
+        .symbols
+        .iter()
+        .enumerate()
+        .filter(|(_, symbol)| symbol.name == "duplicate")
+        .collect();
+
+    assert_eq!(symbols.len(), 1, "COMMON must have one symbol-table entry");
+    let (symbol_index, symbol) = symbols[0];
+    assert_eq!((symbol.value, symbol.size), (16, 8));
+
+    let data = obj.section_by_name(".data").expect("data section");
+    assert_eq!(data.relas.len(), 1);
+    assert_eq!(data.relas[0].symbol, symbol_index);
+}
+
+#[test]
+fn repeated_global_commons_preserve_order_and_gnu_size_rules() {
+    let source = ".comm alpha,0,1\n\
+                  .comm bravo,7,4\n\
+                  .comm alpha,6,32\n\
+                  .comm bravo,0,16\n\
+                  .comm charlie,4,2\n\
+                  .comm charlie,4,8\n";
+    let obj = assemble_x86(source, host_osabi()).expect("assemble repeated global commons");
+    let metadata: Vec<_> = obj
+        .symbols
+        .iter()
+        .filter(|symbol| matches!(symbol.place, afs_as::elf::SymbolPlace::Common))
+        .map(|symbol| (symbol.name.as_str(), symbol.value, symbol.size))
+        .collect();
+
+    assert_eq!(
+        metadata,
+        [("alpha", 32, 6), ("bravo", 16, 7), ("charlie", 8, 4)]
+    );
+}
+
+#[test]
 fn local_common_objects_are_stable_across_fresh_processes() {
     let tmp = celf::TempArtifacts::new("afs_x86_common_determinism");
     let mut expected = None;

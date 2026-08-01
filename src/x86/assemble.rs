@@ -864,6 +864,14 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         if local_bss.contains_key(sym) {
             continue;
         }
+        if let Some(&symbol_index) = model_sym_index.get(sym) {
+            let symbol = &mut obj.symbols[symbol_index];
+            symbol.value = symbol.value.max(*align);
+            if symbol.size == 0 {
+                symbol.size = *size;
+            }
+            continue;
+        }
         model_sym_index.insert(sym.clone(), obj.symbols.len());
         obj.symbols.push(Symbol {
             name: sym.clone(),

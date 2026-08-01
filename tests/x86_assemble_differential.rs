@@ -296,6 +296,30 @@ fn default_common_alignment_matches_gas() {
 }
 
 #[test]
+fn repeated_global_commons_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "repeated_global_commons_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_repeated_global_common");
+    let src = ".comm duplicate,8,8\n\
+               .comm duplicate,3,16\n\
+               .comm from_zero,0,1\n\
+               .comm from_zero,5,32\n\
+               .comm equal_size,4,2\n\
+               .comm equal_size,4,8\n\
+               .data\n\
+               .quad duplicate,from_zero,equal_size\n";
+    if let Some(failure) = diff_one("repeated_global_common", src, &gas, &tmp) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
 fn exported_dot_l_symbols_match_gas() {
     let Some(gas) = celf::gas_path() else {
         celf::skip(
