@@ -22,6 +22,16 @@ fn afs_as() -> Command {
     Command::new(env!("CARGO_BIN_EXE_afs-as"))
 }
 
+#[cfg(target_os = "linux")]
+fn full_device() -> Stdio {
+    Stdio::from(
+        fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("open /dev/full"),
+    )
+}
+
 fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
     let mut child = afs_as()
         .args(args)
@@ -73,6 +83,52 @@ fn version_flag_prints_version_to_stdout() {
         format!("afs-as {}", env!("CARGO_PKG_VERSION"))
     );
     assert!(stderr.is_empty(), "stderr:\n{}", stderr);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn help_and_version_write_failures_exit_with_controlled_status() {
+    for flag in ["--help", "--version"] {
+        let output = afs_as()
+            .arg(flag)
+            .stdout(full_device())
+            .output()
+            .expect("run afs-as with failing stdout");
+
+        assert_eq!(output.status.code(), Some(1), "flag {flag}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("afs-as: failed to write stdout:"),
+            "flag {flag} stderr:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("panicked"),
+            "flag {flag} stderr:\n{stderr}"
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn broken_stderr_preserves_usage_and_assembly_statuses() {
+    let usage_status = afs_as()
+        .arg("--wat")
+        .stdout(Stdio::null())
+        .stderr(full_device())
+        .status()
+        .expect("run usage error with failing stderr");
+    assert_eq!(usage_status.code(), Some(2));
+
+    let root = temp_root("afs_cli_broken_stderr");
+    let missing_input = root.join("missing.s");
+    let assembly_status = afs_as()
+        .arg(&missing_input)
+        .stdout(Stdio::null())
+        .stderr(full_device())
+        .status()
+        .expect("run assembly error with failing stderr");
+    assert_eq!(assembly_status.code(), Some(1));
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]

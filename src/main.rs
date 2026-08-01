@@ -50,23 +50,33 @@ fn main() {
         Ok(()) => {}
         Err((code, message)) => {
             if !message.is_empty() {
-                eprintln!("{}", message);
+                write_stderr_line(&message);
             }
             process::exit(code);
         }
     }
 }
 
+fn write_stdout_line(message: &str) -> io::Result<()> {
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    writeln!(stdout, "{}", message)?;
+    stdout.flush()
+}
+
+fn write_stderr_line(message: &str) {
+    let stderr = io::stderr();
+    let mut stderr = stderr.lock();
+    let _ = writeln!(stderr, "{}", message);
+    let _ = stderr.flush();
+}
+
 fn run() -> Result<(), (i32, String)> {
     match parse_args(env::args_os().skip(1)) {
-        Ok(Command::Help) => {
-            println!("{}", USAGE);
-            Ok(())
-        }
-        Ok(Command::Version) => {
-            println!("afs-as {}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
+        Ok(Command::Help) => write_stdout_line(USAGE)
+            .map_err(|err| (1, format!("afs-as: failed to write stdout: {}", err))),
+        Ok(Command::Version) => write_stdout_line(&format!("afs-as {}", env!("CARGO_PKG_VERSION")))
+            .map_err(|err| (1, format!("afs-as: failed to write stdout: {}", err))),
         Ok(Command::Assemble {
             input,
             output,
