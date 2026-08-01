@@ -13,6 +13,7 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -92,60 +93,116 @@ pub struct Normalized {
     pub symbols: Vec<(String, u8, u8, String, u64, u64)>,
 }
 
-/// Rewrite every maximal run of x86 NOP-filler patterns (the gas
-/// 1..=11-byte forms) as repeated 0x90. binutils changed the split
-/// order for large fills between 2.44 (longest-first) and 2.46
-/// (remainder-first); the padding is not architectural output, so
-/// the differential compares it modulo that choice. Both sides pass
-/// through the same rewrite and pattern lengths are preserved, so
-/// real code — including any bytes that happen to look like NOPs —
-/// still has to match exactly.
-pub fn canonicalize_nop_fill(text: &[u8]) -> Vec<u8> {
-    const NOPS: [&[u8]; 11] = [
-        &[
-            0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ],
-        &[0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
-        &[0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
-        &[0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
-        &[0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00],
-        &[0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00],
-        &[0x0f, 0x1f, 0x44, 0x00, 0x00],
-        &[0x0f, 0x1f, 0x40, 0x00],
-        &[0x0f, 0x1f, 0x00],
-        &[0x66, 0x90],
-        &[0x90],
-    ];
-    let mut out = Vec::with_capacity(text.len());
-    let mut i = 0;
-    'outer: while i < text.len() {
-        for pat in NOPS {
-            if text[i..].starts_with(pat) {
-                out.resize(out.len() + pat.len(), 0x90);
-                i += pat.len();
-                continue 'outer;
-            }
+const X86_NOP_FILL: [&[u8]; 11] = [
+    &[
+        0x66, 0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ],
+    &[0x66, 0x2e, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+    &[0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+    &[0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+    &[0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00],
+    &[0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00],
+    &[0x0f, 0x1f, 0x44, 0x00, 0x00],
+    &[0x0f, 0x1f, 0x40, 0x00],
+    &[0x0f, 0x1f, 0x00],
+    &[0x66, 0x90],
+    &[0x90],
+];
+
+/// Canonicalize only byte ranges proven by the assembler's layout pass to be
+/// implicit x86 text-alignment padding. Every byte inside each range must be a
+/// recognized GNU NOP-fill sequence; arbitrary corruption is an error.
+pub fn canonicalize_nop_padding(text: &[u8], padding: &[Range<usize>]) -> Result<Vec<u8>, String> {
+    let mut out = text.to_vec();
+    let mut previous_end = 0usize;
+    for range in padding {
+        if range.start > range.end {
+            return Err(format!(
+                "invalid text padding range {}..{}",
+                range.start, range.end
+            ));
         }
-        out.push(text[i]);
-        i += 1;
+        if range.start < previous_end {
+            return Err(format!(
+                "text padding ranges overlap or are out of order at {}..{}",
+                range.start, range.end
+            ));
+        }
+        if range.end > text.len() {
+            return Err(format!(
+                "text padding range {}..{} exceeds section size {}",
+                range.start,
+                range.end,
+                text.len()
+            ));
+        }
+
+        let mut offset = range.start;
+        while offset < range.end {
+            let mut matched = None;
+            for pattern in X86_NOP_FILL {
+                if text[offset..range.end].starts_with(pattern) {
+                    matched = Some(pattern);
+                    break;
+                }
+            }
+            let Some(pattern) = matched else {
+                return Err(format!(
+                    "unrecognized text padding byte 0x{:02x} at offset {} in range {}..{}",
+                    text[offset], offset, range.start, range.end
+                ));
+            };
+            out[offset..offset + pattern.len()].fill(0x90);
+            offset += pattern.len();
+        }
+        previous_end = range.end;
     }
-    out
+    Ok(out)
+}
+
+pub fn normalized_text_with_padding(
+    obj: &ObjectFile,
+    text_nop_padding: &[Range<usize>],
+) -> Result<Option<Vec<u8>>, String> {
+    obj.section_by_name(".text")
+        .map(|section| canonicalize_nop_padding(&section.data, text_nop_padding))
+        .transpose()
 }
 
 pub fn normalize(obj: &ObjectFile) -> Normalized {
+    normalize_impl(obj, None).expect("raw object normalization cannot fail")
+}
+
+pub fn normalize_with_text_padding(
+    obj: &ObjectFile,
+    text_nop_padding: &[Range<usize>],
+) -> Result<Normalized, String> {
+    normalize_impl(obj, Some(text_nop_padding))
+}
+
+fn normalize_impl(
+    obj: &ObjectFile,
+    text_nop_padding: Option<&[Range<usize>]>,
+) -> Result<Normalized, String> {
     let mut sections = BTreeMap::new();
     let mut relocs = Vec::new();
+    let mut saw_text = false;
     for sec in &obj.sections {
+        let data = if sec.name == ".text" {
+            saw_text = true;
+            match text_nop_padding {
+                Some(padding) => canonicalize_nop_padding(&sec.data, padding)?,
+                None => sec.data.clone(),
+            }
+        } else {
+            sec.data.clone()
+        };
         sections.insert(
             sec.name.clone(),
             (
                 sec.sh_type,
                 sec.sh_flags,
-                if sec.name == ".text" {
-                    canonicalize_nop_fill(&sec.data)
-                } else {
-                    sec.data.clone()
-                },
+                data,
                 if sec.sh_type == SHT_NOBITS {
                     sec.nobits_size
                 } else {
@@ -163,6 +220,9 @@ pub fn normalize(obj: &ObjectFile) -> Normalized {
             ));
         }
     }
+    if !saw_text && text_nop_padding.is_some_and(|padding| !padding.is_empty()) {
+        return Err("text padding provenance supplied for an object without .text".into());
+    }
     relocs.sort();
     let mut symbols: Vec<(String, u8, u8, String, u64, u64)> = obj
         .symbols
@@ -179,14 +239,14 @@ pub fn normalize(obj: &ObjectFile) -> Normalized {
         })
         .collect();
     symbols.sort();
-    Normalized {
+    Ok(Normalized {
         osabi: obj.osabi,
         machine: obj.machine,
         gnu_stack_flags: obj.gnu_stack_flags,
         sections,
         relocs,
         symbols,
-    }
+    })
 }
 
 pub struct TempArtifacts {

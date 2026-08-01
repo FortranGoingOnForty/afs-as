@@ -17,6 +17,7 @@
 //! relocation (they can be preempted).
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use crate::assemble::AsmError;
 
@@ -149,7 +150,19 @@ struct SymInfo {
     size_section: Option<usize>,
 }
 
+/// An assembled x86 object plus the exact `.text` byte ranges emitted as
+/// implicit NOP padding for `.p2align` directives.
+#[derive(Debug)]
+pub struct X86Assembly {
+    pub object: ObjectFile,
+    pub text_nop_padding: Vec<Range<usize>>,
+}
+
 pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
+    assemble_x86_with_provenance(src, osabi).map(|assembly| assembly.object)
+}
+
+pub fn assemble_x86_with_provenance(src: &str, osabi: u8) -> Result<X86Assembly, AsmX86Error> {
     let stmts = parse(src).map_err(|e| AsmError::at(e.line, e.col, e.msg))?;
 
     // ---- Pass 1: build sections -----------------------------------
@@ -508,6 +521,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         /// sym -> dot position at its `.size sym, .-base` directive.
         size_dot: HashMap<String, u64>,
         max_align: u64,
+        text_nop_padding: Vec<Range<usize>>,
     }
     let mut laid: Vec<Laid> = Vec::new();
 
@@ -585,6 +599,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         // Materialize.
         let mut bytes: Vec<u8> = Vec::new();
         let mut relocs: Vec<LocatedReloc> = Vec::new();
+        let mut text_nop_padding = Vec::new();
         let mut item_offsets: Vec<u64> = Vec::with_capacity(sb.items.len());
         // First recompute final offsets (same walk as above).
         {
@@ -747,12 +762,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     let pad = align_pad(pos, *pow, *max_skip, line, col)?;
                     let section_end = checked_layout_add(pos, pad, line, col)?;
                     if !is_bss {
+                        let start = bytes.len();
                         let end = reserve_materialized_bytes(&mut bytes, pad, line, col)?;
-                        let len = end - bytes.len();
+                        let len = end - start;
                         if let Some(byte) = fill {
                             bytes.resize(end, *byte);
                         } else if is_text {
                             fill_nops(&mut bytes, len);
+                            if start != end {
+                                text_nop_padding.push(start..end);
+                            }
                         } else {
                             bytes.resize(end, 0);
                         }
@@ -779,6 +798,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             relocs,
             labels,
             max_align: sb.max_align,
+            text_nop_padding,
         });
     }
 
@@ -1158,7 +1178,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     }
 
     elf::validate(&obj).map_err(|e| AsmError::new(e.to_string()))?;
-    Ok(obj)
+    let text_nop_padding = laid
+        .iter()
+        .find(|section| section.name == ".text")
+        .map(|section| section.text_nop_padding.clone())
+        .unwrap_or_default();
+    Ok(X86Assembly {
+        object: obj,
+        text_nop_padding,
+    })
 }
 
 fn checked_layout_add(pos: u64, size: u64, line: u32, col: u32) -> Result<u64, AsmX86Error> {

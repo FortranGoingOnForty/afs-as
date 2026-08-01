@@ -14,7 +14,7 @@ use afs_as::elf::{
     parse_elf, SymbolPlace, ELFOSABI_FREEBSD, ELFOSABI_NONE, SHF_EXECINSTR, STB_GLOBAL, STB_WEAK,
     STT_FUNC, STT_NOTYPE, STT_OBJECT,
 };
-use afs_as::x86::assemble::assemble_x86;
+use afs_as::x86::assemble::{assemble_x86, assemble_x86_with_provenance};
 
 fn host_osabi() -> u8 {
     if cfg!(target_os = "freebsd") {
@@ -22,6 +22,36 @@ fn host_osabi() -> u8 {
     } else {
         ELFOSABI_NONE
     }
+}
+
+#[test]
+fn nop_normalization_does_not_hide_explicit_text_bytes() {
+    let assembled = assemble_x86_with_provenance(
+        ".text\n.byte 0x66, 0x90\n.p2align 2\n.byte 0x90\n",
+        host_osabi(),
+    )
+    .expect("assemble explicit bytes and implicit padding");
+    assert_eq!(assembled.text_nop_padding, vec![2..4]);
+
+    let text = &assembled
+        .object
+        .section_by_name(".text")
+        .expect("text section")
+        .data;
+    let normalized = celf::canonicalize_nop_padding(text, &assembled.text_nop_padding)
+        .expect("normalize proven padding");
+    assert_eq!(&normalized[..2], &[0x66, 0x90]);
+    assert_eq!(&normalized[2..4], &[0x90, 0x90]);
+
+    assert_ne!(
+        celf::canonicalize_nop_padding(&[0x66, 0x90], &[]).unwrap(),
+        celf::canonicalize_nop_padding(&[0x90, 0x90], &[]).unwrap(),
+        "NOP-looking source bytes are architectural output outside proven alignment padding"
+    );
+    let corrupted_padding = 0..1;
+    assert!(
+        celf::canonicalize_nop_padding(&[0xcc], std::slice::from_ref(&corrupted_padding)).is_err()
+    );
 }
 
 fn diff_one(
@@ -36,19 +66,23 @@ fn diff_one(
     celf::assemble_with_gas(gas, &src_path, &obj_path);
     let gas_obj = parse_elf(&std::fs::read(&obj_path).unwrap()).expect("lift gas");
 
-    let ours = match assemble_x86(src, host_osabi()) {
+    let ours = match assemble_x86_with_provenance(src, host_osabi()) {
         Ok(o) => o,
         Err(e) => return Some(format!("{}: our assembler failed: {}", name, e)),
     };
 
-    // .text byte identity (the strong check), modulo NOP-fill split
-    // order which differs across binutils versions.
-    let gas_text = gas_obj
-        .section_by_name(".text")
-        .map(|s| celf::canonicalize_nop_fill(&s.data));
-    let our_text = ours
-        .section_by_name(".text")
-        .map(|s| celf::canonicalize_nop_fill(&s.data));
+    // .text byte identity (the strong check), modulo NOP-fill split order only
+    // at offsets the layout pass proved came from implicit text alignment.
+    let gas_text = match celf::normalized_text_with_padding(&gas_obj, &ours.text_nop_padding) {
+        Ok(text) => text,
+        Err(error) => return Some(format!("{}: invalid gas text padding: {}", name, error)),
+    };
+    let our_text = match celf::normalized_text_with_padding(&ours.object, &ours.text_nop_padding) {
+        Ok(text) => text,
+        Err(error) => {
+            return Some(format!("{}: invalid emitted text padding: {}", name, error));
+        }
+    };
     if gas_text != our_text {
         let (g, o) = (gas_text.unwrap_or_default(), our_text.unwrap_or_default());
         let first_diff = g
@@ -68,8 +102,19 @@ fn diff_one(
     }
 
     // Policy comparison for everything else.
-    let a = celf::normalize(&gas_obj);
-    let b = celf::normalize(&ours);
+    let a = match celf::normalize_with_text_padding(&gas_obj, &ours.text_nop_padding) {
+        Ok(object) => object,
+        Err(error) => return Some(format!("{}: cannot normalize gas object: {}", name, error)),
+    };
+    let b = match celf::normalize_with_text_padding(&ours.object, &ours.text_nop_padding) {
+        Ok(object) => object,
+        Err(error) => {
+            return Some(format!(
+                "{}: cannot normalize emitted object: {}",
+                name, error
+            ));
+        }
+    };
     if a.sections != b.sections {
         return Some(format!(
             "{}: sections diverge\n  gas:  {:?}\n  ours: {:?}",

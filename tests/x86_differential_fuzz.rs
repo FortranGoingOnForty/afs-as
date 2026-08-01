@@ -11,7 +11,7 @@ mod celf;
 mod x86_gen;
 
 use afs_as::elf::{parse_elf, ELFOSABI_FREEBSD, ELFOSABI_NONE};
-use afs_as::x86::assemble::assemble_x86;
+use afs_as::x86::assemble::{assemble_x86, assemble_x86_with_provenance};
 
 const SEEDS: u64 = 96;
 const GARBAGE_SEEDS: u64 = 512;
@@ -61,7 +61,7 @@ fn seeded_cases_match_gas() {
         }
         let gas_obj = parse_elf(&std::fs::read(&obj_path).unwrap()).expect("lift gas");
 
-        let ours = match assemble_x86(&src, host_osabi()) {
+        let ours = match assemble_x86_with_provenance(&src, host_osabi()) {
             Ok(o) => o,
             Err(e) => {
                 failures.push(format!(
@@ -71,12 +71,27 @@ fn seeded_cases_match_gas() {
                 continue;
             }
         };
-        let gas_text = gas_obj
-            .section_by_name(".text")
-            .map(|s| celf::canonicalize_nop_fill(&s.data));
-        let our_text = ours
-            .section_by_name(".text")
-            .map(|s| celf::canonicalize_nop_fill(&s.data));
+        let gas_text = match celf::normalized_text_with_padding(&gas_obj, &ours.text_nop_padding) {
+            Ok(text) => text,
+            Err(error) => {
+                failures.push(format!(
+                    "seed {}: invalid gas text padding: {}",
+                    seed, error
+                ));
+                continue;
+            }
+        };
+        let our_text =
+            match celf::normalized_text_with_padding(&ours.object, &ours.text_nop_padding) {
+                Ok(text) => text,
+                Err(error) => {
+                    failures.push(format!(
+                        "seed {}: invalid emitted text padding: {}",
+                        seed, error
+                    ));
+                    continue;
+                }
+            };
         if gas_text != our_text {
             let (g, o) = (gas_text.unwrap_or_default(), our_text.unwrap_or_default());
             let first = g
@@ -95,8 +110,26 @@ fn seeded_cases_match_gas() {
             ));
             continue;
         }
-        let a = celf::normalize(&gas_obj);
-        let b = celf::normalize(&ours);
+        let a = match celf::normalize_with_text_padding(&gas_obj, &ours.text_nop_padding) {
+            Ok(object) => object,
+            Err(error) => {
+                failures.push(format!(
+                    "seed {}: cannot normalize gas object: {}",
+                    seed, error
+                ));
+                continue;
+            }
+        };
+        let b = match celf::normalize_with_text_padding(&ours.object, &ours.text_nop_padding) {
+            Ok(object) => object,
+            Err(error) => {
+                failures.push(format!(
+                    "seed {}: cannot normalize emitted object: {}",
+                    seed, error
+                ));
+                continue;
+            }
+        };
         if a != b {
             failures.push(format!(
                 "seed {}: policy divergence\n  gas relocs:  {:?}\n  our relocs:  {:?}\n  gas syms:  {:?}\n  our syms:  {:?}",
