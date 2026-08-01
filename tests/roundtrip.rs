@@ -9,19 +9,19 @@
 
 use std::io::Write;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use afs_as::parse::{self, Stmt};
 
-static COUNTER: AtomicU64 = AtomicU64::new(0);
+#[path = "common/owned_temp_dir.rs"]
+mod owned_temp_dir;
+
+use owned_temp_dir::OwnedTempDir;
 
 /// Assemble with Apple `as` and return the code bytes.
 fn system_assemble(asm: &str) -> Vec<u8> {
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    let dir = std::env::temp_dir();
-    let s_path = dir.join(format!("afs_rt_{}_{}.s", pid, id));
-    let o_path = dir.join(format!("afs_rt_{}_{}.o", pid, id));
+    let temp = OwnedTempDir::new("afs_rt");
+    let s_path = temp.path("input.s");
+    let o_path = temp.path("output.o");
 
     let mut f = std::fs::File::create(&s_path).unwrap();
     write!(f, "{}", asm).unwrap();
@@ -3072,11 +3072,9 @@ fn rt_clang_output() {
     }
     // Generate a real .s file from clang and parse it.
     let c_src = "int square(int x) { return x * x; }\n";
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    let dir = std::env::temp_dir();
-    let c_path = dir.join(format!("afs_rt_clang_{}_{}.c", pid, id));
-    let s_path = dir.join(format!("afs_rt_clang_{}_{}.s", pid, id));
+    let temp = OwnedTempDir::new("afs_rt_clang");
+    let c_path = temp.path("input.c");
+    let s_path = temp.path("output.s");
 
     std::fs::write(&c_path, c_src).unwrap();
 
