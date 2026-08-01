@@ -26,7 +26,7 @@ use super::super::elf::{
     STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
 };
 use super::encode::{encode, InsnReloc};
-use super::parse::{parse, DataItem, Directive, SizeArg, Stmt, SymKind};
+use super::parse::{parse, DataAtom, DataItem, Directive, SectionType, SizeArg, Stmt, SymKind};
 use super::Operand;
 
 pub type AsmX86Error = AsmError;
@@ -41,6 +41,9 @@ enum BranchKind {
 enum Item {
     /// Encoded bytes with item-relative relocations.
     Bytes(Vec<u8>, Vec<InsnReloc>),
+    /// Data expressions are materialized only after relaxation fixes every
+    /// label offset, allowing forward same-section differences.
+    Data { width: usize, items: Vec<DataItem> },
     /// Zero-filled storage that advances the section size. In NOBITS
     /// sections this must not materialize bytes in memory.
     Zero(u64),
@@ -82,9 +85,19 @@ struct SecBuild {
     labels: HashMap<String, usize>,
     label_order: Vec<String>,
     max_align: u64,
+    sh_type: u32,
+    sh_flags: u64,
 }
 
 impl SecBuild {
+    fn new(sh_type: u32, sh_flags: u64) -> Self {
+        Self {
+            sh_type,
+            sh_flags,
+            ..Self::default()
+        }
+    }
+
     fn push(&mut self, line: u32, col: u32, item: Item) {
         self.items.push(LocatedItem { line, col, item });
     }
@@ -124,7 +137,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         if let Some(&i) = sec_index.get(name) {
             return i;
         }
-        secs.push((name.to_string(), SecBuild::default()));
+        let (sh_type, sh_flags) = default_section_metadata(name);
+        secs.push((name.to_string(), SecBuild::new(sh_type, sh_flags)));
         sec_index.insert(name.to_string(), secs.len() - 1);
         secs.len() - 1
     };
@@ -163,8 +177,43 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 Directive::Text => current = ensure_sec(".text", &mut secs, &mut sec_index),
                 Directive::Data => current = ensure_sec(".data", &mut secs, &mut sec_index),
                 Directive::Bss => current = ensure_sec(".bss", &mut secs, &mut sec_index),
-                Directive::Section { name } => {
-                    current = ensure_sec(name, &mut secs, &mut sec_index)
+                Directive::Section {
+                    name,
+                    flags,
+                    section_type,
+                } => {
+                    let existed = sec_index.contains_key(name);
+                    current = ensure_sec(name, &mut secs, &mut sec_index);
+                    let sb = &mut secs[current].1;
+                    let declared_type = section_type.map(|kind| match kind {
+                        SectionType::Progbits => SHT_PROGBITS,
+                        SectionType::Nobits => SHT_NOBITS,
+                    });
+                    let declared_flags = flags
+                        .as_deref()
+                        .map(parse_section_flags)
+                        .transpose()
+                        .map_err(|msg| err(line, col, msg))?;
+                    if let Some(sh_type) = declared_type {
+                        if existed && sb.sh_type != sh_type {
+                            return Err(err(
+                                line,
+                                col,
+                                format!("section '{}' redeclared with a different type", name),
+                            ));
+                        }
+                        sb.sh_type = sh_type;
+                    }
+                    if let Some(sh_flags) = declared_flags {
+                        if existed && sb.sh_flags != sh_flags {
+                            return Err(err(
+                                line,
+                                col,
+                                format!("section '{}' redeclared with different flags", name),
+                            ));
+                        }
+                        sb.sh_flags = sh_flags;
+                    }
                 }
                 Directive::NoteGnuStack { executable } => {
                     gnu_stack_flags.get_or_insert(if *executable { SHF_EXECINSTR } else { 0 });
@@ -243,61 +292,45 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
-                    let mut bytes = Vec::new();
-                    let mut relocs = Vec::new();
-                    for it in items {
-                        match it {
-                            DataItem::Num(v) => bytes.extend_from_slice(&v.to_le_bytes()[..width]),
-                            DataItem::Sym { name, addend } => {
-                                if width != 8 {
-                                    return Err(err(
-                                        line,
-                                        col,
-                                        format!(
-                                            "symbolic data item '{}' only supported in .quad",
-                                            name
-                                        ),
-                                    ));
-                                }
-                                relocs.push(InsnReloc {
-                                    offset: bytes.len() as u32,
-                                    sym: name.clone(),
-                                    r_type: R_X86_64_64,
-                                    addend: *addend,
-                                });
-                                bytes.extend_from_slice(&0u64.to_le_bytes());
-                            }
-                        }
-                    }
-                    if secs[current].0 == ".bss"
-                        && (bytes.iter().any(|&b| b != 0) || !relocs.is_empty())
-                    {
+                    let is_nobits = secs[current].1.sh_type == SHT_NOBITS;
+                    let has_nonzero_or_expr = items.iter().any(|item| match item {
+                        DataItem::Num(value) => *value != 0,
+                        _ => true,
+                    });
+                    if is_nobits && has_nonzero_or_expr {
                         return Err(err(
                             line,
                             col,
                             "attempt to store non-zero value in section `.bss'".into(),
                         ));
                     }
-                    if secs[current].0 == ".bss" {
+                    if is_nobits {
                         secs[current]
                             .1
-                            .push(line, col, Item::Zero(bytes.len() as u64));
+                            .push(line, col, Item::Zero((width * items.len()) as u64));
                     } else {
-                        secs[current].1.push(line, col, Item::Bytes(bytes, relocs));
+                        secs[current].1.push(
+                            line,
+                            col,
+                            Item::Data {
+                                width,
+                                items: items.clone(),
+                            },
+                        );
                     }
                 }
                 Directive::Ascii(b) => {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
-                    if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
+                    if secs[current].1.sh_type == SHT_NOBITS && b.iter().any(|&x| x != 0) {
                         return Err(err(
                             line,
                             col,
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
-                    if secs[current].0 == ".bss" {
+                    if secs[current].1.sh_type == SHT_NOBITS {
                         secs[current].1.push(line, col, Item::Zero(b.len() as u64));
                     } else {
                         secs[current]
@@ -309,14 +342,14 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
-                    if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
+                    if secs[current].1.sh_type == SHT_NOBITS && b.iter().any(|&x| x != 0) {
                         return Err(err(
                             line,
                             col,
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
-                    if secs[current].0 == ".bss" {
+                    if secs[current].1.sh_type == SHT_NOBITS {
                         secs[current]
                             .1
                             .push(line, col, Item::Zero(b.len() as u64 + 1));
@@ -330,7 +363,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
-                    if secs[current].0 == ".bss" && *fill != 0 {
+                    if secs[current].1.sh_type == SHT_NOBITS && *fill != 0 {
                         return Err(err(
                             line,
                             col,
@@ -404,10 +437,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         /// sym -> dot position at its `.size sym, .-base` directive.
         size_dot: HashMap<String, u64>,
         max_align: u64,
+        sh_type: u32,
+        sh_flags: u64,
     }
     let mut laid: Vec<Laid> = Vec::new();
+    // Labels whose final post-relaxation offsets are known. Section order
+    // places the built-in text/data/bss sections before debug/unwind sections,
+    // so expressions emitted there can fold differences between text labels.
+    let mut resolved_labels: HashMap<String, (usize, u64)> = HashMap::new();
 
-    for (name, sb) in &secs {
+    for (section_index, (name, sb)) in secs.iter().enumerate() {
         let is_text = name == ".text";
         // Branch sizing state: index into items -> long?
         let mut long: Vec<bool> = sb.items.iter().map(|_| false).collect();
@@ -433,6 +472,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 let item = &located.item;
                 let size = match item {
                     Item::Bytes(b, _) => b.len() as u64,
+                    Item::Data { width, items } => (*width * items.len()) as u64,
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
                     Item::Branch { kind, label } => {
@@ -490,6 +530,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 let item = &located.item;
                 let size = match item {
                     Item::Bytes(b, _) => b.len() as u64,
+                    Item::Data { width, items } => (*width * items.len()) as u64,
                     Item::Zero(n) => *n,
                     Item::Fill { size, .. } => *size,
                     Item::Branch { kind, label } => {
@@ -508,8 +549,24 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             }
             item_offsets.push(pos);
         }
+        let final_size = item_offsets.last().copied().unwrap_or(0);
+        let final_labels: HashMap<String, u64> = sb
+            .labels
+            .iter()
+            .map(|(label, &item_idx)| {
+                (
+                    label.clone(),
+                    item_offsets.get(item_idx).copied().unwrap_or(final_size),
+                )
+            })
+            .collect();
+        resolved_labels.extend(
+            final_labels
+                .iter()
+                .map(|(name, &offset)| (name.clone(), (section_index, offset))),
+        );
         let mut size_dot: HashMap<String, u64> = HashMap::new();
-        let is_bss = name == ".bss";
+        let is_bss = sb.sh_type == SHT_NOBITS;
         let mut pos = 0u64;
         let reloc_offset = |offset: u64, line: u32, col: u32| -> Result<u32, AsmX86Error> {
             u32::try_from(offset).map_err(|_| {
@@ -549,6 +606,117 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         bytes.extend_from_slice(b);
                     }
                     pos = checked_layout_add(pos, b.len() as u64, line, col)?;
+                }
+                Item::Data { width, items } => {
+                    for data in items {
+                        let field_pos = pos;
+                        match data {
+                            DataItem::Num(value) => {
+                                bytes.extend_from_slice(&value.to_le_bytes()[..*width]);
+                            }
+                            DataItem::Sym { name, addend } => {
+                                let r_type = data_reloc_type(*width, false).ok_or_else(|| {
+                                    err(
+                                        line,
+                                        col,
+                                        format!(
+                                            "symbolic data item '{}' is unsupported at {} bytes",
+                                            name, width
+                                        ),
+                                    )
+                                })?;
+                                relocs.push(LocatedReloc {
+                                    line,
+                                    col,
+                                    reloc: InsnReloc {
+                                        offset: reloc_offset(field_pos, line, col)?,
+                                        sym: name.clone(),
+                                        r_type,
+                                        addend: *addend,
+                                    },
+                                });
+                                bytes.resize(bytes.len() + *width, 0);
+                            }
+                            DataItem::Difference {
+                                minuend,
+                                subtrahend,
+                                addend,
+                            } => {
+                                let atom_value = |atom: &DataAtom| -> Option<(usize, u64)> {
+                                    match atom {
+                                        DataAtom::Dot => Some((section_index, field_pos)),
+                                        DataAtom::Sym(name) => resolved_labels.get(name).copied(),
+                                    }
+                                };
+                                let resolved_difference =
+                                    match (atom_value(minuend), atom_value(subtrahend)) {
+                                        (Some((lhs_section, lhs)), Some((rhs_section, rhs)))
+                                            if lhs_section == rhs_section =>
+                                        {
+                                            Some(
+                                                (lhs as i64)
+                                                    .wrapping_sub(rhs as i64)
+                                                    .wrapping_add(*addend),
+                                            )
+                                        }
+                                        _ => None,
+                                    };
+                                if let Some(value) = resolved_difference {
+                                    bytes.extend_from_slice(&value.to_le_bytes()[..*width]);
+                                } else if let DataAtom::Sym(name) = minuend {
+                                    let (rhs_section, rhs) = atom_value(subtrahend).ok_or_else(|| {
+                                        err(
+                                            line,
+                                            col,
+                                            "subtrahend of a relocatable difference must be in the current section"
+                                                .into(),
+                                        )
+                                    })?;
+                                    if rhs_section != section_index {
+                                        return Err(err(
+                                            line,
+                                            col,
+                                            "subtrahend of a relocatable difference must be in the current section"
+                                                .into(),
+                                        ));
+                                    }
+                                    let r_type =
+                                        data_reloc_type(*width, true).ok_or_else(|| {
+                                            err(
+                                                line,
+                                                col,
+                                                format!(
+                                                    "PC-relative data item is unsupported at {} bytes",
+                                                    width
+                                                ),
+                                            )
+                                        })?;
+                                    let reloc_addend = (field_pos as i64)
+                                        .wrapping_sub(rhs as i64)
+                                        .wrapping_add(*addend);
+                                    relocs.push(LocatedReloc {
+                                        line,
+                                        col,
+                                        reloc: InsnReloc {
+                                            offset: reloc_offset(field_pos, line, col)?,
+                                            sym: name.clone(),
+                                            r_type,
+                                            addend: reloc_addend,
+                                        },
+                                    });
+                                    bytes.resize(bytes.len() + *width, 0);
+                                } else {
+                                    return Err(err(
+                                        line,
+                                        col,
+                                        "current location cannot be the minuend of a cross-section difference"
+                                            .into(),
+                                    ));
+                                }
+                            }
+                        }
+                        pos = checked_layout_add(pos, *width as u64, line, col)?;
+                    }
                 }
                 Item::Zero(n) => {
                     if !is_bss {
@@ -662,19 +830,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         }
         let section_size = pos;
         // Label -> final offset map.
-        let mut labels = HashMap::new();
-        for (l, &item_idx) in &sb.labels {
-            let off = item_offsets.get(item_idx).copied().unwrap_or(section_size);
-            labels.insert(l.clone(), off);
-        }
         laid.push(Laid {
             name: name.clone(),
             size: section_size,
             size_dot,
             bytes,
             relocs,
-            labels,
+            labels: final_labels,
             max_align: sb.max_align,
+            sh_type: sb.sh_type,
+            sh_flags: sb.sh_flags,
         });
     }
 
@@ -683,23 +848,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     obj.gnu_stack_flags = gnu_stack_flags;
     let mut model_sec_index: HashMap<String, usize> = HashMap::new();
     for l in &mut laid {
-        let (sh_flags, align_default) = match l.name.as_str() {
-            ".text" => (SHF_ALLOC | SHF_EXECINSTR, 1),
-            ".data" => (SHF_ALLOC | SHF_WRITE, 1),
-            ".bss" => (SHF_ALLOC | SHF_WRITE, 1),
-            ".rodata" => (SHF_ALLOC, 1),
-            other => {
-                return Err(AsmError::new(format!(
-                    "internal unsupported section '{}'",
-                    other
-                )));
-            }
-        };
-        let sh_type = if l.name == ".bss" {
-            SHT_NOBITS
-        } else {
-            SHT_PROGBITS
-        };
+        let sh_flags = l.sh_flags;
+        let sh_type = l.sh_type;
+        let align_default = 1;
         obj.sections.push(Section {
             name: l.name.clone(),
             sh_type,
@@ -1035,6 +1186,39 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
 
     elf::validate(&obj).map_err(|e| AsmError::new(e.to_string()))?;
     Ok(obj)
+}
+
+fn default_section_metadata(name: &str) -> (u32, u64) {
+    match name {
+        ".text" => (SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR),
+        ".data" => (SHT_PROGBITS, SHF_ALLOC | SHF_WRITE),
+        ".bss" => (SHT_NOBITS, SHF_ALLOC | SHF_WRITE),
+        ".rodata" => (SHT_PROGBITS, SHF_ALLOC),
+        _ => (SHT_PROGBITS, 0),
+    }
+}
+
+fn parse_section_flags(flags: &str) -> Result<u64, String> {
+    let mut bits = 0;
+    for flag in flags.chars() {
+        bits |= match flag {
+            'a' => SHF_ALLOC,
+            'w' => SHF_WRITE,
+            'x' => SHF_EXECINSTR,
+            other => return Err(format!("unsupported ELF section flag '{}'", other)),
+        };
+    }
+    Ok(bits)
+}
+
+fn data_reloc_type(width: usize, pc_relative: bool) -> Option<u32> {
+    match (width, pc_relative) {
+        (4, false) => Some(R_X86_64_32),
+        (8, false) => Some(R_X86_64_64),
+        (4, true) => Some(R_X86_64_PC32),
+        (8, true) => Some(R_X86_64_PC64),
+        _ => None,
+    }
 }
 
 fn checked_layout_add(pos: u64, size: u64, line: u32, col: u32) -> Result<u64, AsmX86Error> {

@@ -72,6 +72,7 @@ pub mod reloc {
         pub const R_X86_64_GOTPCREL: u32 = 9;
         pub const R_X86_64_32: u32 = 10;
         pub const R_X86_64_32S: u32 = 11;
+        pub const R_X86_64_PC64: u32 = 24;
         pub const R_X86_64_GOTPCRELX: u32 = 41;
         pub const R_X86_64_REX_GOTPCRELX: u32 = 42;
 
@@ -80,7 +81,7 @@ pub mod reloc {
         pub fn width(r_type: u32) -> Option<u64> {
             match r_type {
                 R_X86_64_NONE => Some(0),
-                R_X86_64_64 => Some(8),
+                R_X86_64_64 | R_X86_64_PC64 => Some(8),
                 R_X86_64_PC32
                 | R_X86_64_PLT32
                 | R_X86_64_GOTPCREL
