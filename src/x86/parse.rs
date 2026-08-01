@@ -122,8 +122,8 @@ pub enum Directive {
     Short(Vec<DataItem>),
     Long(Vec<DataItem>),
     Quad(Vec<DataItem>),
-    Ascii(Vec<u8>),
-    Asciz(Vec<u8>),
+    Ascii(Vec<Vec<u8>>),
+    Asciz(Vec<Vec<u8>>),
     Space {
         size: u64,
         fill: u8,
@@ -578,8 +578,8 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         "short" | "word" | "value" => Directive::Short(data_items(args)?),
         "long" => Directive::Long(data_items(args)?),
         "quad" => Directive::Quad(data_items(args)?),
-        "ascii" => Directive::Ascii(parse_string_lit(args).map_err(&err)?),
-        "asciz" | "string" => Directive::Asciz(parse_string_lit(args).map_err(&err)?),
+        "ascii" => Directive::Ascii(parse_string_operands(args).map_err(&err)?),
+        "asciz" | "string" => Directive::Asciz(parse_string_operands(args).map_err(&err)?),
         "space" | "skip" => {
             let mut parts = args.split(',').map(str::trim);
             let v = parse_int(parts.next().unwrap_or(""))
@@ -640,8 +640,58 @@ fn parse_int_opt(s: &str) -> Option<i64> {
     parse_int(s)
 }
 
-/// Decode one double-quoted literal with the gas escapes the backend
-/// emits.
+/// Parse the string operand groups accepted by GNU as. Commas terminate
+/// groups, while adjacent literals belong to one group and therefore share
+/// one terminator under `.asciz`/`.string`. Empty comma fields are ignored.
+fn parse_string_operands(s: &str) -> Result<Vec<Vec<u8>>, String> {
+    let mut rest = s.trim();
+    let mut operands = Vec::new();
+    let mut current = Vec::new();
+    let mut have_current = false;
+
+    while !rest.is_empty() {
+        rest = rest.trim_start();
+        if let Some(after_comma) = rest.strip_prefix(',') {
+            if have_current {
+                operands.push(std::mem::take(&mut current));
+                have_current = false;
+            }
+            rest = after_comma;
+            continue;
+        }
+        if !rest.starts_with('"') {
+            return Err(format!("expected string literal, got '{}'", rest));
+        }
+
+        let mut escaped = false;
+        let mut literal_end = None;
+        for (offset, ch) in rest[1..].char_indices() {
+            let index = offset + 1;
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                literal_end = Some(index + ch.len_utf8());
+                break;
+            }
+        }
+        let literal_end = literal_end.ok_or_else(|| "unterminated string literal".to_string())?;
+        current.extend_from_slice(&parse_string_lit(&rest[..literal_end])?);
+        have_current = true;
+        rest = rest[literal_end..].trim_start();
+        if !rest.is_empty() && !rest.starts_with(',') && !rest.starts_with('"') {
+            return Err(format!("expected ',' or string literal, got '{}'", rest));
+        }
+    }
+
+    if have_current {
+        operands.push(current);
+    }
+    Ok(operands)
+}
+
+/// Decode one double-quoted literal with the gas escapes the backend emits.
 fn parse_string_lit(s: &str) -> Result<Vec<u8>, String> {
     let s = s.trim();
     let inner = s
@@ -798,7 +848,7 @@ mod tests {
         );
         assert_eq!(
             stmts[3].stmt,
-            Stmt::Directive(Directive::Asciz(b"hi\n".to_vec()))
+            Stmt::Directive(Directive::Asciz(vec![b"hi\n".to_vec()]))
         );
         assert_eq!(
             stmts[5].stmt,

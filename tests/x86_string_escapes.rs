@@ -6,12 +6,52 @@ use afs_as::x86::assemble::assemble_x86;
 /// Bytes of the `.data` section after assembling a single `.ascii` line.
 fn data_of(literal: &str) -> Vec<u8> {
     let src = format!(".data\n.ascii \"{literal}\"\n");
-    let obj = assemble_x86(&src, 0).unwrap_or_else(|e| panic!("{literal:?}: {}", e.msg));
+    data_of_source(&src)
+}
+
+fn data_of_source(src: &str) -> Vec<u8> {
+    let obj = assemble_x86(src, 0).unwrap_or_else(|e| panic!("{src:?}: {}", e.msg));
     obj.sections
         .iter()
         .find(|s| s.name == ".data")
         .map(|s| s.data.clone())
         .unwrap_or_default()
+}
+
+#[test]
+fn string_directives_encode_each_operand_independently() {
+    let data = data_of_source(
+        ".data\n\
+         .ascii \"A\",\"B,C\"\n\
+         .asciz \"D\",\"E\"\n\
+         .string \"F\",\"G\"\n",
+    );
+
+    assert_eq!(data, b"AB,CD\0E\0F\0G\0");
+}
+
+#[test]
+fn string_operand_groups_preserve_gnu_terminator_boundaries() {
+    let data = data_of_source(
+        ".data\n\
+         .ascii\n\
+         .ascii ,\"A\" \"B\",,\"C\",\n\
+         .asciz\n\
+         .asciz ,\"D\" \"E\",,\"\",\n\
+         .string \"F\" \"G\",\"H\"\n",
+    );
+
+    assert_eq!(data, b"ABCDE\0\0FG\0H\0");
+}
+
+#[test]
+fn string_directives_reject_non_string_operands() {
+    let error = assemble_x86(".data\n.ascii \"A\", 1\n", 0)
+        .expect_err("numeric string operands must be rejected");
+
+    assert_eq!(error.line, Some(2));
+    assert_eq!(error.col, Some(1));
+    assert_eq!(error.msg, "expected string literal, got '1'");
 }
 
 #[test]

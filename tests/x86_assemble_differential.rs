@@ -240,6 +240,28 @@ fn explicit_fill_bytes_match_gas() {
 }
 
 #[test]
+fn string_operand_groups_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "string_operand_groups_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_string_operands");
+    let src = ".data\n\
+               .ascii \"A\",\"B,C\"\n\
+               .ascii ,\"D\" \"E\",,\"F\",\n\
+               .asciz \"G\",\"H\"\n\
+               .asciz ,\"I\" \"J\",,\"\",\n\
+               .string \"K\" \"L\",\"M\"\n";
+    if let Some(failure) = diff_one("string_operands", src, &gas, &tmp) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
 fn default_common_alignment_matches_gas() {
     let Some(gas) = celf::gas_path() else {
         celf::skip(

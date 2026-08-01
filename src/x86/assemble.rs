@@ -286,11 +286,12 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         secs[current].1.push(line, col, Item::Bytes(bytes, relocs));
                     }
                 }
-                Directive::Ascii(b) => {
+                Directive::Ascii(strings) => {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
-                    if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
+                    let bytes = strings.concat();
+                    if secs[current].0 == ".bss" && bytes.iter().any(|&byte| byte != 0) {
                         return Err(err(
                             line,
                             col,
@@ -298,18 +299,23 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         ));
                     }
                     if secs[current].0 == ".bss" {
-                        secs[current].1.push(line, col, Item::Zero(b.len() as u64));
-                    } else {
                         secs[current]
                             .1
-                            .push(line, col, Item::Bytes(b.clone(), vec![]));
+                            .push(line, col, Item::Zero(bytes.len() as u64));
+                    } else {
+                        secs[current].1.push(line, col, Item::Bytes(bytes, vec![]));
                     }
                 }
-                Directive::Asciz(b) => {
+                Directive::Asciz(strings) => {
                     if current == usize::MAX {
                         current = ensure_sec(".text", &mut secs, &mut sec_index);
                     }
-                    if secs[current].0 == ".bss" && b.iter().any(|&x| x != 0) {
+                    let mut bytes = Vec::new();
+                    for string in strings {
+                        bytes.extend_from_slice(string);
+                        bytes.push(0);
+                    }
+                    if secs[current].0 == ".bss" && bytes.iter().any(|&byte| byte != 0) {
                         return Err(err(
                             line,
                             col,
@@ -319,11 +325,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     if secs[current].0 == ".bss" {
                         secs[current]
                             .1
-                            .push(line, col, Item::Zero(b.len() as u64 + 1));
+                            .push(line, col, Item::Zero(bytes.len() as u64));
                     } else {
-                        let mut v = b.clone();
-                        v.push(0);
-                        secs[current].1.push(line, col, Item::Bytes(v, vec![]));
+                        secs[current].1.push(line, col, Item::Bytes(bytes, vec![]));
                     }
                 }
                 Directive::Space { size, fill } => {
