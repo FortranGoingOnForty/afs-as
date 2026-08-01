@@ -664,9 +664,15 @@ const SSE_RM: &[(&str, Sse, u8)] = &[
     ("unpcklps", Sse::None, 0x14),
     ("unpcklpd", Sse::P66, 0x14),
     // packed integer
+    ("paddb", Sse::P66, 0xfc),
+    ("paddw", Sse::P66, 0xfd),
     ("paddd", Sse::P66, 0xfe),
     ("paddq", Sse::P66, 0xd4),
+    ("psubb", Sse::P66, 0xf8),
+    ("psubw", Sse::P66, 0xf9),
     ("psubd", Sse::P66, 0xfa),
+    ("punpcklbw", Sse::P66, 0x60),
+    ("punpcklwd", Sse::P66, 0x61),
     ("punpcklqdq", Sse::P66, 0x6c),
     ("psubq", Sse::P66, 0xfb),
     ("pxor", Sse::P66, 0xef),
@@ -679,6 +685,7 @@ const SSE_RM: &[(&str, Sse, u8)] = &[
     ("por", Sse::P66, 0xeb),
     ("pxor", Sse::P66, 0xef),
     ("pcmpgtd", Sse::P66, 0x66),
+    ("pmullw", Sse::P66, 0xd5),
     ("pmuludq", Sse::P66, 0xf4),
 ];
 
@@ -715,9 +722,9 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
                 }
                 _ => return Err("expected xmm/mem source, xmm destination".into()),
             }
-            // A trailing immediate (pshufd/shufps/cmpps/cmppd) must join the
-            // tail before finish() so a RIP-relative disp32 addend counts it —
-            // gas emits sym-5 for an imm8 form, not sym-4.
+            // A trailing immediate must join the tail before finish() so a
+            // RIP-relative disp32 addend counts it — gas emits sym-5 for an
+            // imm8 form, not sym-4.
             p.tail.extend_from_slice(imm);
             p.finish()
         };
@@ -762,19 +769,26 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
         return p.finish().map(Some);
     }
 
-    // pshufd/shufps/cmpps/cmppd carry a trailing imm8: `op $imm, src, dst`.
-    if matches!(mnemonic, "pshufd" | "shufps" | "cmpps" | "cmppd") {
+    // Packed shuffles/comparisons carry a trailing imm8:
+    // `op $imm, src, dst`.
+    if matches!(
+        mnemonic,
+        "pshufd" | "pshuflw" | "shufps" | "cmpps" | "cmppd"
+    ) {
         let (imm, src_op, dst_op) = match ops {
             [Operand::Imm(i), s, d] => (*i, s, d),
             _ => return Err(format!("{} expects $imm8, src, dst", mnemonic)),
         };
-        let prefix = if matches!(mnemonic, "pshufd" | "cmppd") {
-            Sse::P66
-        } else {
-            Sse::None
+        if mnemonic == "pshuflw" && !(-128..=255).contains(&imm) {
+            return Err(format!("pshuflw immediate {} out of range for imm8", imm));
+        }
+        let prefix = match mnemonic {
+            "pshufd" | "cmppd" => Sse::P66,
+            "pshuflw" => Sse::F2,
+            _ => Sse::None,
         };
         let opcode = match mnemonic {
-            "pshufd" => 0x70,
+            "pshufd" | "pshuflw" => 0x70,
             "shufps" => 0xc6,
             _ => 0xc2, // cmpps / cmppd
         };
@@ -785,6 +799,25 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
             &[imm as u8],
         )
         .map(Some);
+    }
+
+    // psrldq has the packed-shift group encoding 66 0F 73 /3 ib and a
+    // destructive two-operand AT&T spelling: `psrldq $imm, %xmm`.
+    if mnemonic == "psrldq" {
+        let (imm, dst) = match ops {
+            [Operand::Imm(i), Operand::Reg(dst)] if dst.class == RegClass::Xmm => (*i, *dst),
+            _ => return Err("psrldq expects $imm8, xmm".into()),
+        };
+        if !(0..=255).contains(&imm) {
+            return Err(format!("psrldq immediate {} out of range for imm8", imm));
+        }
+        let mut p = Parts::new();
+        Sse::P66.emit(&mut p.prefix);
+        p.rex.merge_reg(dst, RexSlot::B);
+        p.opcode.extend_from_slice(&[0x0f, 0x73]);
+        p.tail.push(0b11 << 6 | 3 << 3 | dst.low3());
+        p.tail.push(imm as u8);
+        return p.finish().map(Some);
     }
 
     // movd / movq between GP and xmm: 66 (REX.W) 0F 6E (gp->xmm),
