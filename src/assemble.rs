@@ -1272,7 +1272,7 @@ impl Assembler {
                     current_offset,
                     CfiOp::Offset {
                         register: *register,
-                        offset: (-*offset) as u64,
+                        offset: offset.unsigned_abs(),
                     },
                 );
             }
@@ -3933,6 +3933,23 @@ mod tests {
             UNWIND_ARM64_MODE_FRAMELESS | (2 << 12) | UNWIND_ARM64_FRAME_X27_X28_PAIR
         );
         assert!(obj.section("__TEXT", "__eh_frame").is_none());
+    }
+
+    #[test]
+    fn assemble_minimum_cfi_offset_encodes_maximum_dwarf_operand() {
+        let obj = assemble_source(
+            ".text\n\
+            minimum_offset_target:\n\
+            .cfi_startproc\n\
+            .cfi_offset w19, -9223372036854775808\n\
+            ret\n\
+            .cfi_endproc\n",
+        )
+        .unwrap();
+
+        assert!(eh_frame_section(&obj)
+            .data
+            .ends_with(&[0x93, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x10,]));
     }
 
     #[test]
