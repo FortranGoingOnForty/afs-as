@@ -254,7 +254,12 @@ impl From<LexError> for ParseError {
 
 /// Parse assembly source text into a list of statements.
 pub fn parse(src: &str) -> Result<Vec<Stmt>, ParseError> {
-    Ok(parse_with_locations(src)?
+    parse_bytes(src.as_bytes())
+}
+
+/// Parse raw assembly bytes into a list of statements.
+pub fn parse_bytes(src: &[u8]) -> Result<Vec<Stmt>, ParseError> {
+    Ok(parse_bytes_with_locations(src)?
         .into_iter()
         .map(|stmt| stmt.stmt)
         .collect())
@@ -262,7 +267,12 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, ParseError> {
 
 /// Parse assembly source text into statements with source locations.
 pub fn parse_with_locations(src: &str) -> Result<Vec<LocatedStmt>, ParseError> {
-    let tokens = Lexer::tokenize(src)?;
+    parse_bytes_with_locations(src.as_bytes())
+}
+
+/// Parse raw assembly bytes into statements with source locations.
+pub fn parse_bytes_with_locations(src: &[u8]) -> Result<Vec<LocatedStmt>, ParseError> {
+    let tokens = Lexer::tokenize_bytes(src)?;
     let previews = scan_absolute_assignments(&tokens);
     let assignments: Vec<_> = previews
         .iter()

@@ -113,8 +113,13 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
+        Self::new_bytes(src.as_bytes())
+    }
+
+    /// Create a lexer over raw assembler input bytes.
+    pub fn new_bytes(src: &'a [u8]) -> Self {
         Self {
-            src: src.as_bytes(),
+            src,
             pos: 0,
             line: 1,
             col: 1,
@@ -123,7 +128,13 @@ impl<'a> Lexer<'a> {
 
     /// Tokenize the entire input into a Vec of tokens.
     pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
-        let mut lexer = Lexer::new(src);
+        Self::tokenize_bytes(src.as_bytes())
+    }
+
+    /// Tokenize raw assembler input without imposing UTF-8 on comments or
+    /// string-literal payloads.
+    pub fn tokenize_bytes(src: &[u8]) -> Result<Vec<Token>, LexError> {
+        let mut lexer = Lexer::new_bytes(src);
         let mut tokens = Vec::new();
         loop {
             let tok = lexer.next_token()?;

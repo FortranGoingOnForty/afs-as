@@ -140,33 +140,46 @@ pub enum Directive {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
+    parse_bytes(src.as_bytes())
+}
+
+/// Parse raw assembler bytes. Grammar outside comments and string literals
+/// must still be valid text, but literal payloads are preserved byte-for-byte.
+pub fn parse_bytes(src: &[u8]) -> Result<Vec<Located>, X86ParseError> {
     let mut out = Vec::new();
-    for (idx, raw) in src.lines().enumerate() {
+    for (idx, raw) in src.split(|byte| *byte == b'\n').enumerate() {
         let line_no = idx as u32 + 1;
-        let mut line = strip_comment(raw);
+        let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+        let mut line = strip_comment_bytes(raw);
         loop {
-            line = line.trim_start();
+            line = trim_ascii_start(line);
             if line.is_empty() {
                 break;
             }
             // Labels: `name:` possibly followed by more on the line.
-            if let Some((label, rest)) = split_label(line) {
+            if let Some((label, rest)) = split_label_bytes(line) {
                 out.push(Located {
                     line: line_no,
-                    col: col_of(raw, line),
-                    stmt: Stmt::Label(label.to_string()),
+                    col: col_of_bytes(raw, line),
+                    stmt: Stmt::Label(
+                        std::str::from_utf8(label)
+                            .expect("label scanner only accepts ASCII")
+                            .to_string(),
+                    ),
                 });
                 line = rest;
                 continue;
             }
-            let stmt = if let Some(rest) = line.strip_prefix('.') {
-                parse_directive(rest, line_no, col_of(raw, line))?
+            let col = col_of_bytes(raw, line);
+            let stmt = if let Some(rest) = line.strip_prefix(b".") {
+                parse_directive_bytes(rest, line_no, col)?
             } else {
-                parse_insn(line, line_no, col_of(raw, line))?
+                let line = decode_grammar(line, line_no, col, "instruction")?;
+                parse_insn(line, line_no, col)?
             };
             out.push(Located {
                 line: line_no,
-                col: col_of(raw, line),
+                col,
                 stmt,
             });
             break;
@@ -175,38 +188,70 @@ pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
     Ok(out)
 }
 
-fn col_of(raw: &str, rest: &str) -> u32 {
+fn col_of_bytes(raw: &[u8], rest: &[u8]) -> u32 {
     (raw.len() - rest.len()) as u32 + 1
 }
 
-fn strip_comment(line: &str) -> &str {
+fn trim_ascii_start(mut bytes: &[u8]) -> &[u8] {
+    while bytes.first().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[1..];
+    }
+    bytes
+}
+
+fn trim_ascii_end(mut bytes: &[u8]) -> &[u8] {
+    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[..bytes.len() - 1];
+    }
+    bytes
+}
+
+fn trim_ascii(bytes: &[u8]) -> &[u8] {
+    trim_ascii_end(trim_ascii_start(bytes))
+}
+
+fn decode_grammar<'a>(
+    bytes: &'a [u8],
+    line: u32,
+    col: u32,
+    context: &str,
+) -> Result<&'a str, X86ParseError> {
+    std::str::from_utf8(bytes).map_err(|error| {
+        X86ParseError::new(
+            line,
+            col.saturating_add(error.valid_up_to() as u32),
+            format!("non-UTF-8 byte in {context}"),
+        )
+    })
+}
+
+fn strip_comment_bytes(line: &[u8]) -> &[u8] {
     // `#` starts a comment outside string literals. The backend never
     // emits `#` inside operands (AT&T immediates use `$`).
     let mut in_str = false;
     let mut esc = false;
-    for (i, c) in line.char_indices() {
-        match c {
-            '\\' if in_str => esc = !esc,
-            '"' if !esc => in_str = !in_str,
-            '#' if !in_str => return &line[..i],
+    for (i, &byte) in line.iter().enumerate() {
+        match byte {
+            b'\\' if in_str => esc = !esc,
+            b'"' if !esc => in_str = !in_str,
+            b'#' if !in_str => return &line[..i],
             _ => esc = false,
         }
     }
     line
 }
 
-fn split_label(line: &str) -> Option<(&str, &str)> {
-    let bytes = line.as_bytes();
+fn split_label_bytes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     let mut end = 0;
-    while end < bytes.len() {
-        let c = bytes[end] as char;
+    while end < line.len() {
+        let c = line[end] as char;
         if c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '$' {
             end += 1;
         } else {
             break;
         }
     }
-    if end == 0 || end >= bytes.len() || bytes[end] != b':' {
+    if end == 0 || end >= line.len() || line[end] != b':' {
         return None;
     }
     Some((&line[..end], &line[end + 1..]))
@@ -466,6 +511,26 @@ fn parse_subsection(args: &str) -> Result<u32, String> {
 // Directives
 // -------------------------------------------------------------------
 
+fn parse_directive_bytes(rest: &[u8], line: u32, col: u32) -> Result<Stmt, X86ParseError> {
+    let name_end = rest
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(rest.len());
+    let name = decode_grammar(&rest[..name_end], line, col + 1, "directive name")?;
+    let args = trim_ascii_start(&rest[name_end..]);
+    let err = |msg: String| X86ParseError::new(line, col, msg);
+
+    let directive = match name {
+        "ascii" => Directive::Ascii(parse_string_operands_bytes(args).map_err(&err)?),
+        "asciz" | "string" => Directive::Asciz(parse_string_operands_bytes(args).map_err(&err)?),
+        _ => {
+            let rest = decode_grammar(rest, line, col + 1, "directive")?;
+            return parse_directive(rest, line, col);
+        }
+    };
+    Ok(Stmt::Directive(directive))
+}
+
 fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseError> {
     let err = |msg: String| X86ParseError::new(line, col, msg);
     let (name, args) = match rest.find(char::is_whitespace) {
@@ -688,14 +753,18 @@ fn parse_int_opt(s: &str) -> Option<i64> {
 /// groups, while adjacent literals belong to one group and therefore share
 /// one terminator under `.asciz`/`.string`. Empty comma fields are ignored.
 fn parse_string_operands(s: &str) -> Result<Vec<Vec<u8>>, String> {
-    let mut rest = s.trim();
+    parse_string_operands_bytes(s.as_bytes())
+}
+
+fn parse_string_operands_bytes(s: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    let mut rest = trim_ascii(s);
     let mut operands = Vec::new();
     let mut current = Vec::new();
     let mut have_current = false;
 
     while !rest.is_empty() {
-        rest = rest.trim_start();
-        if let Some(after_comma) = rest.strip_prefix(',') {
+        rest = trim_ascii_start(rest);
+        if let Some(after_comma) = rest.strip_prefix(b",") {
             if have_current {
                 operands.push(std::mem::take(&mut current));
                 have_current = false;
@@ -703,29 +772,34 @@ fn parse_string_operands(s: &str) -> Result<Vec<Vec<u8>>, String> {
             rest = after_comma;
             continue;
         }
-        if !rest.starts_with('"') {
-            return Err(format!("expected string literal, got '{}'", rest));
+        if !rest.starts_with(b"\"") {
+            return Err(format!(
+                "expected string literal, got '{}'",
+                String::from_utf8_lossy(rest)
+            ));
         }
 
         let mut escaped = false;
         let mut literal_end = None;
-        for (offset, ch) in rest[1..].char_indices() {
-            let index = offset + 1;
+        for (index, &byte) in rest.iter().enumerate().skip(1) {
             if escaped {
                 escaped = false;
-            } else if ch == '\\' {
+            } else if byte == b'\\' {
                 escaped = true;
-            } else if ch == '"' {
-                literal_end = Some(index + ch.len_utf8());
+            } else if byte == b'"' {
+                literal_end = Some(index + 1);
                 break;
             }
         }
         let literal_end = literal_end.ok_or_else(|| "unterminated string literal".to_string())?;
-        current.extend_from_slice(&parse_string_lit(&rest[..literal_end])?);
+        current.extend_from_slice(&parse_string_lit_bytes(&rest[..literal_end])?);
         have_current = true;
-        rest = rest[literal_end..].trim_start();
-        if !rest.is_empty() && !rest.starts_with(',') && !rest.starts_with('"') {
-            return Err(format!("expected ',' or string literal, got '{}'", rest));
+        rest = trim_ascii_start(&rest[literal_end..]);
+        if !rest.is_empty() && !rest.starts_with(b",") && !rest.starts_with(b"\"") {
+            return Err(format!(
+                "expected ',' or string literal, got '{}'",
+                String::from_utf8_lossy(rest)
+            ));
         }
     }
 
@@ -736,65 +810,76 @@ fn parse_string_operands(s: &str) -> Result<Vec<Vec<u8>>, String> {
 }
 
 /// Decode one double-quoted literal with the gas escapes the backend emits.
-fn parse_string_lit(s: &str) -> Result<Vec<u8>, String> {
-    let s = s.trim();
+fn parse_string_lit_bytes(s: &[u8]) -> Result<Vec<u8>, String> {
+    let s = trim_ascii(s);
     let inner = s
-        .strip_prefix('"')
-        .and_then(|t| t.strip_suffix('"'))
-        .ok_or_else(|| format!("expected string literal, got '{}'", s))?;
+        .strip_prefix(b"\"")
+        .and_then(|bytes| bytes.strip_suffix(b"\""))
+        .ok_or_else(|| {
+            format!(
+                "expected string literal, got '{}'",
+                String::from_utf8_lossy(s)
+            )
+        })?;
     let mut out = Vec::with_capacity(inner.len());
-    let mut chars = inner.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            let mut buf = [0u8; 4];
-            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    let mut index = 0;
+    while index < inner.len() {
+        let byte = inner[index];
+        index += 1;
+        if byte != b'\\' {
+            out.push(byte);
             continue;
         }
-        match chars.next() {
-            Some('n') => out.push(b'\n'),
-            Some('t') => out.push(b'\t'),
-            Some('r') => out.push(b'\r'),
-            Some('f') => out.push(0x0c),
-            Some('b') => out.push(0x08),
+        if index == inner.len() {
+            return Err("dangling backslash".into());
+        }
+        let escape = inner[index];
+        index += 1;
+        match escape {
+            b'n' => out.push(b'\n'),
+            b't' => out.push(b'\t'),
+            b'r' => out.push(b'\r'),
+            b'f' => out.push(0x0c),
+            b'b' => out.push(0x08),
             // GNU as does not treat `\a` as BEL in x86 string directives;
             // it drops the backslash and emits the literal `a`.
-            Some('a') => out.push(b'a'),
-            Some('v') => out.push(0x0b),
-            Some('\\') => out.push(b'\\'),
-            Some('"') => out.push(b'"'),
-            Some('\'') => out.push(b'\''),
+            b'a' => out.push(b'a'),
+            b'v' => out.push(0x0b),
+            b'\\' => out.push(b'\\'),
+            b'"' => out.push(b'"'),
+            b'\'' => out.push(b'\''),
             // Octal: 1-3 octal digits (gas), low byte. `\0` is just the
             // one-digit case.
-            Some(d @ '0'..='7') => {
-                let mut val = d.to_digit(8).unwrap();
+            digit @ b'0'..=b'7' => {
+                let mut value = u32::from(digit - b'0');
                 for _ in 0..2 {
-                    match chars.peek() {
-                        Some(&n) if ('0'..='7').contains(&n) => {
-                            val = val * 8 + n.to_digit(8).unwrap();
-                            chars.next();
-                        }
-                        _ => break,
+                    if index < inner.len() && matches!(inner[index], b'0'..=b'7') {
+                        value = value * 8 + u32::from(inner[index] - b'0');
+                        index += 1;
+                    } else {
+                        break;
                     }
                 }
-                out.push((val & 0xff) as u8);
+                out.push((value & 0xff) as u8);
             }
             // Hex: `\x` then one or more hex digits (gas), low byte.
-            Some('x') | Some('X') => {
-                let mut val: u32 = 0;
+            b'x' | b'X' => {
+                let mut value: u32 = 0;
                 let mut any = false;
-                while let Some(&n) = chars.peek() {
-                    let Some(h) = n.to_digit(16) else { break };
-                    val = val.wrapping_mul(16).wrapping_add(h);
+                while index < inner.len() {
+                    let Some(hex) = (inner[index] as char).to_digit(16) else {
+                        break;
+                    };
+                    value = value.wrapping_mul(16).wrapping_add(hex);
                     any = true;
-                    chars.next();
+                    index += 1;
                 }
                 if !any {
                     return Err("\\x used with no following hex digits".into());
                 }
-                out.push((val & 0xff) as u8);
+                out.push((value & 0xff) as u8);
             }
-            Some(other) => return Err(format!("unsupported escape '\\{}'", other)),
-            None => return Err("dangling backslash".into()),
+            other => return Err(format!("unsupported escape '\\{}'", other.escape_ascii())),
         }
     }
     Ok(out)
@@ -898,6 +983,23 @@ mod tests {
             stmts[5].stmt,
             Stmt::Directive(Directive::Extern("ext".into()))
         );
+    }
+
+    #[test]
+    fn raw_bytes_survive_string_literals_and_comments() {
+        let stmts = parse_bytes(b".ascii \"\xff\"\n# ignored \xfe\n").unwrap();
+        assert_eq!(
+            stmts,
+            [Located {
+                line: 1,
+                col: 1,
+                stmt: Stmt::Directive(Directive::Ascii(vec![vec![0xff]])),
+            }]
+        );
+
+        let error = parse_bytes(b"ret\n\xff\n").unwrap_err();
+        assert_eq!((error.line, error.col), (2, 1));
+        assert_eq!(error.msg, "non-UTF-8 byte in instruction");
     }
 
     #[test]

@@ -172,11 +172,11 @@ fn assemble_cli_x86(input: &Path, output: &Path) -> Result<(), String> {
     };
     let read_err = |e: io::Error| format!("{}: {}", input_display.display(), e);
     let src = if is_stdio_path(input) {
-        let mut src = String::new();
-        io::stdin().read_to_string(&mut src).map_err(read_err)?;
+        let mut src = Vec::new();
+        io::stdin().read_to_end(&mut src).map_err(read_err)?;
         src
     } else {
-        fs::read_to_string(input).map_err(read_err)?
+        fs::read(input).map_err(read_err)?
     };
 
     let osabi = if cfg!(target_os = "freebsd") {
@@ -184,8 +184,8 @@ fn assemble_cli_x86(input: &Path, output: &Path) -> Result<(), String> {
     } else {
         afs_as::elf::ELFOSABI_NONE
     };
-    let obj = afs_as::x86::assemble::assemble_x86(&src, osabi)
-        .map_err(|e| e.with_source_context(input_display, &src).to_string())?;
+    let obj = afs_as::x86::assemble::assemble_x86_bytes(&src, osabi)
+        .map_err(|e| e.with_source_context_bytes(input_display, &src).to_string())?;
     let bytes =
         afs_as::elf::write_elf(&obj).map_err(|e| format!("{}: {}", input_display.display(), e))?;
 
@@ -211,18 +211,18 @@ fn assemble_cli(input: &Path, output: &Path) -> Result<(), afs_as::assemble::Asm
     };
 
     let src = if is_stdio_path(input) {
-        let mut src = String::new();
-        io::stdin().read_to_string(&mut src).map_err(|err| {
+        let mut src = Vec::new();
+        io::stdin().read_to_end(&mut src).map_err(|err| {
             afs_as::assemble::AsmError::new(format!("{}", err)).with_path(input_display)
         })?;
         src
     } else {
-        fs::read_to_string(input)
+        fs::read(input)
             .map_err(|err| afs_as::assemble::AsmError::new(format!("{}", err)).with_path(input))?
     };
 
-    let obj = afs_as::assemble::assemble_source(&src)
-        .map_err(|err| err.with_source_context(input_display, &src))?;
+    let obj = afs_as::assemble::assemble_source_bytes(&src)
+        .map_err(|err| err.with_source_context_bytes(input_display, &src))?;
 
     if is_stdio_path(output) {
         let stdout = io::stdout();

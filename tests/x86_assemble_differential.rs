@@ -14,7 +14,7 @@ use afs_as::elf::{
     parse_elf, SymbolPlace, ELFOSABI_FREEBSD, ELFOSABI_NONE, SHF_EXECINSTR, STB_GLOBAL, STB_WEAK,
     STT_FUNC, STT_NOTYPE, STT_OBJECT,
 };
-use afs_as::x86::assemble::{assemble_x86, assemble_x86_with_provenance};
+use afs_as::x86::assemble::{assemble_x86, assemble_x86_bytes, assemble_x86_with_provenance};
 
 fn host_osabi() -> u8 {
     if cfg!(target_os = "freebsd") {
@@ -52,6 +52,29 @@ fn nop_normalization_does_not_hide_explicit_text_bytes() {
     assert!(
         celf::canonicalize_nop_padding(&[0xcc], std::slice::from_ref(&corrupted_padding)).is_err()
     );
+}
+
+#[test]
+fn raw_string_and_comment_bytes_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "raw_string_and_comment_bytes_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let source = b".data\n.ascii \"\xff\"\n# ignored \xfe\n";
+    let tmp = celf::TempArtifacts::new("afs_x86_raw_bytes");
+    let source_path = tmp.path("raw.s");
+    let object_path = tmp.path("raw.o");
+    std::fs::write(&source_path, source).expect("write raw source");
+    celf::assemble_with_gas(&gas, &source_path, &object_path);
+
+    let gas_object = parse_elf(&std::fs::read(&object_path).expect("read gas object"))
+        .expect("parse gas object");
+    let our_object = assemble_x86_bytes(source, host_osabi()).expect("assemble raw source bytes");
+    assert_eq!(celf::normalize(&our_object), celf::normalize(&gas_object));
 }
 
 fn diff_one(

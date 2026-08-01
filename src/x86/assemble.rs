@@ -27,7 +27,7 @@ use super::super::elf::{
     STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
 };
 use super::encode::{encode, InsnReloc};
-use super::parse::{parse, DataItem, Directive, SizeArg, Stmt, SymKind};
+use super::parse::{parse_bytes, DataItem, Directive, SizeArg, Stmt, SymKind};
 use super::Operand;
 
 pub type AsmX86Error = AsmError;
@@ -159,11 +159,22 @@ pub struct X86Assembly {
 }
 
 pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
-    assemble_x86_with_provenance(src, osabi).map(|assembly| assembly.object)
+    assemble_x86_bytes(src.as_bytes(), osabi)
+}
+
+pub fn assemble_x86_bytes(src: &[u8], osabi: u8) -> Result<ObjectFile, AsmX86Error> {
+    assemble_x86_bytes_with_provenance(src, osabi).map(|assembly| assembly.object)
 }
 
 pub fn assemble_x86_with_provenance(src: &str, osabi: u8) -> Result<X86Assembly, AsmX86Error> {
-    let stmts = parse(src).map_err(|e| AsmError::at(e.line, e.col, e.msg))?;
+    assemble_x86_bytes_with_provenance(src.as_bytes(), osabi)
+}
+
+pub fn assemble_x86_bytes_with_provenance(
+    src: &[u8],
+    osabi: u8,
+) -> Result<X86Assembly, AsmX86Error> {
+    let stmts = parse_bytes(src).map_err(|e| AsmError::at(e.line, e.col, e.msg))?;
 
     // ---- Pass 1: build sections -----------------------------------
     let mut streams: Vec<SubsectionBuild> = Vec::new();

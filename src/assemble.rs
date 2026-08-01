@@ -22,10 +22,9 @@ use crate::reg::{GpReg, SP};
 
 /// Assemble a source file to a Mach-O object file.
 pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
-    let src =
-        fs::read_to_string(input).map_err(|e| AsmError::new(format!("{}", e)).with_path(input))?;
+    let src = fs::read(input).map_err(|e| AsmError::new(format!("{}", e)).with_path(input))?;
 
-    let obj = assemble_source(&src).map_err(|e| e.with_source_context(input, &src))?;
+    let obj = assemble_source_bytes(&src).map_err(|e| e.with_source_context_bytes(input, &src))?;
 
     let file =
         fs::File::create(output).map_err(|e| AsmError::new(format!("{}", e)).with_path(output))?;
@@ -51,7 +50,13 @@ pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
 /// assert!(obj.symbols.iter().any(|s| s.name == "_main" && s.global));
 /// ```
 pub fn assemble_source(src: &str) -> Result<ObjectFile, AsmError> {
-    let stmts = parse::parse_with_locations(src).map_err(AsmError::from)?;
+    assemble_source_bytes(src.as_bytes())
+}
+
+/// Assemble raw source bytes into an ObjectFile without requiring UTF-8 for
+/// comments or string-literal payloads.
+pub fn assemble_source_bytes(src: &[u8]) -> Result<ObjectFile, AsmError> {
+    let stmts = parse::parse_bytes_with_locations(src).map_err(AsmError::from)?;
     assemble_located_stmts(&stmts)
 }
 
@@ -187,18 +192,34 @@ impl AsmError {
         self
     }
 
-    pub fn with_source_context(mut self, path: &Path, src: &str) -> Self {
+    pub fn with_source_context(self, path: &Path, src: &str) -> Self {
+        self.with_source_context_bytes(path, src.as_bytes())
+    }
+
+    pub fn with_source_context_bytes(mut self, path: &Path, src: &[u8]) -> Self {
         self = self.with_path(path);
         if self.snippet.is_none() {
             if let Some(line) = self.line {
-                self.snippet = src
-                    .lines()
-                    .nth(line.saturating_sub(1) as usize)
-                    .map(|line| line.to_string());
+                self.snippet = source_line_bytes(src, line)
+                    .map(|line| String::from_utf8_lossy(line).into_owned());
             }
         }
         self
     }
+}
+
+fn source_line_bytes(src: &[u8], line: u32) -> Option<&[u8]> {
+    if src.is_empty() || line == 0 {
+        return None;
+    }
+    let line_count =
+        src.iter().filter(|byte| **byte == b'\n').count() + usize::from(!src.ends_with(b"\n"));
+    if line as usize > line_count {
+        return None;
+    }
+    src.split(|byte| *byte == b'\n')
+        .nth(line.saturating_sub(1) as usize)
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
 }
 
 #[allow(non_snake_case)]
@@ -3647,6 +3668,12 @@ mod tests {
     fn assemble_data_directive_byte() {
         let obj = assemble_source(".data\n.byte 0x41, 0x42, 0x43\n").unwrap();
         assert_eq!(data_bytes(&obj), vec![0x41, 0x42, 0x43]);
+    }
+
+    #[test]
+    fn assemble_raw_bytes_in_string_literals_and_comments() {
+        let obj = assemble_source_bytes(b".data\n.ascii \"\xff\"\n; ignored \xfe\n").unwrap();
+        assert_eq!(data_bytes(&obj), vec![0xff]);
     }
 
     #[test]

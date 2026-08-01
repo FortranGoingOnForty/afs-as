@@ -32,7 +32,7 @@ fn full_device() -> Stdio {
     )
 }
 
-fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
+fn run_with_stdin_bytes(args: &[&str], input: &[u8]) -> std::process::Output {
     let mut child = afs_as()
         .args(args)
         .stdin(Stdio::piped())
@@ -44,9 +44,13 @@ fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
         .stdin
         .as_mut()
         .expect("stdin pipe")
-        .write_all(input.as_bytes())
+        .write_all(input)
         .expect("write stdin");
     child.wait_with_output().expect("wait for afs-as")
+}
+
+fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
+    run_with_stdin_bytes(args, input.as_bytes())
 }
 
 #[test]
@@ -273,6 +277,64 @@ fn stdin_can_write_object_to_stdout() {
         "stdout bytes: {:?}",
         output.stdout.get(..8).unwrap_or(&output.stdout)
     );
+}
+
+#[test]
+fn raw_source_bytes_survive_file_and_stdin_assembly() {
+    let root = temp_root("afs_cli_raw_source_bytes");
+    let cases: [(&str, &[&str], &[u8]); 2] = [
+        (
+            "arm64",
+            &[],
+            b".data\n.ascii \"\xff\"\n; raw comment \xfe\n.text\n.globl _entry\n_entry:\nret\n",
+        ),
+        (
+            "x86_64",
+            &["--64"],
+            b".data\n.ascii \"\xff\"\n# raw comment \xfe\n.text\n.globl f\nf:\nret\n",
+        ),
+    ];
+
+    for (target, target_args, source) in cases {
+        let input = root.join(format!("{target}.s"));
+        let output = root.join(format!("{target}.o"));
+        fs::write(&input, source).expect("write raw assembly source");
+
+        let file_output = afs_as()
+            .args(target_args)
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .expect("assemble raw source file");
+        assert!(
+            file_output.status.success(),
+            "{target} file stderr bytes: {:?}",
+            file_output.stderr
+        );
+
+        let mut stdin_args = target_args.to_vec();
+        stdin_args.extend(["-", "-o", "-"]);
+        let stdin_output = run_with_stdin_bytes(&stdin_args, source);
+        assert!(
+            stdin_output.status.success(),
+            "{target} stdin stderr bytes: {:?}",
+            stdin_output.stderr
+        );
+
+        let file_bytes = fs::read(&output).expect("read assembled object");
+        assert_eq!(
+            stdin_output.stdout, file_bytes,
+            "{target} transport mismatch"
+        );
+
+        if target == "x86_64" {
+            let object = afs_as::elf::parse_elf(&file_bytes).expect("parse raw-byte ELF");
+            assert_eq!(object.section_by_name(".data").expect(".data").data, [0xff]);
+        }
+    }
+
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
