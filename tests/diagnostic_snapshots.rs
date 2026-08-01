@@ -384,6 +384,11 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "<input>:2:9: error: ldp/stp register pair must use matching register widths\nldp x0, w1, [x2]\n        ^\n",
         ),
         (
+            "pair-identical-gp-destinations.s",
+            "ldp x0, x0, [x2]",
+            "<input>:2:9: error: ldp destination registers must be different\nldp x0, x0, [x2]\n        ^\n",
+        ),
+        (
             "register-offset-stack-pointer.s",
             "ldr x0, [x1, sp]",
             "<input>:2:14: error: register offset does not allow sp\nldr x0, [x1, sp]\n             ^\n",
@@ -527,6 +532,11 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "fp-pair-register-width.s",
             "ldp d0, s1, [x2]",
             "<input>:2:9: error: ldp/stp FP register pair must use matching register widths\nldp d0, s1, [x2]\n        ^\n",
+        ),
+        (
+            "pair-identical-fp-destinations.s",
+            "ldp q0, q0, [x2], #32",
+            "<input>:2:9: error: ldp destination registers must be different\nldp q0, q0, [x2], #32\n        ^\n",
         ),
         (
             "malformed-simd-register.s",

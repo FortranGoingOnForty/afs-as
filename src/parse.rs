@@ -4549,6 +4549,12 @@ impl<'a> Parser<'a> {
                 "ldp/stp register pair must use matching register widths".into(),
             ));
         }
+        if is_load && rt1 == rt2 {
+            return Err(self.err_at(
+                rt2_start,
+                "ldp destination registers must be different".into(),
+            ));
+        }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
         let rn = self.parse_memory_base_reg("ldp/stp memory base")?;
@@ -4690,6 +4696,12 @@ impl<'a> Parser<'a> {
         }
         if matches!(width, FpMemWidth::B8 | FpMemWidth::H16) {
             return Err(self.err("ldp/stp does not support b/h FP register pairs".into()));
+        }
+        if is_load && rt1 == rt2 {
+            return Err(self.err_at(
+                rt2_start,
+                "ldp destination registers must be different".into(),
+            ));
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
@@ -8913,6 +8925,58 @@ mod tests {
     fn error_ldp_fp_pair_requires_matching_widths() {
         let err = parse_err("ldp d0, s1, [sp]");
         assert!(err.contains("matching register widths"), "got: {}", err);
+    }
+
+    #[test]
+    fn error_ldp_rejects_identical_destinations_in_every_supported_form() {
+        for source in [
+            "ldp w0, w0, [x2]",
+            "ldp w0, w0, [x2, #-4]!",
+            "ldp w0, w0, [x2], #4",
+            "ldp x0, x0, [x2]",
+            "ldp x0, x0, [x2, #-8]!",
+            "ldp x0, x0, [x2], #8",
+            "ldp x31, xzr, [x2]",
+            "ldp s0, s0, [x2]",
+            "ldp s0, s0, [x2, #-4]!",
+            "ldp s0, s0, [x2], #4",
+            "ldp d0, d0, [x2]",
+            "ldp d0, d0, [x2, #-8]!",
+            "ldp d0, d0, [x2], #8",
+            "ldp q0, q0, [x2]",
+            "ldp q0, q0, [x2, #-16]!",
+            "ldp q0, q0, [x2], #16",
+        ] {
+            let err = parse_err(source);
+            assert!(
+                err.contains("ldp destination registers must be different"),
+                "{source}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_stp_allows_identical_sources_in_every_supported_form() {
+        for source in [
+            "stp w0, w0, [x2]",
+            "stp w0, w0, [x2, #-4]!",
+            "stp w0, w0, [x2], #4",
+            "stp x0, x0, [x2]",
+            "stp x0, x0, [x2, #-8]!",
+            "stp x0, x0, [x2], #8",
+            "stp x31, xzr, [x2]",
+            "stp s0, s0, [x2]",
+            "stp s0, s0, [x2, #-4]!",
+            "stp s0, s0, [x2], #4",
+            "stp d0, d0, [x2]",
+            "stp d0, d0, [x2, #-8]!",
+            "stp d0, d0, [x2], #8",
+            "stp q0, q0, [x2]",
+            "stp q0, q0, [x2, #-16]!",
+            "stp q0, q0, [x2], #16",
+        ] {
+            let _ = parse_inst(source);
+        }
     }
 
     #[test]
