@@ -12,7 +12,6 @@
 // every helper; silence per-binary dead-code noise.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -76,21 +75,43 @@ pub fn corpus_files() -> Vec<PathBuf> {
 
 /// The differential policy's normalized view of an object. Compared
 /// between gas output (lifted through our reader) and our re-emission:
-/// section content bytes + type/flags, sorted relocation tuples with
-/// symbol NAMES, and the symbol set. Deliberately not represented:
-/// sh_offset, section order, symbol order, e_shnum, padding.
+/// section content bytes + type/flags/alignment (with multiplicity),
+/// sorted relocation tuples with symbol NAMES, and the symbol set including
+/// visibility. Deliberately not represented: sh_offset, section order,
+/// symbol order, e_shnum, padding.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Normalized {
     pub osabi: u8,
     pub machine: u16,
     pub gnu_stack_flags: Option<u64>,
-    /// name -> (sh_type, sh_flags, content bytes, nobits size)
-    pub sections: BTreeMap<String, (u32, u64, Vec<u8>, u64)>,
+    /// Sorted by all fields. A vector preserves duplicate-name sections.
+    pub sections: Vec<NormalizedSection>,
     /// (section, offset, r_type, symbol name, addend), sorted.
     pub relocs: Vec<(String, u64, u32, String, i64)>,
-    /// (name, bind, typ, place-name, value, size), sorted. SECTION
-    /// symbols excluded — they are bookkeeping the reader synthesizes.
-    pub symbols: Vec<(String, u8, u8, String, u64, u64)>,
+    /// Sorted. SECTION symbols are excluded because they are bookkeeping the
+    /// reader synthesizes.
+    pub symbols: Vec<NormalizedSymbol>,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NormalizedSection {
+    pub name: String,
+    pub sh_type: u32,
+    pub sh_flags: u64,
+    pub sh_addralign: u64,
+    pub data: Vec<u8>,
+    pub nobits_size: u64,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NormalizedSymbol {
+    pub name: String,
+    pub bind: u8,
+    pub typ: u8,
+    pub vis: u8,
+    pub place: String,
+    pub value: u64,
+    pub size: u64,
 }
 
 const X86_NOP_FILL: [&[u8]; 11] = [
@@ -184,7 +205,7 @@ fn normalize_impl(
     obj: &ObjectFile,
     text_nop_padding: Option<&[Range<usize>]>,
 ) -> Result<Normalized, String> {
-    let mut sections = BTreeMap::new();
+    let mut sections = Vec::new();
     let mut relocs = Vec::new();
     let mut saw_text = false;
     for sec in &obj.sections {
@@ -197,19 +218,18 @@ fn normalize_impl(
         } else {
             sec.data.clone()
         };
-        sections.insert(
-            sec.name.clone(),
-            (
-                sec.sh_type,
-                sec.sh_flags,
-                data,
-                if sec.sh_type == SHT_NOBITS {
-                    sec.nobits_size
-                } else {
-                    0
-                },
-            ),
-        );
+        sections.push(NormalizedSection {
+            name: sec.name.clone(),
+            sh_type: sec.sh_type,
+            sh_flags: sec.sh_flags,
+            sh_addralign: sec.sh_addralign,
+            data,
+            nobits_size: if sec.sh_type == SHT_NOBITS {
+                sec.nobits_size
+            } else {
+                0
+            },
+        });
         for r in &sec.relas {
             relocs.push((
                 sec.name.clone(),
@@ -223,8 +243,9 @@ fn normalize_impl(
     if !saw_text && text_nop_padding.is_some_and(|padding| !padding.is_empty()) {
         return Err("text padding provenance supplied for an object without .text".into());
     }
+    sections.sort();
     relocs.sort();
-    let mut symbols: Vec<(String, u8, u8, String, u64, u64)> = obj
+    let mut symbols: Vec<NormalizedSymbol> = obj
         .symbols
         .iter()
         .filter(|s| s.typ != STT_SECTION)
@@ -235,7 +256,15 @@ fn normalize_impl(
                 SymbolPlace::Common => "<common>".to_string(),
                 SymbolPlace::Section(idx) => obj.sections[idx].name.clone(),
             };
-            (s.name.clone(), s.bind, s.typ, place, s.value, s.size)
+            NormalizedSymbol {
+                name: s.name.clone(),
+                bind: s.bind,
+                typ: s.typ,
+                vis: s.vis,
+                place,
+                value: s.value,
+                size: s.size,
+            }
         })
         .collect();
     symbols.sort();

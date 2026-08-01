@@ -141,9 +141,7 @@ fn diff_one(
     if a.sections != b.sections {
         return Some(format!(
             "{}: sections diverge\n  gas:  {:?}\n  ours: {:?}",
-            name,
-            a.sections.keys().collect::<Vec<_>>(),
-            b.sections.keys().collect::<Vec<_>>()
+            name, a.sections, b.sections
         ));
     }
     if a.relocs != b.relocs {
