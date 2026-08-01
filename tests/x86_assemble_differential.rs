@@ -240,6 +240,43 @@ fn explicit_fill_bytes_match_gas() {
 }
 
 #[test]
+fn subsection_layout_matches_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "subsection_layout_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_subsections");
+    let src = ".text 7\n\
+               text7a: .byte 0x70\n\
+               .text 0\n\
+               text0: jmp text7a\n\
+               .text 3\n\
+               .p2align 2\n\
+               text3: .byte 0x30\n\
+               .text 7\n\
+               text7b: ret\n\
+               .data 5\n\
+               data5: .quad text3\n\
+               .data 0\n\
+               data0: .byte 0x10\n\
+               .data 2\n\
+               data2: .byte 0x20\n\
+               .bss 4\n\
+               bss4: .zero 1\n\
+               .bss 0\n\
+               bss0: .zero 2\n\
+               .bss 2\n\
+               bss2: .zero 3\n";
+    if let Some(failure) = diff_one("subsection_layout", src, &gas, &tmp) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
 fn zero_fill_bytes_match_gas() {
     let Some(gas) = celf::gas_path() else {
         celf::skip(

@@ -90,6 +90,53 @@ impl SecBuild {
     }
 }
 
+#[derive(Debug)]
+struct SubsectionBuild {
+    section: String,
+    subsection: u32,
+    build: SecBuild,
+}
+
+/// Concatenate each section's subsection streams in numeric order before
+/// relaxation and layout. Subsections are an assembler-only organization:
+/// labels, relocations, alignment, and `.` must all observe one final section
+/// address space.
+fn merge_subsections(streams: Vec<SubsectionBuild>) -> (Vec<(String, SecBuild)>, Vec<usize>) {
+    let mut section_order = Vec::new();
+    let mut merged_index = HashMap::new();
+    for stream in &streams {
+        if !merged_index.contains_key(&stream.section) {
+            let index = section_order.len();
+            section_order.push(stream.section.clone());
+            merged_index.insert(stream.section.clone(), index);
+        }
+    }
+
+    let mut indexed_streams: Vec<_> = streams.into_iter().enumerate().collect();
+    indexed_streams.sort_by_key(|(_, stream)| (merged_index[&stream.section], stream.subsection));
+
+    let mut sections: Vec<_> = section_order
+        .into_iter()
+        .map(|name| (name, SecBuild::default()))
+        .collect();
+    let mut stream_to_section = vec![0; indexed_streams.len()];
+    for (stream_index, stream) in indexed_streams {
+        let section_index = merged_index[&stream.section];
+        stream_to_section[stream_index] = section_index;
+
+        let target = &mut sections[section_index].1;
+        let item_base = target.items.len();
+        target.max_align = target.max_align.max(stream.build.max_align);
+        target.items.extend(stream.build.items);
+        target.label_order.extend(stream.build.label_order);
+        for (label, item_index) in stream.build.labels {
+            let previous = target.labels.insert(label, item_base + item_index);
+            debug_assert!(previous.is_none(), "duplicate label survived pass 1");
+        }
+    }
+    (sections, stream_to_section)
+}
+
 #[derive(Debug, Default, Clone)]
 struct SymInfo {
     globl: bool,
@@ -106,8 +153,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let stmts = parse(src).map_err(|e| AsmError::at(e.line, e.col, e.msg))?;
 
     // ---- Pass 1: build sections -----------------------------------
-    let mut secs: Vec<(String, SecBuild)> = Vec::new();
-    let mut sec_index: HashMap<String, usize> = HashMap::new();
+    let mut streams: Vec<SubsectionBuild> = Vec::new();
+    let mut stream_index: HashMap<(String, u32), usize> = HashMap::new();
     let mut current: usize = usize::MAX;
     let mut syminfo: HashMap<String, SymInfo> = HashMap::new();
     let mut gnu_stack_flags: Option<u64> = None;
@@ -116,28 +163,36 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let mut common_names: HashSet<String> = HashSet::new();
     let mut global_common_names: HashSet<String> = HashSet::new();
     let mut local_common_names: HashSet<String> = HashSet::new();
-    // label -> section index (for cross-section checks + reloc targets)
+    // label -> subsection stream index; remapped to the merged section index
+    // before relaxation and relocation processing.
     let mut label_section: HashMap<String, usize> = HashMap::new();
 
-    let ensure_sec = |name: &str,
-                      secs: &mut Vec<(String, SecBuild)>,
-                      sec_index: &mut HashMap<String, usize>|
+    let ensure_stream = |name: &str,
+                         subsection: u32,
+                         streams: &mut Vec<SubsectionBuild>,
+                         stream_index: &mut HashMap<(String, u32), usize>|
      -> usize {
-        if let Some(&i) = sec_index.get(name) {
+        let key = (name.to_string(), subsection);
+        if let Some(&i) = stream_index.get(&key) {
             return i;
         }
-        secs.push((name.to_string(), SecBuild::default()));
-        sec_index.insert(name.to_string(), secs.len() - 1);
-        secs.len() - 1
+        let index = streams.len();
+        streams.push(SubsectionBuild {
+            section: name.to_string(),
+            subsection,
+            build: SecBuild::default(),
+        });
+        stream_index.insert(key, index);
+        index
     };
 
     let err = |line: u32, col: u32, msg: String| AsmError::at(line, col, msg);
 
     // gas always creates .text/.data/.bss even when empty; match it so
     // objects diff clean against the system assembler.
-    ensure_sec(".text", &mut secs, &mut sec_index);
-    ensure_sec(".data", &mut secs, &mut sec_index);
-    ensure_sec(".bss", &mut secs, &mut sec_index);
+    ensure_stream(".text", 0, &mut streams, &mut stream_index);
+    ensure_stream(".data", 0, &mut streams, &mut stream_index);
+    ensure_stream(".bss", 0, &mut streams, &mut stream_index);
 
     for located in &stmts {
         let line = located.line;
@@ -152,9 +207,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     ));
                 }
                 if current == usize::MAX {
-                    current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                 }
-                let sb = &mut secs[current].1;
+                let sb = &mut streams[current].build;
                 if label_section.insert(name.clone(), current).is_some() {
                     return Err(err(line, col, format!("duplicate label '{}'", name)));
                 }
@@ -162,11 +217,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 sb.label_order.push(name.clone());
             }
             Stmt::Directive(d) => match d {
-                Directive::Text => current = ensure_sec(".text", &mut secs, &mut sec_index),
-                Directive::Data => current = ensure_sec(".data", &mut secs, &mut sec_index),
-                Directive::Bss => current = ensure_sec(".bss", &mut secs, &mut sec_index),
-                Directive::Section { name } => {
-                    current = ensure_sec(name, &mut secs, &mut sec_index)
+                Directive::Section { name, subsection } => {
+                    current = ensure_stream(name, *subsection, &mut streams, &mut stream_index)
                 }
                 Directive::NoteGnuStack { executable } => {
                     gnu_stack_flags.get_or_insert(if *executable { SHF_EXECINSTR } else { 0 });
@@ -206,7 +258,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     e.size_col = col;
                     e.size_section = matches!(arg, SizeArg::DotMinus(_)).then_some(current);
                     if matches!(arg, SizeArg::DotMinus(_)) {
-                        secs[current].1.push(line, col, Item::SizeDot(sym.clone()));
+                        streams[current]
+                            .build
+                            .push(line, col, Item::SizeDot(sym.clone()));
                     }
                 }
                 Directive::Comm { sym, size, align } => {
@@ -246,9 +300,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     max_skip,
                 } => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
-                    let sb = &mut secs[current].1;
+                    let sb = &mut streams[current].build;
                     sb.max_align = sb.max_align.max(1u64 << pow);
                     sb.push(
                         line,
@@ -271,7 +325,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         _ => 8,
                     };
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
                     let mut bytes = Vec::new();
                     let mut relocs = Vec::new();
@@ -299,7 +353,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             }
                         }
                     }
-                    if secs[current].0 == ".bss"
+                    if streams[current].section == ".bss"
                         && (bytes.iter().any(|&b| b != 0) || !relocs.is_empty())
                     {
                         return Err(err(
@@ -308,70 +362,76 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             "attempt to store non-zero value in section `.bss'".into(),
                         ));
                     }
-                    if secs[current].0 == ".bss" {
-                        secs[current]
-                            .1
+                    if streams[current].section == ".bss" {
+                        streams[current]
+                            .build
                             .push(line, col, Item::Zero(bytes.len() as u64));
                     } else {
-                        secs[current].1.push(line, col, Item::Bytes(bytes, relocs));
+                        streams[current]
+                            .build
+                            .push(line, col, Item::Bytes(bytes, relocs));
                     }
                 }
                 Directive::Ascii(strings) => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
                     let bytes = strings.concat();
-                    if secs[current].0 == ".bss" && bytes.iter().any(|&byte| byte != 0) {
+                    if streams[current].section == ".bss" && bytes.iter().any(|&byte| byte != 0) {
                         return Err(err(
                             line,
                             col,
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
-                    if secs[current].0 == ".bss" {
-                        secs[current]
-                            .1
+                    if streams[current].section == ".bss" {
+                        streams[current]
+                            .build
                             .push(line, col, Item::Zero(bytes.len() as u64));
                     } else {
-                        secs[current].1.push(line, col, Item::Bytes(bytes, vec![]));
+                        streams[current]
+                            .build
+                            .push(line, col, Item::Bytes(bytes, vec![]));
                     }
                 }
                 Directive::Asciz(strings) => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
                     let mut bytes = Vec::new();
                     for string in strings {
                         bytes.extend_from_slice(string);
                         bytes.push(0);
                     }
-                    if secs[current].0 == ".bss" && bytes.iter().any(|&byte| byte != 0) {
+                    if streams[current].section == ".bss" && bytes.iter().any(|&byte| byte != 0) {
                         return Err(err(
                             line,
                             col,
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
-                    if secs[current].0 == ".bss" {
-                        secs[current]
-                            .1
+                    if streams[current].section == ".bss" {
+                        streams[current]
+                            .build
                             .push(line, col, Item::Zero(bytes.len() as u64));
                     } else {
-                        secs[current].1.push(line, col, Item::Bytes(bytes, vec![]));
+                        streams[current]
+                            .build
+                            .push(line, col, Item::Bytes(bytes, vec![]));
                     }
                 }
                 Directive::Space { size, fill } => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
-                    if secs[current].0 == ".bss" && *fill != 0 {
+                    if streams[current].section == ".bss" && *fill != 0 {
                         return Err(err(
                             line,
                             col,
                             "attempt to store non-zero value in section `.bss'".into(),
                         ));
                     }
-                    secs[current].1.push(
+                    streams[current].build.push(
                         line,
                         col,
                         Item::Fill {
@@ -382,14 +442,14 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 }
                 Directive::Zero(n) => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
-                    secs[current].1.push(line, col, Item::Zero(*n));
+                    streams[current].build.push(line, col, Item::Zero(*n));
                 }
             },
             Stmt::Insn { mnemonic, operands } => {
                 if current == usize::MAX {
-                    current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                 }
                 // Relaxable branch? jmp/jcc to a symbol that is a
                 // file-local label (decided in pass 2 — here we defer
@@ -405,8 +465,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     _ => None,
                 };
                 if let Some((kind, label)) = branch {
-                    secs[current]
-                        .1
+                    streams[current]
+                        .build
                         .push(line, col, Item::Branch { kind, label });
                     continue;
                 }
@@ -419,12 +479,22 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         format!("unexpected label fix for {}", mnemonic),
                     ));
                 }
-                secs[current].1.push(
+                streams[current].build.push(
                     line,
                     col,
                     Item::Bytes(enc.bytes, enc.reloc.into_iter().collect()),
                 );
             }
+        }
+    }
+
+    let (secs, stream_to_section) = merge_subsections(streams);
+    for section in label_section.values_mut() {
+        *section = stream_to_section[*section];
+    }
+    for info in syminfo.values_mut() {
+        if let Some(section) = &mut info.size_section {
+            *section = stream_to_section[*section];
         }
     }
 

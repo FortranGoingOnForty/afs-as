@@ -91,13 +91,12 @@ pub enum SymKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Directive {
-    Text,
-    Data,
-    Bss,
-    /// `.section name` (only bare names the backend emits: `.rodata`,
-    /// `.note.GNU-stack` with optional flags and `@progbits` type.
+    /// Switch to an ELF section and one of its assembler-only subsection
+    /// streams. Bare `.text`, `.data`, `.bss`, and `.section` switches use
+    /// subsection zero.
     Section {
         name: String,
+        subsection: u32,
     },
     Globl(String),
     Extern(String),
@@ -445,6 +444,24 @@ fn parse_int(s: &str) -> Option<i64> {
     }
 }
 
+fn parse_subsection(args: &str) -> Result<u32, String> {
+    const MAX_SUBSECTION: i64 = 8192;
+
+    let args = args.trim();
+    if args.is_empty() {
+        return Ok(0);
+    }
+    let value = parse_int(args).ok_or_else(|| {
+        format!("subsection must be an integer literal from 0 to {MAX_SUBSECTION}, got '{args}'")
+    })?;
+    if !(0..=MAX_SUBSECTION).contains(&value) {
+        return Err(format!(
+            "subsection must be an integer literal from 0 to {MAX_SUBSECTION}, got '{args}'"
+        ));
+    }
+    Ok(value as u32)
+}
+
 // -------------------------------------------------------------------
 // Directives
 // -------------------------------------------------------------------
@@ -479,9 +496,10 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
     };
 
     let d = match name {
-        "text" => Directive::Text,
-        "data" => Directive::Data,
-        "bss" => Directive::Bss,
+        "text" | "data" | "bss" => Directive::Section {
+            name: format!(".{name}"),
+            subsection: parse_subsection(args).map_err(&err)?,
+        },
         "section" => {
             let mut fields = args.split(',').map(str::trim);
             let sec = fields.next().unwrap_or("").to_string();
@@ -509,7 +527,10 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                 }
                 Directive::NoteGnuStack { executable }
             } else if sec == ".rodata" || sec == ".text" || sec == ".data" || sec == ".bss" {
-                Directive::Section { name: sec }
+                Directive::Section {
+                    name: sec,
+                    subsection: 0,
+                }
             } else {
                 return Err(err(format!("unsupported section '{}'", sec)));
             }
@@ -877,6 +898,38 @@ mod tests {
             stmts[5].stmt,
             Stmt::Directive(Directive::Extern("ext".into()))
         );
+    }
+
+    #[test]
+    fn section_switches_preserve_documented_subsection_numbers() {
+        let stmts = parse(".text\n.data 2\n.bss 0x3\n.text 8192\n").unwrap();
+        for (statement, name, subsection) in [
+            (&stmts[0].stmt, ".text", 0),
+            (&stmts[1].stmt, ".data", 2),
+            (&stmts[2].stmt, ".bss", 3),
+            (&stmts[3].stmt, ".text", 8192),
+        ] {
+            assert_eq!(
+                statement,
+                &Stmt::Directive(Directive::Section {
+                    name: name.into(),
+                    subsection,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_subsection_arguments_fail_loudly() {
+        for argument in ["-1", "8193", "1+2", "1,2", "name"] {
+            let source = format!(".text {argument}\n");
+            let error = parse(&source).expect_err("invalid subsection must be rejected");
+            assert_eq!((error.line, error.col), (1, 1));
+            assert_eq!(
+                error.msg,
+                format!("subsection must be an integer literal from 0 to 8192, got '{argument}'")
+            );
+        }
     }
 
     #[test]
