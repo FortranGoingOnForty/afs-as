@@ -547,11 +547,17 @@ impl ObjectFile {
 // Validation
 // ---------------------------------------------------------------------
 
-/// Validate relocations against the object's machine: known type,
-/// offset+width in bounds, symbol index in range. Loud errors over
-/// silently emitting a bad object.
+/// Validate section, relocation, and symbol invariants before writing:
+/// conforming section alignment, relocation type and bounds, and valid
+/// symbol indexes. Loud errors over silently emitting a bad object.
 pub fn validate(obj: &ObjectFile) -> Result<(), ElfError> {
     for sec in &obj.sections {
+        if sec.sh_addralign != 0 && !sec.sh_addralign.is_power_of_two() {
+            return Err(ElfError::new(format!(
+                "{}: section alignment {} is not a power of two",
+                sec.name, sec.sh_addralign
+            )));
+        }
         for r in &sec.relas {
             if r.symbol >= obj.symbols.len() {
                 return Err(ElfError::new(format!(
@@ -1397,6 +1403,18 @@ mod tests {
         let mut obj = sample_object();
         obj.sections[0].relas[0].symbol = 99;
         assert!(write_elf(&obj).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_non_power_of_two_section_alignment() {
+        let mut obj = sample_object();
+        obj.sections[2].sh_addralign = 3;
+
+        let err = write_elf(&obj).expect_err("invalid section alignment was serialized");
+        assert_eq!(
+            err.message,
+            ".bss: section alignment 3 is not a power of two"
+        );
     }
 
     #[test]

@@ -757,6 +757,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         }
         for (sym, size, align, line, col) in &commons {
             if syminfo.get(sym).is_some_and(|i| i.local) {
+                if !align.is_power_of_two() {
+                    return Err(err(
+                        *line,
+                        *col,
+                        format!(
+                            "local COMMON '{}' alignment {} is not a power of two",
+                            sym, align
+                        ),
+                    ));
+                }
                 let bss = &mut obj.sections[model_sec_index[".bss"]];
                 let off = checked_align_up(bss.nobits_size, (*align).max(1)).ok_or_else(|| {
                     err(*line, *col, "local COMMON alignment overflows u64".into())
