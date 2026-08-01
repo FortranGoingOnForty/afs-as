@@ -240,6 +240,23 @@ fn explicit_fill_bytes_match_gas() {
 }
 
 #[test]
+fn zero_fill_bytes_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "zero_fill_bytes_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_zero_fill");
+    let src = ".data\n.zero 4,0xa5\n.zero 2\n.zero 3,-1\n.zero 1,\n";
+    if let Some(failure) = diff_one("zero_fill", src, &gas, &tmp) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
 fn string_operand_groups_match_gas() {
     let Some(gas) = celf::gas_path() else {
         celf::skip(

@@ -602,12 +602,29 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
             }
         }
         "zero" => {
-            let v = parse_int(args.split(',').next().unwrap_or(""))
+            let mut parts = args.split(',').map(str::trim);
+            let v = parse_int(parts.next().unwrap_or(""))
                 .ok_or_else(|| err(format!("bad {} size '{}'", name, args)))?;
             if v < 0 {
                 return Err(err(format!("negative {} size", name)));
             }
-            Directive::Zero(v as u64)
+            let fill = match parts.next() {
+                Some("") | None => 0,
+                Some(fill) => parse_int(fill)
+                    .ok_or_else(|| err(format!("bad {} fill '{}'", name, args)))?
+                    as u8,
+            };
+            if parts.next().is_some() {
+                return Err(err(format!("bad {} operands '{}'", name, args)));
+            }
+            if fill == 0 {
+                Directive::Zero(v as u64)
+            } else {
+                Directive::Space {
+                    size: v as u64,
+                    fill,
+                }
+            }
         }
         "comm" => {
             let mut it = args.split(',').map(str::trim);
@@ -888,7 +905,7 @@ mod tests {
 
     #[test]
     fn space_and_skip_directives_preserve_fill_byte() {
-        let stmts = parse(".space 4, 0x90\n.skip 3, 0xab\n.zero 2\n").unwrap();
+        let stmts = parse(".space 4, 0x90\n.skip 3, 0xab\n.zero 2\n.zero 5, 0xa5\n").unwrap();
         assert_eq!(
             stmts[0].stmt,
             Stmt::Directive(Directive::Space {
@@ -904,6 +921,20 @@ mod tests {
             })
         );
         assert_eq!(stmts[2].stmt, Stmt::Directive(Directive::Zero(2)));
+        assert_eq!(
+            stmts[3].stmt,
+            Stmt::Directive(Directive::Space {
+                size: 5,
+                fill: 0xa5
+            })
+        );
+    }
+
+    #[test]
+    fn zero_rejects_a_third_operand() {
+        for source in [".zero 4,0xa5,0x7f\n", ".zero 4,0xa5,\n"] {
+            assert!(parse(source).is_err(), "must reject {source:?}");
+        }
     }
 
     #[test]
