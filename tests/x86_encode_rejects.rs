@@ -1,9 +1,7 @@
-//! Audit A2-A4: forms afs-as used to silently encode as a *different*
-//! instruction must now be rejected — matching gas, which rejects them
-//! too. A2: `movhlps` with a memory operand became movlps. A3: a
-//! base+disp displacement past the 32-bit signed range truncated. A4:
-//! `%ch/%dh/%bh` as a variable shift count became `%cl`. Qword TEST
-//! immediates outside the signed imm32 encoding range also truncated.
+//! Forms afs-as used to silently encode as a *different* instruction
+//! must now be rejected — matching gas, which rejects them too. These
+//! cover instruction aliases, truncated fields, invalid fixed-register
+//! roles, surplus operands, and malformed memory-address components.
 
 #[path = "common/elf.rs"]
 mod celf;
@@ -38,6 +36,8 @@ const REJECTED: &[&str] = &[
 ];
 
 const ZERO_OPERAND_MNEMONICS: &[&str] = &["cqto", "cqo", "cltd", "cdq", "syscall"];
+
+const SCALE_WITHOUT_INDEX: &[u8] = &[1, 2, 4, 8];
 
 const SETCC_MNEMONICS: &[&str] = &[
     "seto", "setno", "setb", "setc", "setnae", "setae", "setnb", "setnc", "sete", "setz", "setne",
@@ -79,6 +79,50 @@ fn encoder_rejects_silently_wrong_forms() {
             "{}: encoder accepted a form it must reject (would emit the wrong instruction)",
             line
         );
+    }
+}
+
+#[test]
+fn parser_rejects_every_scale_without_an_index() {
+    for scale in SCALE_WITHOUT_INDEX {
+        let source = format!(".text\n    movq (%rax,,{scale}), %rbx\n");
+        let err = parse(&source).expect_err("scale without index parsed successfully");
+        assert_eq!((err.line, err.col), (2, 5), "scale {scale}");
+        assert_eq!(
+            err.msg,
+            format!("memory operand '(%rax,,{scale})' has a scale but no index"),
+            "scale {scale}"
+        );
+    }
+}
+
+#[test]
+fn encoder_rejects_a_semantic_scale_without_an_index() {
+    let stmts = parse("movq (%rax), %rbx\n").expect("parse base-only control");
+    let mut operands = match &stmts[0].stmt {
+        Stmt::Insn { operands, .. } => operands.clone(),
+        other => panic!("expected instruction, got {other:?}"),
+    };
+    let afs_as::x86::Operand::Mem(memory) = &mut operands[0] else {
+        panic!("expected memory source operand");
+    };
+    memory.scale = 8;
+
+    let err = encode("movq", &operands).expect_err("encoder discarded scale without index");
+    assert_eq!(err, "memory scale requires an index register");
+}
+
+#[test]
+fn valid_memory_scale_boundaries_keep_exact_encodings() {
+    for (line, expected) in [
+        ("movq (%rax), %rbx", &[0x48, 0x8b, 0x18][..]),
+        ("movq (%rax,%rcx,8), %rbx", &[0x48, 0x8b, 0x1c, 0xc8][..]),
+        (
+            "movq (,%rcx,8), %rbx",
+            &[0x48, 0x8b, 0x1c, 0xcd, 0x00, 0x00, 0x00, 0x00][..],
+        ),
+    ] {
+        assert_eq!(encode_line(line).expect(line).bytes, expected, "{line}");
     }
 }
 
@@ -160,6 +204,41 @@ fn gas_also_rejects_those_forms() {
             "gas accepted {:?} — expected rejection:\n{}",
             line,
             String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn gas_rejects_every_scale_without_an_index() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_encode_rejects",
+            "gas_rejects_every_scale_without_an_index",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_scale_without_index");
+    for scale in SCALE_WITHOUT_INDEX {
+        let source = tmp.path(&format!("_{scale}.s"));
+        let object = tmp.path(&format!("_{scale}.o"));
+        std::fs::write(&source, format!(".text\nmovq (%rax,,{scale}), %rbx\n"))
+            .expect("write malformed memory operand");
+        let output = Command::new(&gas)
+            .arg("--64")
+            .arg("-o")
+            .arg(&object)
+            .arg(&source)
+            .output()
+            .expect("run gas");
+        assert!(
+            !output.status.success(),
+            "gas accepted scale {scale} without index"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("expecting scale factor"),
+            "unexpected gas diagnostic for scale {scale}: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 }

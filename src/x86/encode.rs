@@ -114,6 +114,10 @@ fn encode_mem(reg_field: u8, mem: &MemOperand, rex: &mut Rex) -> Result<MemEnc, 
     let mut out = Vec::with_capacity(6);
     let reg3 = reg_field & 7;
 
+    if mem.index.is_none() && mem.scale != 1 {
+        return Err("memory scale requires an index register".into());
+    }
+
     if let Some(_sym) = &mem.rip_sym {
         // RIP-relative: mod=00, rm=101, disp32 patched by reloc.
         out.push(reg3 << 3 | 0b101);

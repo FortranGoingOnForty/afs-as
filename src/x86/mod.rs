@@ -31,8 +31,8 @@ pub enum Operand {
     Sym(String),
 }
 
-/// `disp(base,index,scale)` in all degenerate forms, plus
-/// `sym(%rip)` / `sym+disp(%rip)`.
+/// `disp(base,index,scale)` with either a base or index present, plus
+/// `sym(%rip)` / `sym+disp(%rip)`. A scale requires an index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemOperand {
     pub disp: i64,

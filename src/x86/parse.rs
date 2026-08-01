@@ -368,6 +368,12 @@ fn parse_mem(s: &str, line: u32, col: u32) -> Result<MemOperand, X86ParseError> 
     } else {
         1
     };
+    if parts.len() == 3 && index.is_none() {
+        return Err(err(format!(
+            "memory operand '{}' has a scale but no index",
+            s
+        )));
+    }
     if parts.len() >= 2 && index.is_none() && !parts[1].is_empty() {
         return Err(err(format!("bad index in '{}'", s)));
     }
