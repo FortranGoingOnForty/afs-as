@@ -115,6 +115,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     let mut commons: Vec<(String, u64, u64, u32, u32)> = Vec::new();
     let mut common_names: HashSet<String> = HashSet::new();
     let mut global_common_names: HashSet<String> = HashSet::new();
+    let mut local_common_names: HashSet<String> = HashSet::new();
     // label -> section index (for cross-section checks + reloc targets)
     let mut label_section: HashMap<String, usize> = HashMap::new();
 
@@ -224,7 +225,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             format!("symbol '{}' can not be both weak and common", sym),
                         ));
                     }
-                    if !info.is_some_and(|info| info.local) {
+                    let is_local = info.is_some_and(|info| info.local);
+                    if is_local && !local_common_names.insert(sym.clone()) {
+                        return Err(err(
+                            line,
+                            col,
+                            format!("symbol '{}' is already defined", sym),
+                        ));
+                    }
+                    if !is_local {
                         global_common_names.insert(sym.clone());
                     }
                     common_names.insert(sym.clone());

@@ -143,19 +143,41 @@ fn symbol_creating_directives_set_local_common_order() {
 }
 
 #[test]
-fn duplicate_local_commons_keep_one_final_allocation_symbol() {
-    let source = ".local duplicate\n.comm duplicate,8,8\n.comm duplicate,3,16\n";
-    let obj = assemble_x86(source, host_osabi()).expect("assemble duplicate common");
-    let bss = obj.section_by_name(".bss").expect("bss section");
-    assert_eq!((bss.nobits_size, bss.sh_addralign), (19, 16));
+fn duplicate_local_commons_are_rejected_like_gas() {
+    let source = ".local duplicate\n.comm duplicate,8,8\n    .comm duplicate,3,16\n";
+    let err = assemble_x86(source, host_osabi()).expect_err("duplicate local COMMON assembled");
+    assert_eq!(err.line, Some(3));
+    assert_eq!(err.col, Some(5));
+    assert_eq!(err.msg, "symbol 'duplicate' is already defined");
 
-    let symbols: Vec<_> = obj
-        .symbols
-        .iter()
-        .filter(|symbol| symbol.name == "duplicate")
-        .collect();
-    assert_eq!(symbols.len(), 1);
-    assert_eq!((symbols[0].value, symbols[0].size), (16, 3));
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_common_determinism",
+            "duplicate_local_commons_are_rejected_like_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_duplicate_local_common");
+    let source_path = tmp.path(".s");
+    let object_path = tmp.path(".o");
+    std::fs::write(&source_path, source).expect("write source");
+    let output = Command::new(&gas)
+        .arg("--64")
+        .arg("-o")
+        .arg(&object_path)
+        .arg(&source_path)
+        .output()
+        .expect("run gas");
+    assert!(
+        !output.status.success(),
+        "gas accepted duplicate local COMMON"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("already defined"),
+        "unexpected gas diagnostic: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
