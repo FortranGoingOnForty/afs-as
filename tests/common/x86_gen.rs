@@ -227,19 +227,26 @@ fn sse_op(src: &mut String, rng: &mut Rng, seed: u64) {
         }
         3 => {
             let op = *rng.pick(&[
+                "paddb",
+                "paddw",
                 "paddd",
                 "paddq",
+                "psubb",
+                "psubw",
                 "psubd",
                 "pand",
                 "pandn",
                 "por",
                 "pcmpgtd",
+                "pmullw",
                 "pmuludq",
+                "punpcklbw",
+                "punpcklwd",
                 "punpcklqdq",
             ]);
             line(src, &format!("{} {}, {}", op, rng.pick(XMM), rng.pick(XMM)));
         }
-        4 => match rng.bounded(4) {
+        4 => match rng.bounded(6) {
             0 => line(
                 src,
                 &format!(
@@ -248,6 +255,19 @@ fn sse_op(src: &mut String, rng: &mut Rng, seed: u64) {
                     rng.pick(XMM),
                     rng.pick(XMM)
                 ),
+            ),
+            3 => line(
+                src,
+                &format!(
+                    "pshuflw ${}, {}, {}",
+                    rng.bounded(256),
+                    rng.pick(XMM),
+                    rng.pick(XMM)
+                ),
+            ),
+            4 => line(
+                src,
+                &format!("psrldq ${}, {}", rng.bounded(17), rng.pick(XMM)),
             ),
             1 => line(
                 src,
