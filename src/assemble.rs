@@ -955,9 +955,7 @@ impl Assembler {
             }
             Directive::WeakReference(name) => {
                 self.note_symbol(name);
-                let attrs = self.symbol_attrs_mut(name);
-                attrs.global = true;
-                attrs.weak_ref = true;
+                self.symbol_attrs_mut(name).weak_ref = true;
             }
             Directive::WeakDefinition(name) => {
                 self.note_symbol(name);
@@ -2552,18 +2550,6 @@ impl Assembler {
 
         for (name, common) in &self.common_symbols {
             let attrs = self.symbol_attrs.get(name).copied().unwrap_or_default();
-            if attrs.private_extern {
-                return Err(AsmError(format!(
-                    "common symbol '{}' cannot be private extern",
-                    name
-                )));
-            }
-            if attrs.weak_def {
-                return Err(AsmError(format!(
-                    "common symbol '{}' cannot be a weak definition",
-                    name
-                )));
-            }
             symbols.push(Symbol {
                 name: name.clone(),
                 section: 0,
@@ -2573,9 +2559,9 @@ impl Assembler {
                 absolute: false,
                 common: true,
                 common_align_pow2: common.align_pow2,
-                private_extern: false,
+                private_extern: attrs.private_extern,
                 weak_ref: attrs.weak_ref,
-                weak_def: false,
+                weak_def: attrs.weak_def,
             });
         }
 
@@ -2585,12 +2571,6 @@ impl Assembler {
         // Explicit symbol directives.
         for (name, attrs) in &self.symbol_attrs {
             if let Some(value) = absolute_symbols.get(name) {
-                if attrs.weak_ref {
-                    return Err(AsmError(format!(
-                        "weak reference '{}' must remain undefined",
-                        name
-                    )));
-                }
                 known_symbols.insert(name.clone());
                 symbols.push(Symbol {
                     name: name.clone(),
@@ -2602,16 +2582,10 @@ impl Assembler {
                     common: false,
                     common_align_pow2: 0,
                     private_extern: attrs.private_extern,
-                    weak_ref: false,
+                    weak_ref: attrs.weak_ref,
                     weak_def: attrs.weak_def,
                 });
             } else if let Some((section, offset)) = self.labels.get(name) {
-                if attrs.weak_ref {
-                    return Err(AsmError(format!(
-                        "weak reference '{}' must remain undefined",
-                        name
-                    )));
-                }
                 let value = section_bases[*section] + offset;
                 known_symbols.insert(name.clone());
                 symbols.push(Symbol {
@@ -2624,22 +2598,10 @@ impl Assembler {
                     common: false,
                     common_align_pow2: 0,
                     private_extern: attrs.private_extern,
-                    weak_ref: false,
+                    weak_ref: attrs.weak_ref,
                     weak_def: attrs.weak_def,
                 });
             } else if !known_symbols.contains(name) {
-                if attrs.private_extern {
-                    return Err(AsmError(format!(
-                        "private extern '{}' must be defined in this object",
-                        name
-                    )));
-                }
-                if attrs.weak_def {
-                    return Err(AsmError(format!(
-                        "weak definition '{}' must be defined in this object",
-                        name
-                    )));
-                }
                 known_symbols.insert(name.clone());
                 symbols.push(Symbol {
                     name: name.clone(),
@@ -2650,9 +2612,9 @@ impl Assembler {
                     absolute: false,
                     common: false,
                     common_align_pow2: 0,
-                    private_extern: false,
+                    private_extern: attrs.private_extern,
                     weak_ref: attrs.weak_ref,
-                    weak_def: false,
+                    weak_def: attrs.weak_def,
                 });
             }
         }
@@ -3639,21 +3601,48 @@ mod tests {
     }
 
     #[test]
-    fn assemble_private_extern_requires_definition() {
-        let err = assemble_source(".private_extern _hidden\n.text\nret\n").unwrap_err();
-        assert!(err.msg.contains("private extern"), "got: {}", err);
-    }
+    fn assemble_preserves_symbol_attributes_across_definition_states() {
+        let obj = assemble_source(
+            ".weak_reference _section_weak_ref\n\
+             .weak_reference _absolute_weak_ref\n\
+             .private_extern _undefined_private\n\
+             .weak_definition _undefined_weak_def\n\
+             .private_extern _common_private\n\
+             .weak_definition _common_weak_def\n\
+             .text\n\
+             _section_weak_ref:\n\
+             ret\n\
+             .set _absolute_weak_ref, 7\n\
+             .comm _common_private, 8, 3\n\
+             .comm _common_weak_def, 16, 4\n",
+        )
+        .unwrap();
 
-    #[test]
-    fn assemble_weak_definition_requires_definition() {
-        let err = assemble_source(".weak_definition _entry\n.text\nret\n").unwrap_err();
-        assert!(err.msg.contains("weak definition"), "got: {}", err);
-    }
+        let mut bytes = Vec::new();
+        write_macho(&obj, &mut bytes).unwrap();
+        let (symoff, nsyms, stroff, _) = parse_symtab_info(&bytes);
+        let symbol_fields = |name: &str| {
+            let base = (0..nsyms)
+                .map(|index| symoff + index * 16)
+                .find(|&base| {
+                    let strx = u32::from_le_bytes(bytes[base..base + 4].try_into().expect("strx"));
+                    symbol_name_at(&bytes, stroff, strx) == name
+                })
+                .unwrap_or_else(|| panic!("missing symbol {name}"));
+            (
+                bytes[base + 4],
+                bytes[base + 5],
+                u16::from_le_bytes(bytes[base + 6..base + 8].try_into().expect("n_desc")),
+                u64::from_le_bytes(bytes[base + 8..base + 16].try_into().expect("n_value")),
+            )
+        };
 
-    #[test]
-    fn assemble_weak_reference_requires_undefined_symbol() {
-        let err = assemble_source(".weak_reference _helper\n.text\n_helper:\nret\n").unwrap_err();
-        assert!(err.msg.contains("must remain undefined"), "got: {}", err);
+        assert_eq!(symbol_fields("_section_weak_ref"), (0x0e, 1, 0x0040, 0));
+        assert_eq!(symbol_fields("_absolute_weak_ref"), (0x02, 0, 0x0060, 7));
+        assert_eq!(symbol_fields("_common_private"), (0x11, 0, 0x0300, 8));
+        assert_eq!(symbol_fields("_common_weak_def"), (0x01, 0, 0x0480, 16));
+        assert_eq!(symbol_fields("_undefined_private"), (0x11, 0, 0, 0));
+        assert_eq!(symbol_fields("_undefined_weak_def"), (0x01, 0, 0x0080, 0));
     }
 
     #[test]
