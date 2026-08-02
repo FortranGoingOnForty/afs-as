@@ -1940,13 +1940,14 @@ impl Assembler {
         if self.labels.contains_key(name) || self.absolute_symbol_names.contains(name) {
             return Err(AsmError(format!("duplicate symbol '{}'", name)));
         }
-        if self
-            .common_symbols
-            .insert(name.to_string(), CommonSymbol { size, align_pow2 })
-            .is_some()
-        {
-            return Err(AsmError(format!("duplicate common symbol '{}'", name)));
+        if let Some(common) = self.common_symbols.get_mut(name) {
+            common.size = common.size.max(size);
+            common.align_pow2 = common.align_pow2.max(align_pow2);
+            return Ok(());
         }
+
+        self.common_symbols
+            .insert(name.to_string(), CommonSymbol { size, align_pow2 });
         self.note_symbol(name);
         Ok(())
     }
@@ -3788,6 +3789,44 @@ mod tests {
         assert_eq!(
             text_bytes(&obj),
             Inst::Ret { rn: X30 }.encode().to_le_bytes()
+        );
+    }
+
+    #[test]
+    fn assemble_repeated_comm_merges_size_and_alignment_maxima() {
+        let obj = assemble_source(
+            ".comm _merged, 8, 2\n\
+             .comm _merged, 4, 5\n\
+             .comm _merged, 32, 1\n\
+             .comm _merged, 32, 5\n\
+             .text\n\
+             ret\n",
+        )
+        .unwrap();
+        let matching: Vec<_> = obj
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.name == "_merged")
+            .collect();
+
+        assert_eq!(matching.len(), 1);
+        assert!(matching[0].global);
+        assert!(matching[0].undefined);
+        assert!(matching[0].common);
+        assert_eq!(matching[0].value, 32);
+        assert_eq!(matching[0].common_align_pow2, 5);
+    }
+
+    #[test]
+    fn assemble_repeated_comm_rejects_alignment_above_macho_limit() {
+        let err = assemble_source(".comm _common, 8, 15\n.comm _common, 16, 16\n")
+            .expect_err("alignment power 16 must be rejected");
+
+        assert_eq!(err.line, Some(2));
+        assert_eq!(err.col, Some(1));
+        assert_eq!(
+            err.msg,
+            "common symbol '_common' alignment power 16 too large (max 15)"
         );
     }
 
