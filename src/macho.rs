@@ -72,6 +72,10 @@ const LINKEDIT_DATA_CMD_SIZE: u32 = 16;
 const NLIST_SIZE: u32 = 16;
 const RELOC_SIZE: u32 = 8;
 
+pub const PACKED_VERSION_MAJOR_MAX: u32 = 0xffff;
+pub const PACKED_VERSION_MINOR_MAX: u32 = 0xff;
+pub const PACKED_VERSION_PATCH_MAX: u32 = 0xff;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildVersion {
     pub platform: u32,
@@ -85,10 +89,18 @@ impl Default for BuildVersion {
             platform: PLATFORM_MACOS,
             // Implicit metadata is a target policy, not a property of the host
             // running the assembler. Use `.build_version` to select another target.
-            minos: pack_version(15, 0, 0),
+            minos: pack_version(15, 0, 0)
+                .expect("fixed default version must fit Mach-O's 16.8.8 encoding"),
             sdk: 0,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VersionComponentOverflow {
+    pub component: &'static str,
+    pub value: u32,
+    pub max: u32,
 }
 
 /// A symbol in the object file.
@@ -915,8 +927,22 @@ fn checked_align_value(value: u64, power: u32) -> Option<u64> {
         .map(|value| value & !(alignment - 1))
 }
 
-pub fn pack_version(major: u32, minor: u32, patch: u32) -> u32 {
-    (major << 16) | (minor << 8) | patch
+pub fn pack_version(major: u32, minor: u32, patch: u32) -> Result<u32, VersionComponentOverflow> {
+    for (component, value, max) in [
+        ("major", major, PACKED_VERSION_MAJOR_MAX),
+        ("minor", minor, PACKED_VERSION_MINOR_MAX),
+        ("patch", patch, PACKED_VERSION_PATCH_MAX),
+    ] {
+        if value > max {
+            return Err(VersionComponentOverflow {
+                component,
+                value,
+                max,
+            });
+        }
+    }
+
+    Ok((major << 16) | (minor << 8) | patch)
 }
 
 /// Write N zero bytes without heap allocation.
@@ -1841,9 +1867,41 @@ mod tests {
     }
 
     #[test]
-    fn version_packing() {
-        assert_eq!(pack_version(15, 0, 0), 0x000F0000);
-        assert_eq!(pack_version(14, 5, 1), 0x000E0501);
+    fn version_packing_checks_component_widths() {
+        assert_eq!(pack_version(15, 0, 0), Ok(0x000F0000));
+        assert_eq!(pack_version(14, 5, 1), Ok(0x000E0501));
+        assert_eq!(
+            pack_version(
+                PACKED_VERSION_MAJOR_MAX,
+                PACKED_VERSION_MINOR_MAX,
+                PACKED_VERSION_PATCH_MAX
+            ),
+            Ok(u32::MAX)
+        );
+        assert_eq!(
+            pack_version(PACKED_VERSION_MAJOR_MAX + 1, 0, 0),
+            Err(VersionComponentOverflow {
+                component: "major",
+                value: PACKED_VERSION_MAJOR_MAX + 1,
+                max: PACKED_VERSION_MAJOR_MAX,
+            })
+        );
+        assert_eq!(
+            pack_version(0, PACKED_VERSION_MINOR_MAX + 1, 0),
+            Err(VersionComponentOverflow {
+                component: "minor",
+                value: PACKED_VERSION_MINOR_MAX + 1,
+                max: PACKED_VERSION_MINOR_MAX,
+            })
+        );
+        assert_eq!(
+            pack_version(0, 0, PACKED_VERSION_PATCH_MAX + 1),
+            Err(VersionComponentOverflow {
+                component: "patch",
+                value: PACKED_VERSION_PATCH_MAX + 1,
+                max: PACKED_VERSION_PATCH_MAX,
+            })
+        );
     }
 
     #[test]
@@ -1852,7 +1910,7 @@ mod tests {
             BuildVersion::default(),
             BuildVersion {
                 platform: PLATFORM_MACOS,
-                minos: pack_version(15, 0, 0),
+                minos: pack_version(15, 0, 0).unwrap(),
                 sdk: 0,
             }
         );
@@ -1875,8 +1933,8 @@ mod tests {
         let mut obj = ObjectFile::new();
         obj.build_version = BuildVersion {
             platform: PLATFORM_MACOS,
-            minos: pack_version(11, 0, 0),
-            sdk: pack_version(15, 5, 0),
+            minos: pack_version(11, 0, 0).unwrap(),
+            sdk: pack_version(15, 5, 0).unwrap(),
         };
 
         let mut buf = Vec::new();
@@ -1903,8 +1961,8 @@ mod tests {
         ]);
 
         assert_eq!(platform, PLATFORM_MACOS);
-        assert_eq!(minos, pack_version(11, 0, 0));
-        assert_eq!(sdk, pack_version(15, 5, 0));
+        assert_eq!(minos, pack_version(11, 0, 0).unwrap());
+        assert_eq!(sdk, pack_version(15, 5, 0).unwrap());
     }
 
     #[test]

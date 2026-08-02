@@ -7,6 +7,7 @@
 use crate::encode::{AddrExtend, BarrierOpt, Inst, RegExtend, RegShift};
 use crate::expr::{self, Expr, SymbolModifier};
 use crate::lex::{LexError, Lexer, Tok, Token};
+use crate::macho::{PACKED_VERSION_MAJOR_MAX, PACKED_VERSION_MINOR_MAX, PACKED_VERSION_PATCH_MAX};
 use crate::reg::*;
 
 use std::collections::BTreeMap;
@@ -1042,11 +1043,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_version_triple(&mut self, context: &str) -> Result<VersionTriple, ParseError> {
-        let major = self.parse_version_component(context)?;
+        let major = self.parse_version_component(context, "major", PACKED_VERSION_MAJOR_MAX)?;
         self.expect(&Tok::Comma)?;
-        let minor = self.parse_version_component(context)?;
+        let minor = self.parse_version_component(context, "minor", PACKED_VERSION_MINOR_MAX)?;
         let patch = if self.eat(&Tok::Comma) {
-            self.parse_version_component(context)?
+            self.parse_version_component(context, "patch", PACKED_VERSION_PATCH_MAX)?
         } else {
             0
         };
@@ -1057,16 +1058,22 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_version_component(&mut self, context: &str) -> Result<u32, ParseError> {
+    fn parse_version_component(
+        &mut self,
+        context: &str,
+        component: &str,
+        max: u32,
+    ) -> Result<u32, ParseError> {
         match self.peek().clone() {
             Tok::Integer(value) if value >= 0 => {
+                if value > i64::from(max) {
+                    return Err(self.err(format!(
+                        "{} {} component {} exceeds {}",
+                        context, component, value, max
+                    )));
+                }
                 self.advance();
-                u32::try_from(value).map_err(|_| {
-                    self.err(format!(
-                        "{} component {} does not fit in u32",
-                        context, value
-                    ))
-                })
+                Ok(value as u32)
             }
             Tok::Integer(value) => Err(self.err(format!(
                 "{} component must be non-negative, got {}",

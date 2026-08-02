@@ -2288,6 +2288,15 @@ impl Assembler {
         }
     }
 
+    fn pack_build_version(version: parse::VersionTriple, context: &str) -> Result<u32, AsmError> {
+        macho::pack_version(version.major, version.minor, version.patch).map_err(|error| {
+            AsmError(format!(
+                "{} {} component {} exceeds {}",
+                context, error.component, error.value, error.max
+            ))
+        })
+    }
+
     fn build_version_command(&self) -> Result<BuildVersion, AsmError> {
         let Some(build_version) = &self.build_version else {
             return Ok(BuildVersion::default());
@@ -2302,18 +2311,17 @@ impl Assembler {
                 )));
             }
         };
+        let minos = Self::pack_build_version(build_version.minos, "build version minimum OS")?;
+        let sdk = build_version
+            .sdk
+            .map(|sdk| Self::pack_build_version(sdk, "build version SDK"))
+            .transpose()?
+            .unwrap_or(0);
 
         Ok(BuildVersion {
             platform,
-            minos: macho::pack_version(
-                build_version.minos.major,
-                build_version.minos.minor,
-                build_version.minos.patch,
-            ),
-            sdk: build_version
-                .sdk
-                .map(|sdk| macho::pack_version(sdk.major, sdk.minor, sdk.patch))
-                .unwrap_or(0),
+            minos,
+            sdk,
         })
     }
 
@@ -4124,8 +4132,67 @@ mod tests {
             assemble_source(".text\nret\n.build_version macos, 11, 0 sdk_version 15, 5\n").unwrap();
 
         assert_eq!(obj.build_version.platform, macho::PLATFORM_MACOS);
-        assert_eq!(obj.build_version.minos, macho::pack_version(11, 0, 0));
-        assert_eq!(obj.build_version.sdk, macho::pack_version(15, 5, 0));
+        assert_eq!(
+            obj.build_version.minos,
+            macho::pack_version(11, 0, 0).unwrap()
+        );
+        assert_eq!(
+            obj.build_version.sdk,
+            macho::pack_version(15, 5, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn assemble_build_version_accepts_maximum_packed_components() {
+        let obj =
+            assemble_source(".build_version macos, 65535, 255, 255 sdk_version 65535, 255, 255\n")
+                .unwrap();
+
+        assert_eq!(obj.build_version.minos, u32::MAX);
+        assert_eq!(obj.build_version.sdk, u32::MAX);
+    }
+
+    #[test]
+    fn assemble_rejects_build_version_component_overflow() {
+        let cases = [
+            (
+                ".build_version macos, 65536, 0, 0\n",
+                23,
+                "build version minimum OS major component 65536 exceeds 65535",
+            ),
+            (
+                ".build_version macos, 1, 256, 0\n",
+                26,
+                "build version minimum OS minor component 256 exceeds 255",
+            ),
+            (
+                ".build_version macos, 1, 0, 256\n",
+                29,
+                "build version minimum OS patch component 256 exceeds 255",
+            ),
+            (
+                ".build_version macos, 1, 2, 3 sdk_version 65536, 0, 0\n",
+                43,
+                "build version SDK major component 65536 exceeds 65535",
+            ),
+            (
+                ".build_version macos, 1, 2, 3 sdk_version 1, 256, 0\n",
+                46,
+                "build version SDK minor component 256 exceeds 255",
+            ),
+            (
+                ".build_version macos, 1, 2, 3 sdk_version 1, 0, 256\n",
+                49,
+                "build version SDK patch component 256 exceeds 255",
+            ),
+        ];
+
+        for (source, col, expected) in cases {
+            let err = assemble_source(source).expect_err(source);
+            assert_eq!(err.line, Some(1), "source: {source}");
+            assert_eq!(err.col, Some(col), "source: {source}");
+            assert_eq!(err.msg, expected, "source: {source}");
+        }
     }
 
     #[test]
