@@ -60,6 +60,7 @@ pub const STT_NOTYPE: u8 = 0;
 pub const STT_OBJECT: u8 = 1;
 pub const STT_FUNC: u8 = 2;
 pub const STT_SECTION: u8 = 3;
+pub const STT_FILE: u8 = 4;
 
 pub const STV_DEFAULT: u8 = 0;
 pub const STV_HIDDEN: u8 = 2;

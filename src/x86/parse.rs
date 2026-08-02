@@ -734,7 +734,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
             };
             Directive::Comm { sym, size, align }
         }
-        "file" => Directive::File(args.trim_matches('"').to_string()),
+        "file" => Directive::File(parse_file_name(args).map_err(&err)?),
         other => {
             return Err(err(format!(
                 "unsupported directive '.{}' — the x86 dialect grows only with corpus evidence",
@@ -756,6 +756,39 @@ fn parse_string_operands(s: &str) -> Result<Vec<Vec<u8>>, String> {
     parse_string_operands_bytes(s.as_bytes())
 }
 
+fn parse_file_name(s: &str) -> Result<String, String> {
+    let source = trim_ascii(s.as_bytes());
+    let (literal, rest) = split_leading_string_literal(source)
+        .map_err(|_| ".file requires one quoted file name".to_string())?;
+    if !trim_ascii(rest).is_empty() {
+        return Err(".file requires one quoted file name".into());
+    }
+    String::from_utf8(parse_string_lit_bytes(literal)?)
+        .map_err(|_| ".file name is not valid UTF-8".into())
+}
+
+fn split_leading_string_literal(s: &[u8]) -> Result<(&[u8], &[u8]), String> {
+    if !s.starts_with(b"\"") {
+        return Err(format!(
+            "expected string literal, got '{}'",
+            String::from_utf8_lossy(s)
+        ));
+    }
+
+    let mut escaped = false;
+    for (index, &byte) in s.iter().enumerate().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == b'"' {
+            let end = index + 1;
+            return Ok((&s[..end], &s[end..]));
+        }
+    }
+    Err("unterminated string literal".into())
+}
+
 fn parse_string_operands_bytes(s: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     let mut rest = trim_ascii(s);
     let mut operands = Vec::new();
@@ -772,29 +805,10 @@ fn parse_string_operands_bytes(s: &[u8]) -> Result<Vec<Vec<u8>>, String> {
             rest = after_comma;
             continue;
         }
-        if !rest.starts_with(b"\"") {
-            return Err(format!(
-                "expected string literal, got '{}'",
-                String::from_utf8_lossy(rest)
-            ));
-        }
-
-        let mut escaped = false;
-        let mut literal_end = None;
-        for (index, &byte) in rest.iter().enumerate().skip(1) {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                literal_end = Some(index + 1);
-                break;
-            }
-        }
-        let literal_end = literal_end.ok_or_else(|| "unterminated string literal".to_string())?;
-        current.extend_from_slice(&parse_string_lit_bytes(&rest[..literal_end])?);
+        let (literal, after_literal) = split_leading_string_literal(rest)?;
+        current.extend_from_slice(&parse_string_lit_bytes(literal)?);
         have_current = true;
-        rest = trim_ascii_start(&rest[literal_end..]);
+        rest = trim_ascii_start(after_literal);
         if !rest.is_empty() && !rest.starts_with(b",") && !rest.starts_with(b"\"") {
             return Err(format!(
                 "expected ',' or string literal, got '{}'",

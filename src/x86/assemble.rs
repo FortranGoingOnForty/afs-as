@@ -2,7 +2,7 @@
 //!
 //! Pass 1 builds per-section item streams (encoded bytes, relaxable
 //! branches, alignment marks, data) and the symbol bookkeeping
-//! (.globl/.local/.weak/.type/.size/.comm). The relaxation pass then
+//! (.globl/.local/.weak/.type/.size/.comm/.file). The relaxation pass then
 //! runs a fixed-point over each text section: every intra-section
 //! jmp/jcc starts optimistically at rel8 and grows to rel32 until no
 //! displacement overflows — growth is monotonic, so it terminates.
@@ -23,8 +23,8 @@ use crate::assemble::AsmError;
 
 use super::super::elf::{
     self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, EM_X86_64, SHF_ALLOC,
-    SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK, STT_FUNC,
-    STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
+    SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK, STT_FILE,
+    STT_FUNC, STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
 };
 use super::encode::{encode, InsnReloc};
 use super::parse::{parse_bytes, DataItem, Directive, SizeArg, Stmt, SymKind};
@@ -182,6 +182,10 @@ pub fn assemble_x86_bytes_with_provenance(
     let mut current: usize = usize::MAX;
     let mut syminfo: HashMap<String, SymInfo> = HashMap::new();
     let mut gnu_stack_flags: Option<u64> = None;
+    // The first directive or definition that makes a named ELF symbol exist.
+    // GNU as uses this order to interleave local symbols with `.file` groups.
+    let mut symbol_creation_order: HashMap<String, usize> = HashMap::new();
+    let mut file_symbols: Vec<(usize, String)> = Vec::new();
     // (sym, size, align, line, column)
     let mut commons: Vec<(String, u64, u64, u32, u32)> = Vec::new();
     let mut common_names: HashSet<String> = HashSet::new();
@@ -218,11 +222,14 @@ pub fn assemble_x86_bytes_with_provenance(
     ensure_stream(".data", 0, &mut streams, &mut stream_index);
     ensure_stream(".bss", 0, &mut streams, &mut stream_index);
 
-    for located in &stmts {
+    for (statement_order, located) in stmts.iter().enumerate() {
         let line = located.line;
         let col = located.col;
         match &located.stmt {
             Stmt::Label(name) => {
+                symbol_creation_order
+                    .entry(name.clone())
+                    .or_insert(statement_order);
                 if common_names.contains(name) {
                     return Err(err(
                         line,
@@ -247,11 +254,22 @@ pub fn assemble_x86_bytes_with_provenance(
                 Directive::NoteGnuStack { executable } => {
                     gnu_stack_flags.get_or_insert(if *executable { SHF_EXECINSTR } else { 0 });
                 }
-                Directive::Globl(s) => syminfo.entry(s.clone()).or_default().globl = true,
+                Directive::Globl(s) => {
+                    symbol_creation_order
+                        .entry(s.clone())
+                        .or_insert(statement_order);
+                    syminfo.entry(s.clone()).or_default().globl = true;
+                }
                 Directive::Extern(s) => {
+                    symbol_creation_order
+                        .entry(s.clone())
+                        .or_insert(statement_order);
                     syminfo.entry(s.clone()).or_default();
                 }
                 Directive::Weak(s) => {
+                    symbol_creation_order
+                        .entry(s.clone())
+                        .or_insert(statement_order);
                     if global_common_names.contains(s) {
                         return Err(err(
                             line,
@@ -261,14 +279,25 @@ pub fn assemble_x86_bytes_with_provenance(
                     }
                     syminfo.entry(s.clone()).or_default().weak = true;
                 }
-                Directive::Local(s) => syminfo.entry(s.clone()).or_default().local = true,
+                Directive::Local(s) => {
+                    symbol_creation_order
+                        .entry(s.clone())
+                        .or_insert(statement_order);
+                    syminfo.entry(s.clone()).or_default().local = true;
+                }
                 Directive::Type { sym, kind } => {
+                    symbol_creation_order
+                        .entry(sym.clone())
+                        .or_insert(statement_order);
                     syminfo.entry(sym.clone()).or_default().typ = Some(match kind {
                         SymKind::Function => STT_FUNC,
                         SymKind::Object => STT_OBJECT,
                     })
                 }
                 Directive::Size { sym, arg } => {
+                    symbol_creation_order
+                        .entry(sym.clone())
+                        .or_insert(statement_order);
                     if matches!(arg, SizeArg::DotMinus(_)) && current == usize::MAX {
                         return Err(err(
                             line,
@@ -288,6 +317,9 @@ pub fn assemble_x86_bytes_with_provenance(
                     }
                 }
                 Directive::Comm { sym, size, align } => {
+                    symbol_creation_order
+                        .entry(sym.clone())
+                        .or_insert(statement_order);
                     if label_section.contains_key(sym) {
                         return Err(err(
                             line,
@@ -317,7 +349,7 @@ pub fn assemble_x86_bytes_with_provenance(
                     common_names.insert(sym.clone());
                     commons.push((sym.clone(), *size, *align, line, col))
                 }
-                Directive::File(_) => {}
+                Directive::File(name) => file_symbols.push((statement_order, name.clone())),
                 Directive::P2Align {
                     pow,
                     fill,
@@ -1058,6 +1090,62 @@ pub fn assemble_x86_bytes_with_provenance(
             value: 0,
             size,
         });
+    }
+
+    if !file_symbols.is_empty() {
+        // An STT_FILE entry begins a group of subsequent local symbols. GNU as
+        // preserves those creation boundaries, except that the first FILE is
+        // promoted ahead of locals created before any `.file`. Keep globals in
+        // their existing deterministic order; the ELF writer partitions them
+        // after all locals and remaps relocation indexes later.
+        let existing_symbols = std::mem::take(&mut obj.symbols);
+        let mut local_symbols = Vec::new();
+        let mut nonlocal_symbols = Vec::new();
+        for (serial, symbol) in existing_symbols.into_iter().enumerate() {
+            if symbol.bind == STB_LOCAL {
+                let creation_order = symbol_creation_order
+                    .get(&symbol.name)
+                    .copied()
+                    .unwrap_or(usize::MAX);
+                local_symbols.push((creation_order, serial, None, symbol));
+            } else {
+                nonlocal_symbols.push(symbol);
+            }
+        }
+        let serial_base = local_symbols.len();
+        for (file_index, (creation_order, name)) in file_symbols.into_iter().enumerate() {
+            local_symbols.push((
+                creation_order,
+                serial_base + file_index,
+                Some(file_index),
+                Symbol {
+                    name,
+                    bind: STB_LOCAL,
+                    typ: STT_FILE,
+                    vis: STV_DEFAULT,
+                    place: SymbolPlace::Abs,
+                    value: 0,
+                    size: 0,
+                },
+            ));
+        }
+        local_symbols.sort_by_key(|(creation_order, serial, _, _)| (*creation_order, *serial));
+        let first_file = local_symbols
+            .iter()
+            .position(|(_, _, file_index, _)| *file_index == Some(0))
+            .expect("non-empty file symbol list contains its first entry");
+        let first_file = local_symbols.remove(first_file);
+        local_symbols.insert(0, first_file);
+
+        obj.symbols
+            .extend(local_symbols.into_iter().map(|(_, _, _, symbol)| symbol));
+        obj.symbols.extend(nonlocal_symbols);
+        model_sym_index.clear();
+        for (symbol_index, symbol) in obj.symbols.iter().enumerate() {
+            if symbol.typ != STT_FILE {
+                model_sym_index.insert(symbol.name.clone(), symbol_index);
+            }
+        }
     }
 
     // Relocations. gas's rules for defined LOCAL targets (.L*,
