@@ -131,7 +131,9 @@ pub enum Directive {
     Comm {
         sym: String,
         size: u64,
-        align: u64,
+        /// `None` selects the ELF destination default. GNU `as` also treats
+        /// an explicit zero alignment as this omitted form.
+        align: Option<u64>,
     },
     File(String),
     NoteGnuStack {
@@ -726,11 +728,12 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                 .ok_or_else(|| err(format!("bad .comm size in '{}'", args)))?
                 as u64;
             let align = match it.next() {
-                None => size.clamp(1, 16).next_power_of_two(),
-                Some(a) => parse_int(a)
-                    .filter(|v| *v > 0)
-                    .ok_or_else(|| err(format!("bad .comm align in '{}'", args)))?
-                    as u64,
+                None => None,
+                Some(a) => match parse_int(a) {
+                    Some(0) => None,
+                    Some(value) if value > 0 => Some(value as u64),
+                    _ => return Err(err(format!("bad .comm align in '{}'", args))),
+                },
             };
             Directive::Comm { sym, size, align }
         }
@@ -972,7 +975,7 @@ mod tests {
             Stmt::Directive(Directive::Comm {
                 sym: "blk_".into(),
                 size: 1024,
-                align: 32
+                align: Some(32)
             })
         );
         assert_eq!(

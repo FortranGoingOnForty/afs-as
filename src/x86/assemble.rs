@@ -186,8 +186,8 @@ pub fn assemble_x86_bytes_with_provenance(
     // GNU as uses this order to interleave local symbols with `.file` groups.
     let mut symbol_creation_order: HashMap<String, usize> = HashMap::new();
     let mut file_symbols: Vec<(usize, String)> = Vec::new();
-    // (sym, size, align, line, column)
-    let mut commons: Vec<(String, u64, u64, u32, u32)> = Vec::new();
+    // (sym, size, explicit alignment, line, column)
+    let mut commons: Vec<(String, u64, Option<u64>, u32, u32)> = Vec::new();
     let mut common_names: HashSet<String> = HashSet::new();
     let mut global_common_names: HashSet<String> = HashSet::new();
     let mut local_common_names: HashSet<String> = HashSet::new();
@@ -899,6 +899,10 @@ pub fn assemble_x86_bytes_with_provenance(
         }
         for (sym, size, align, line, col) in &commons {
             if syminfo.get(sym).is_some_and(|i| i.local) {
+                // Local COMMON storage is allocated directly in `.bss`, whose
+                // omitted alignment default is one byte. This differs from
+                // the size-derived default carried by global SHN_COMMON.
+                let align = align.unwrap_or(1);
                 if !align.is_power_of_two() {
                     return Err(err(
                         *line,
@@ -910,13 +914,13 @@ pub fn assemble_x86_bytes_with_provenance(
                     ));
                 }
                 let bss = &mut obj.sections[model_sec_index[".bss"]];
-                let off = checked_align_up(bss.nobits_size, (*align).max(1)).ok_or_else(|| {
+                let off = checked_align_up(bss.nobits_size, align).ok_or_else(|| {
                     err(*line, *col, "local COMMON alignment overflows u64".into())
                 })?;
                 bss.nobits_size = off
                     .checked_add(*size)
                     .ok_or_else(|| err(*line, *col, "local COMMON size overflows u64".into()))?;
-                bss.sh_addralign = bss.sh_addralign.max(*align);
+                bss.sh_addralign = bss.sh_addralign.max(align);
                 local_bss.insert(sym.clone(), (off, *size));
             }
         }
@@ -1037,9 +1041,10 @@ pub fn assemble_x86_bytes_with_provenance(
         if local_bss.contains_key(sym) {
             continue;
         }
+        let align = align.unwrap_or_else(|| default_common_alignment(*size));
         if let Some(&symbol_index) = model_sym_index.get(sym) {
             let symbol = &mut obj.symbols[symbol_index];
-            symbol.value = symbol.value.max(*align);
+            symbol.value = symbol.value.max(align);
             if symbol.size == 0 {
                 symbol.size = *size;
             }
@@ -1052,7 +1057,7 @@ pub fn assemble_x86_bytes_with_provenance(
             typ: STT_OBJECT,
             vis: STV_DEFAULT,
             place: SymbolPlace::Common,
-            value: *align,
+            value: align,
             size: *size,
         });
     }
@@ -1323,6 +1328,10 @@ fn checked_align_up(value: u64, alignment: u64) -> Option<u64> {
     } else {
         value.checked_add(alignment - remainder)
     }
+}
+
+fn default_common_alignment(size: u64) -> u64 {
+    size.clamp(1, 16).next_power_of_two()
 }
 
 /// Padding a `.p2align pow` inserts at `pos`, honoring a `.p2align N,,M`
