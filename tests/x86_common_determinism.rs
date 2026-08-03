@@ -4,7 +4,7 @@ mod celf;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use afs_as::elf::{parse_elf, ELFOSABI_FREEBSD, ELFOSABI_NONE};
+use afs_as::elf::{parse_elf, SymbolPlace, ELFOSABI_FREEBSD, ELFOSABI_NONE};
 use afs_as::x86::assemble::assemble_x86;
 
 const SOURCE: &str = ".text\n\
@@ -143,19 +143,173 @@ fn symbol_creating_directives_set_local_common_order() {
 }
 
 #[test]
-fn duplicate_local_commons_keep_one_final_allocation_symbol() {
-    let source = ".local duplicate\n.comm duplicate,8,8\n.comm duplicate,3,16\n";
-    let obj = assemble_x86(source, host_osabi()).expect("assemble duplicate common");
-    let bss = obj.section_by_name(".bss").expect("bss section");
-    assert_eq!((bss.nobits_size, bss.sh_addralign), (19, 16));
+fn duplicate_local_commons_are_rejected_like_gas() {
+    let source = ".local duplicate\n.comm duplicate,8,8\n    .comm duplicate,3,16\n";
+    let err = assemble_x86(source, host_osabi()).expect_err("duplicate local COMMON assembled");
+    assert_eq!(err.line, Some(3));
+    assert_eq!(err.col, Some(5));
+    assert_eq!(err.msg, "symbol 'duplicate' is already defined");
 
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_common_determinism",
+            "duplicate_local_commons_are_rejected_like_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_duplicate_local_common");
+    let source_path = tmp.path(".s");
+    let object_path = tmp.path(".o");
+    std::fs::write(&source_path, source).expect("write source");
+    let output = Command::new(&gas)
+        .arg("--64")
+        .arg("-o")
+        .arg(&object_path)
+        .arg(&source_path)
+        .output()
+        .expect("run gas");
+    assert!(
+        !output.status.success(),
+        "gas accepted duplicate local COMMON"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("already defined"),
+        "unexpected gas diagnostic: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn local_common_alignment_must_be_a_power_of_two() {
+    let src = ".local oddalign\n    .comm oddalign,8,3\n";
+    let err = assemble_x86(src, host_osabi()).expect_err("odd local COMMON alignment assembled");
+
+    assert_eq!(err.line, Some(2));
+    assert_eq!(err.col, Some(5));
+    assert_eq!(
+        err.msg,
+        "local COMMON 'oddalign' alignment 3 is not a power of two"
+    );
+}
+
+#[test]
+fn valid_local_and_non_power_of_two_global_common_alignments_are_preserved() {
+    let src =
+        ".bss\n.byte 0\n.local local_aligned\n.comm local_aligned,8,32\n.comm global_unusual,8,3\n";
+    let obj = assemble_x86(src, host_osabi()).expect("assemble valid COMMON alignments");
+    let bss = obj.section_by_name(".bss").expect("bss section");
+    assert_eq!((bss.nobits_size, bss.sh_addralign), (40, 32));
+    let bss_index = obj
+        .sections
+        .iter()
+        .position(|section| section.name == ".bss")
+        .expect("bss section index");
+
+    let local = obj
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "local_aligned")
+        .expect("local COMMON symbol");
+    assert_eq!(
+        (local.place, local.value, local.size),
+        (SymbolPlace::Section(bss_index), 32, 8)
+    );
+
+    let global = obj
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "global_unusual")
+        .expect("global COMMON symbol");
+    assert_eq!(
+        (global.place, global.value, global.size),
+        (SymbolPlace::Common, 3, 8)
+    );
+}
+
+#[test]
+fn gas_matches_local_common_alignment_rules() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_common_determinism",
+            "gas_matches_local_common_alignment_rules",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_common_alignment");
+
+    for (index, (src, accepted)) in [
+        (".local x\n.comm x,8,2\n", true),
+        (".local x\n.comm x,8,3\n", false),
+        (".local x\n.comm x,8,4\n", true),
+        (".comm x,8,3\n", true),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let source_path = tmp.path(&format!("_{index}.s"));
+        let object_path = tmp.path(&format!("_{index}.o"));
+        std::fs::write(&source_path, src).expect("write source");
+        let output = Command::new(&gas)
+            .arg("--64")
+            .arg("-o")
+            .arg(&object_path)
+            .arg(&source_path)
+            .output()
+            .expect("run gas");
+        assert_eq!(
+            output.status.success(),
+            *accepted,
+            "unexpected gas result for {src:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn repeated_global_commons_emit_one_symbol_and_relocation_target() {
+    let source = ".comm duplicate,8,8\n\
+                  .comm duplicate,3,16\n\
+                  .data\n\
+                  .quad duplicate\n";
+    let obj = assemble_x86(source, host_osabi()).expect("assemble repeated global common");
     let symbols: Vec<_> = obj
         .symbols
         .iter()
-        .filter(|symbol| symbol.name == "duplicate")
+        .enumerate()
+        .filter(|(_, symbol)| symbol.name == "duplicate")
         .collect();
-    assert_eq!(symbols.len(), 1);
-    assert_eq!((symbols[0].value, symbols[0].size), (16, 3));
+
+    assert_eq!(symbols.len(), 1, "COMMON must have one symbol-table entry");
+    let (symbol_index, symbol) = symbols[0];
+    assert_eq!((symbol.value, symbol.size), (16, 8));
+
+    let data = obj.section_by_name(".data").expect("data section");
+    assert_eq!(data.relas.len(), 1);
+    assert_eq!(data.relas[0].symbol, symbol_index);
+}
+
+#[test]
+fn repeated_global_commons_preserve_order_and_gnu_size_rules() {
+    let source = ".comm alpha,0,1\n\
+                  .comm bravo,7,4\n\
+                  .comm alpha,6,32\n\
+                  .comm bravo,0,16\n\
+                  .comm charlie,4,2\n\
+                  .comm charlie,4,8\n";
+    let obj = assemble_x86(source, host_osabi()).expect("assemble repeated global commons");
+    let metadata: Vec<_> = obj
+        .symbols
+        .iter()
+        .filter(|symbol| matches!(symbol.place, afs_as::elf::SymbolPlace::Common))
+        .map(|symbol| (symbol.name.as_str(), symbol.value, symbol.size))
+        .collect();
+
+    assert_eq!(
+        metadata,
+        [("alpha", 32, 6), ("bravo", 16, 7), ("charlie", 8, 4)]
+    );
 }
 
 #[test]

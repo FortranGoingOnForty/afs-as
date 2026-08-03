@@ -47,6 +47,20 @@ fn snapshot_unsupported_directive() {
 }
 
 #[test]
+fn snapshot_unsupported_arm64_string_escapes() {
+    run_failure_snapshot(
+        "unsupported-bel-escape.s",
+        ".ascii \"\\a\"\n",
+        "<input>:1:8: error: invalid escape sequence (unrecognized character)\n.ascii \"\\a\"\n       ^\n",
+    );
+    run_failure_snapshot(
+        "unsupported-vertical-tab-escape.s",
+        ".asciz \"\\v\"\n",
+        "<input>:1:8: error: invalid escape sequence (unrecognized character)\n.asciz \"\\v\"\n       ^\n",
+    );
+}
+
+#[test]
 fn snapshot_trailing_arm64_token() {
     run_failure_snapshot(
         "trailing-token.s",
@@ -98,6 +112,15 @@ fn snapshot_unsupported_cfi_directive() {
         "unsupported-cfi.s",
         ".cfi_escape 0x1\n",
         "<input>:1:1: error: unsupported CFI directive '.cfi_escape' (supported: .cfi_startproc, .cfi_endproc, .cfi_def_cfa, .cfi_def_cfa_offset, .cfi_def_cfa_register, .cfi_offset, .cfi_restore, .cfi_adjust_cfa_offset)\n.cfi_escape 0x1\n^\n",
+    );
+}
+
+#[test]
+fn snapshot_unterminated_cfi_proc() {
+    run_failure_snapshot(
+        "unterminated-cfi.s",
+        ".text\n.globl _f\n_f:\n.cfi_startproc\nret\n",
+        "<input>:4:1: error: unterminated .cfi_startproc before end of file\n.cfi_startproc\n^\n",
     );
 }
 
@@ -375,6 +398,11 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "<input>:2:9: error: ldp/stp register pair must use matching register widths\nldp x0, w1, [x2]\n        ^\n",
         ),
         (
+            "pair-identical-gp-destinations.s",
+            "ldp x0, x0, [x2]",
+            "<input>:2:9: error: ldp destination registers must be different\nldp x0, x0, [x2]\n        ^\n",
+        ),
+        (
             "register-offset-stack-pointer.s",
             "ldr x0, [x1, sp]",
             "<input>:2:14: error: register offset does not allow sp\nldr x0, [x1, sp]\n             ^\n",
@@ -518,6 +546,11 @@ fn snapshot_arm64_register_errors_point_to_the_operand() {
             "fp-pair-register-width.s",
             "ldp d0, s1, [x2]",
             "<input>:2:9: error: ldp/stp FP register pair must use matching register widths\nldp d0, s1, [x2]\n        ^\n",
+        ),
+        (
+            "pair-identical-fp-destinations.s",
+            "ldp q0, q0, [x2], #32",
+            "<input>:2:9: error: ldp destination registers must be different\nldp q0, q0, [x2], #32\n        ^\n",
         ),
         (
             "malformed-simd-register.s",

@@ -111,12 +111,12 @@ pub enum SymKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Directive {
-    Text,
-    Data,
-    Bss,
-    /// GNU ELF `.section name[,"flags"[, @progbits|@nobits]]`.
+    /// Switch to a GNU ELF section and one of its assembler-only subsection
+    /// streams. Generic `.section` directives use subsection zero while
+    /// `.text`, `.data`, and `.bss` may select a numbered subsection.
     Section {
         name: String,
+        subsection: u32,
         flags: Option<String>,
         section_type: Option<SectionType>,
     },
@@ -143,8 +143,8 @@ pub enum Directive {
     Short(Vec<DataItem>),
     Long(Vec<DataItem>),
     Quad(Vec<DataItem>),
-    Ascii(Vec<u8>),
-    Asciz(Vec<u8>),
+    Ascii(Vec<Vec<u8>>),
+    Asciz(Vec<Vec<u8>>),
     Space {
         size: u64,
         fill: u8,
@@ -153,7 +153,9 @@ pub enum Directive {
     Comm {
         sym: String,
         size: u64,
-        align: u64,
+        /// `None` selects the ELF destination default. GNU `as` also treats
+        /// an explicit zero alignment as this omitted form.
+        align: Option<u64>,
     },
     File(String),
     NoteGnuStack {
@@ -162,33 +164,46 @@ pub enum Directive {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
+    parse_bytes(src.as_bytes())
+}
+
+/// Parse raw assembler bytes. Grammar outside comments and string literals
+/// must still be valid text, but literal payloads are preserved byte-for-byte.
+pub fn parse_bytes(src: &[u8]) -> Result<Vec<Located>, X86ParseError> {
     let mut out = Vec::new();
-    for (idx, raw) in src.lines().enumerate() {
+    for (idx, raw) in src.split(|byte| *byte == b'\n').enumerate() {
         let line_no = idx as u32 + 1;
-        let mut line = strip_comment(raw);
+        let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+        let mut line = strip_comment_bytes(raw);
         loop {
-            line = line.trim_start();
+            line = trim_ascii_start(line);
             if line.is_empty() {
                 break;
             }
             // Labels: `name:` possibly followed by more on the line.
-            if let Some((label, rest)) = split_label(line) {
+            if let Some((label, rest)) = split_label_bytes(line) {
                 out.push(Located {
                     line: line_no,
-                    col: col_of(raw, line),
-                    stmt: Stmt::Label(label.to_string()),
+                    col: col_of_bytes(raw, line),
+                    stmt: Stmt::Label(
+                        std::str::from_utf8(label)
+                            .expect("label scanner only accepts ASCII")
+                            .to_string(),
+                    ),
                 });
                 line = rest;
                 continue;
             }
-            let stmt = if let Some(rest) = line.strip_prefix('.') {
-                parse_directive(rest, line_no, col_of(raw, line))?
+            let col = col_of_bytes(raw, line);
+            let stmt = if let Some(rest) = line.strip_prefix(b".") {
+                parse_directive_bytes(rest, line_no, col)?
             } else {
-                parse_insn(line, line_no, col_of(raw, line))?
+                let line = decode_grammar(line, line_no, col, "instruction")?;
+                parse_insn(line, line_no, col)?
             };
             out.push(Located {
                 line: line_no,
-                col: col_of(raw, line),
+                col,
                 stmt,
             });
             break;
@@ -197,38 +212,70 @@ pub fn parse(src: &str) -> Result<Vec<Located>, X86ParseError> {
     Ok(out)
 }
 
-fn col_of(raw: &str, rest: &str) -> u32 {
+fn col_of_bytes(raw: &[u8], rest: &[u8]) -> u32 {
     (raw.len() - rest.len()) as u32 + 1
 }
 
-fn strip_comment(line: &str) -> &str {
+fn trim_ascii_start(mut bytes: &[u8]) -> &[u8] {
+    while bytes.first().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[1..];
+    }
+    bytes
+}
+
+fn trim_ascii_end(mut bytes: &[u8]) -> &[u8] {
+    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
+        bytes = &bytes[..bytes.len() - 1];
+    }
+    bytes
+}
+
+fn trim_ascii(bytes: &[u8]) -> &[u8] {
+    trim_ascii_end(trim_ascii_start(bytes))
+}
+
+fn decode_grammar<'a>(
+    bytes: &'a [u8],
+    line: u32,
+    col: u32,
+    context: &str,
+) -> Result<&'a str, X86ParseError> {
+    std::str::from_utf8(bytes).map_err(|error| {
+        X86ParseError::new(
+            line,
+            col.saturating_add(error.valid_up_to() as u32),
+            format!("non-UTF-8 byte in {context}"),
+        )
+    })
+}
+
+fn strip_comment_bytes(line: &[u8]) -> &[u8] {
     // `#` starts a comment outside string literals. The backend never
     // emits `#` inside operands (AT&T immediates use `$`).
     let mut in_str = false;
     let mut esc = false;
-    for (i, c) in line.char_indices() {
-        match c {
-            '\\' if in_str => esc = !esc,
-            '"' if !esc => in_str = !in_str,
-            '#' if !in_str => return &line[..i],
+    for (i, &byte) in line.iter().enumerate() {
+        match byte {
+            b'\\' if in_str => esc = !esc,
+            b'"' if !esc => in_str = !in_str,
+            b'#' if !in_str => return &line[..i],
             _ => esc = false,
         }
     }
     line
 }
 
-fn split_label(line: &str) -> Option<(&str, &str)> {
-    let bytes = line.as_bytes();
+fn split_label_bytes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     let mut end = 0;
-    while end < bytes.len() {
-        let c = bytes[end] as char;
+    while end < line.len() {
+        let c = line[end] as char;
         if c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '$' {
             end += 1;
         } else {
             break;
         }
     }
-    if end == 0 || end >= bytes.len() || bytes[end] != b':' {
+    if end == 0 || end >= line.len() || line[end] != b':' {
         return None;
     }
     Some((&line[..end], &line[end + 1..]))
@@ -389,6 +436,12 @@ fn parse_mem(s: &str, line: u32, col: u32) -> Result<MemOperand, X86ParseError> 
     } else {
         1
     };
+    if parts.len() == 3 && index.is_none() {
+        return Err(err(format!(
+            "memory operand '{}' has a scale but no index",
+            s
+        )));
+    }
     if parts.len() >= 2 && index.is_none() && !parts[1].is_empty() {
         return Err(err(format!("bad index in '{}'", s)));
     }
@@ -513,9 +566,47 @@ fn parse_int(s: &str) -> Option<i64> {
     }
 }
 
+fn parse_subsection(args: &str) -> Result<u32, String> {
+    const MAX_SUBSECTION: i64 = 8192;
+
+    let args = args.trim();
+    if args.is_empty() {
+        return Ok(0);
+    }
+    let value = parse_int(args).ok_or_else(|| {
+        format!("subsection must be an integer literal from 0 to {MAX_SUBSECTION}, got '{args}'")
+    })?;
+    if !(0..=MAX_SUBSECTION).contains(&value) {
+        return Err(format!(
+            "subsection must be an integer literal from 0 to {MAX_SUBSECTION}, got '{args}'"
+        ));
+    }
+    Ok(value as u32)
+}
+
 // -------------------------------------------------------------------
 // Directives
 // -------------------------------------------------------------------
+
+fn parse_directive_bytes(rest: &[u8], line: u32, col: u32) -> Result<Stmt, X86ParseError> {
+    let name_end = rest
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(rest.len());
+    let name = decode_grammar(&rest[..name_end], line, col + 1, "directive name")?;
+    let args = trim_ascii_start(&rest[name_end..]);
+    let err = |msg: String| X86ParseError::new(line, col, msg);
+
+    let directive = match name {
+        "ascii" => Directive::Ascii(parse_string_operands_bytes(args).map_err(&err)?),
+        "asciz" | "string" => Directive::Asciz(parse_string_operands_bytes(args).map_err(&err)?),
+        _ => {
+            let rest = decode_grammar(rest, line, col + 1, "directive")?;
+            return parse_directive(rest, line, col);
+        }
+    };
+    Ok(Stmt::Directive(directive))
+}
 
 fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseError> {
     let err = |msg: String| X86ParseError::new(line, col, msg);
@@ -541,9 +632,12 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
     };
 
     let d = match name {
-        "text" => Directive::Text,
-        "data" => Directive::Data,
-        "bss" => Directive::Bss,
+        "text" | "data" | "bss" => Directive::Section {
+            name: format!(".{name}"),
+            subsection: parse_subsection(args).map_err(&err)?,
+            flags: None,
+            section_type: None,
+        },
         "section" => {
             let mut fields = args.split(',').map(str::trim);
             let sec = fields.next().unwrap_or("").to_string();
@@ -597,6 +691,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                 }
                 Directive::Section {
                     name: sec,
+                    subsection: 0,
                     flags,
                     section_type,
                 }
@@ -672,8 +767,8 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         "short" | "word" | "value" => Directive::Short(data_items(args)?),
         "long" => Directive::Long(data_items(args)?),
         "quad" => Directive::Quad(data_items(args)?),
-        "ascii" => Directive::Ascii(parse_string_lit(args).map_err(&err)?),
-        "asciz" | "string" => Directive::Asciz(parse_string_lit(args).map_err(&err)?),
+        "ascii" => Directive::Ascii(parse_string_operands(args).map_err(&err)?),
+        "asciz" | "string" => Directive::Asciz(parse_string_operands(args).map_err(&err)?),
         "space" | "skip" => {
             let mut parts = args.split(',').map(str::trim);
             let v = parse_int(parts.next().unwrap_or(""))
@@ -696,12 +791,29 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
             }
         }
         "zero" => {
-            let v = parse_int(args.split(',').next().unwrap_or(""))
+            let mut parts = args.split(',').map(str::trim);
+            let v = parse_int(parts.next().unwrap_or(""))
                 .ok_or_else(|| err(format!("bad {} size '{}'", name, args)))?;
             if v < 0 {
                 return Err(err(format!("negative {} size", name)));
             }
-            Directive::Zero(v as u64)
+            let fill = match parts.next() {
+                Some("") | None => 0,
+                Some(fill) => parse_int(fill)
+                    .ok_or_else(|| err(format!("bad {} fill '{}'", name, args)))?
+                    as u8,
+            };
+            if parts.next().is_some() {
+                return Err(err(format!("bad {} operands '{}'", name, args)));
+            }
+            if fill == 0 {
+                Directive::Zero(v as u64)
+            } else {
+                Directive::Space {
+                    size: v as u64,
+                    fill,
+                }
+            }
         }
         "comm" => {
             let mut it = args.split(',').map(str::trim);
@@ -711,15 +823,16 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                 .ok_or_else(|| err(format!("bad .comm size in '{}'", args)))?
                 as u64;
             let align = match it.next() {
-                None => size.clamp(1, 16).next_power_of_two(),
-                Some(a) => parse_int(a)
-                    .filter(|v| *v > 0)
-                    .ok_or_else(|| err(format!("bad .comm align in '{}'", args)))?
-                    as u64,
+                None => None,
+                Some(a) => match parse_int(a) {
+                    Some(0) => None,
+                    Some(value) if value > 0 => Some(value as u64),
+                    _ => return Err(err(format!("bad .comm align in '{}'", args))),
+                },
             };
             Directive::Comm { sym, size, align }
         }
-        "file" => Directive::File(args.trim_matches('"').to_string()),
+        "file" => Directive::File(parse_file_name(args).map_err(&err)?),
         other => {
             return Err(err(format!(
                 "unsupported directive '.{}' — the x86 dialect grows only with corpus evidence",
@@ -734,67 +847,151 @@ fn parse_int_opt(s: &str) -> Option<i64> {
     parse_int(s)
 }
 
-/// Decode one double-quoted literal with the gas escapes the backend
-/// emits.
-fn parse_string_lit(s: &str) -> Result<Vec<u8>, String> {
-    let s = s.trim();
-    let inner = s
-        .strip_prefix('"')
-        .and_then(|t| t.strip_suffix('"'))
-        .ok_or_else(|| format!("expected string literal, got '{}'", s))?;
-    let mut out = Vec::with_capacity(inner.len());
-    let mut chars = inner.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            let mut buf = [0u8; 4];
-            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+/// Parse the string operand groups accepted by GNU as. Commas terminate
+/// groups, while adjacent literals belong to one group and therefore share
+/// one terminator under `.asciz`/`.string`. Empty comma fields are ignored.
+fn parse_string_operands(s: &str) -> Result<Vec<Vec<u8>>, String> {
+    parse_string_operands_bytes(s.as_bytes())
+}
+
+fn parse_file_name(s: &str) -> Result<String, String> {
+    let source = trim_ascii(s.as_bytes());
+    let (literal, rest) = split_leading_string_literal(source)
+        .map_err(|_| ".file requires one quoted file name".to_string())?;
+    if !trim_ascii(rest).is_empty() {
+        return Err(".file requires one quoted file name".into());
+    }
+    String::from_utf8(parse_string_lit_bytes(literal)?)
+        .map_err(|_| ".file name is not valid UTF-8".into())
+}
+
+fn split_leading_string_literal(s: &[u8]) -> Result<(&[u8], &[u8]), String> {
+    if !s.starts_with(b"\"") {
+        return Err(format!(
+            "expected string literal, got '{}'",
+            String::from_utf8_lossy(s)
+        ));
+    }
+
+    let mut escaped = false;
+    for (index, &byte) in s.iter().enumerate().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == b'"' {
+            let end = index + 1;
+            return Ok((&s[..end], &s[end..]));
+        }
+    }
+    Err("unterminated string literal".into())
+}
+
+fn parse_string_operands_bytes(s: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    let mut rest = trim_ascii(s);
+    let mut operands = Vec::new();
+    let mut current = Vec::new();
+    let mut have_current = false;
+
+    while !rest.is_empty() {
+        rest = trim_ascii_start(rest);
+        if let Some(after_comma) = rest.strip_prefix(b",") {
+            if have_current {
+                operands.push(std::mem::take(&mut current));
+                have_current = false;
+            }
+            rest = after_comma;
             continue;
         }
-        match chars.next() {
-            Some('n') => out.push(b'\n'),
-            Some('t') => out.push(b'\t'),
-            Some('r') => out.push(b'\r'),
-            Some('f') => out.push(0x0c),
-            Some('b') => out.push(0x08),
+        let (literal, after_literal) = split_leading_string_literal(rest)?;
+        current.extend_from_slice(&parse_string_lit_bytes(literal)?);
+        have_current = true;
+        rest = trim_ascii_start(after_literal);
+        if !rest.is_empty() && !rest.starts_with(b",") && !rest.starts_with(b"\"") {
+            return Err(format!(
+                "expected ',' or string literal, got '{}'",
+                String::from_utf8_lossy(rest)
+            ));
+        }
+    }
+
+    if have_current {
+        operands.push(current);
+    }
+    Ok(operands)
+}
+
+/// Decode one double-quoted literal with the gas escapes the backend emits.
+fn parse_string_lit_bytes(s: &[u8]) -> Result<Vec<u8>, String> {
+    let s = trim_ascii(s);
+    let inner = s
+        .strip_prefix(b"\"")
+        .and_then(|bytes| bytes.strip_suffix(b"\""))
+        .ok_or_else(|| {
+            format!(
+                "expected string literal, got '{}'",
+                String::from_utf8_lossy(s)
+            )
+        })?;
+    let mut out = Vec::with_capacity(inner.len());
+    let mut index = 0;
+    while index < inner.len() {
+        let byte = inner[index];
+        index += 1;
+        if byte != b'\\' {
+            out.push(byte);
+            continue;
+        }
+        if index == inner.len() {
+            return Err("dangling backslash".into());
+        }
+        let escape = inner[index];
+        index += 1;
+        match escape {
+            b'n' => out.push(b'\n'),
+            b't' => out.push(b'\t'),
+            b'r' => out.push(b'\r'),
+            b'f' => out.push(0x0c),
+            b'b' => out.push(0x08),
             // GNU as does not treat `\a` as BEL in x86 string directives;
             // it drops the backslash and emits the literal `a`.
-            Some('a') => out.push(b'a'),
-            Some('v') => out.push(0x0b),
-            Some('\\') => out.push(b'\\'),
-            Some('"') => out.push(b'"'),
-            Some('\'') => out.push(b'\''),
+            b'a' => out.push(b'a'),
+            b'v' => out.push(0x0b),
+            b'\\' => out.push(b'\\'),
+            b'"' => out.push(b'"'),
+            b'\'' => out.push(b'\''),
             // Octal: 1-3 octal digits (gas), low byte. `\0` is just the
             // one-digit case.
-            Some(d @ '0'..='7') => {
-                let mut val = d.to_digit(8).unwrap();
+            digit @ b'0'..=b'7' => {
+                let mut value = u32::from(digit - b'0');
                 for _ in 0..2 {
-                    match chars.peek() {
-                        Some(&n) if ('0'..='7').contains(&n) => {
-                            val = val * 8 + n.to_digit(8).unwrap();
-                            chars.next();
-                        }
-                        _ => break,
+                    if index < inner.len() && matches!(inner[index], b'0'..=b'7') {
+                        value = value * 8 + u32::from(inner[index] - b'0');
+                        index += 1;
+                    } else {
+                        break;
                     }
                 }
-                out.push((val & 0xff) as u8);
+                out.push((value & 0xff) as u8);
             }
             // Hex: `\x` then one or more hex digits (gas), low byte.
-            Some('x') | Some('X') => {
-                let mut val: u32 = 0;
+            b'x' | b'X' => {
+                let mut value: u32 = 0;
                 let mut any = false;
-                while let Some(&n) = chars.peek() {
-                    let Some(h) = n.to_digit(16) else { break };
-                    val = val.wrapping_mul(16).wrapping_add(h);
+                while index < inner.len() {
+                    let Some(hex) = (inner[index] as char).to_digit(16) else {
+                        break;
+                    };
+                    value = value.wrapping_mul(16).wrapping_add(hex);
                     any = true;
-                    chars.next();
+                    index += 1;
                 }
                 if !any {
                     return Err("\\x used with no following hex digits".into());
                 }
-                out.push((val & 0xff) as u8);
+                out.push((value & 0xff) as u8);
             }
-            Some(other) => return Err(format!("unsupported escape '\\{}'", other)),
-            None => return Err("dangling backslash".into()),
+            other => return Err(format!("unsupported escape '\\{}'", other.escape_ascii())),
         }
     }
     Ok(out)
@@ -873,7 +1070,7 @@ mod tests {
             Stmt::Directive(Directive::Comm {
                 sym: "blk_".into(),
                 size: 1024,
-                align: 32
+                align: Some(32)
             })
         );
         assert_eq!(
@@ -898,12 +1095,63 @@ mod tests {
         );
         assert_eq!(
             stmts[3].stmt,
-            Stmt::Directive(Directive::Asciz(b"hi\n".to_vec()))
+            Stmt::Directive(Directive::Asciz(vec![b"hi\n".to_vec()]))
         );
         assert_eq!(
             stmts[5].stmt,
             Stmt::Directive(Directive::Extern("ext".into()))
         );
+    }
+
+    #[test]
+    fn raw_bytes_survive_string_literals_and_comments() {
+        let stmts = parse_bytes(b".ascii \"\xff\"\n# ignored \xfe\n").unwrap();
+        assert_eq!(
+            stmts,
+            [Located {
+                line: 1,
+                col: 1,
+                stmt: Stmt::Directive(Directive::Ascii(vec![vec![0xff]])),
+            }]
+        );
+
+        let error = parse_bytes(b"ret\n\xff\n").unwrap_err();
+        assert_eq!((error.line, error.col), (2, 1));
+        assert_eq!(error.msg, "non-UTF-8 byte in instruction");
+    }
+
+    #[test]
+    fn section_switches_preserve_documented_subsection_numbers() {
+        let stmts = parse(".text\n.data 2\n.bss 0x3\n.text 8192\n").unwrap();
+        for (statement, name, subsection) in [
+            (&stmts[0].stmt, ".text", 0),
+            (&stmts[1].stmt, ".data", 2),
+            (&stmts[2].stmt, ".bss", 3),
+            (&stmts[3].stmt, ".text", 8192),
+        ] {
+            assert_eq!(
+                statement,
+                &Stmt::Directive(Directive::Section {
+                    name: name.into(),
+                    subsection,
+                    flags: None,
+                    section_type: None,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_subsection_arguments_fail_loudly() {
+        for argument in ["-1", "8193", "1+2", "1,2", "name"] {
+            let source = format!(".text {argument}\n");
+            let error = parse(&source).expect_err("invalid subsection must be rejected");
+            assert_eq!((error.line, error.col), (1, 1));
+            assert_eq!(
+                error.msg,
+                format!("subsection must be an integer literal from 0 to 8192, got '{argument}'")
+            );
+        }
     }
 
     #[test]
@@ -920,6 +1168,7 @@ mod tests {
             stmts[0].stmt,
             Stmt::Directive(Directive::Section {
                 name: ".debug_info".into(),
+                subsection: 0,
                 flags: Some(String::new()),
                 section_type: Some(SectionType::Progbits),
             })
@@ -942,6 +1191,7 @@ mod tests {
             &stmts[2].stmt,
             Stmt::Directive(Directive::Section {
                 name,
+                subsection: 0,
                 flags: Some(flags),
                 section_type: Some(SectionType::Progbits),
             }) if name == ".eh_frame" && flags == "a"
@@ -985,7 +1235,7 @@ mod tests {
 
     #[test]
     fn space_and_skip_directives_preserve_fill_byte() {
-        let stmts = parse(".space 4, 0x90\n.skip 3, 0xab\n.zero 2\n").unwrap();
+        let stmts = parse(".space 4, 0x90\n.skip 3, 0xab\n.zero 2\n.zero 5, 0xa5\n").unwrap();
         assert_eq!(
             stmts[0].stmt,
             Stmt::Directive(Directive::Space {
@@ -1001,6 +1251,20 @@ mod tests {
             })
         );
         assert_eq!(stmts[2].stmt, Stmt::Directive(Directive::Zero(2)));
+        assert_eq!(
+            stmts[3].stmt,
+            Stmt::Directive(Directive::Space {
+                size: 5,
+                fill: 0xa5
+            })
+        );
+    }
+
+    #[test]
+    fn zero_rejects_a_third_operand() {
+        for source in [".zero 4,0xa5,0x7f\n", ".zero 4,0xa5,\n"] {
+            assert!(parse(source).is_err(), "must reject {source:?}");
+        }
     }
 
     #[test]

@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .text
 ret
 .zerofill __DATA,__bss,_scratch,16,4

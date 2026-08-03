@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .text
 .globl _fp_pair_surface
 _fp_pair_surface:

@@ -23,6 +23,8 @@ const CASES: &[&str] = &[
     "movw %ax, %cx",
     "movq %rax, -8(%rbp)",
     "movq 16(%rsp), %rdi",
+    "movq (%rax), %rbx",
+    "movq (,%rcx,8), %rbx",
     "movl %esi, (%rax,%rcx,1)",
     "movl (%rbx,%rdx,4), %eax",
     "movq %rcx, (%r12)",

@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .global _main
 .p2align 2
 

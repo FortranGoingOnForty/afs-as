@@ -47,6 +47,7 @@ fn nonzero_data_in_bss_is_rejected() {
         ".bss\n.quad 1\n",
         ".bss\n.ascii \"hi\"\n",
         ".bss\n.asciz \"x\"\n",
+        ".bss\n.zero 4,0xa5\n",
     ] {
         let e = asm(src).expect_err(&format!("{src:?} must be rejected in .bss"));
         assert!(
@@ -78,6 +79,43 @@ fn zero_fill_in_data_emits_exact_bytes() {
     let data = obj.section_by_name(".data").expect("data section");
 
     assert_eq!(data.data, [0xaa, 0, 0, 0, 0xbb]);
+}
+
+#[test]
+fn explicit_zero_fill_emits_exact_bytes() {
+    let obj = assemble_x86(
+        ".data\n\
+         .byte 0x11\n\
+         .zero 4,0xa5\n\
+         .zero 2,0x1a5\n\
+         .zero 1,-1\n\
+         .zero 1,\n\
+         .byte 0x22\n",
+        0,
+    )
+    .expect("explicit .zero fills should assemble");
+    let data = obj.section_by_name(".data").expect("data section");
+
+    assert_eq!(
+        data.data,
+        [0x11, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xff, 0, 0x22]
+    );
+}
+
+#[test]
+fn zero_rejects_invalid_or_extra_operands() {
+    for (args, expected) in [
+        ("4,nope", "bad zero fill '4,nope'"),
+        ("4,0xa5,0x7f", "bad zero operands '4,0xa5,0x7f'"),
+        ("4,0xa5,", "bad zero operands '4,0xa5,'"),
+    ] {
+        let source = format!(".data\n.zero {args}\n");
+        let error = assemble_x86(&source, 0).expect_err("invalid .zero operands must fail");
+
+        assert_eq!(error.line, Some(2), "{args}");
+        assert_eq!(error.col, Some(1), "{args}");
+        assert_eq!(error.msg, expected, "{args}");
+    }
 }
 
 #[test]

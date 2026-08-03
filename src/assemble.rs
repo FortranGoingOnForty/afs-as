@@ -22,10 +22,9 @@ use crate::reg::{GpReg, SP};
 
 /// Assemble a source file to a Mach-O object file.
 pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
-    let src =
-        fs::read_to_string(input).map_err(|e| AsmError::new(format!("{}", e)).with_path(input))?;
+    let src = fs::read(input).map_err(|e| AsmError::new(format!("{}", e)).with_path(input))?;
 
-    let obj = assemble_source(&src).map_err(|e| e.with_source_context(input, &src))?;
+    let obj = assemble_source_bytes(&src).map_err(|e| e.with_source_context_bytes(input, &src))?;
 
     let file =
         fs::File::create(output).map_err(|e| AsmError::new(format!("{}", e)).with_path(output))?;
@@ -51,7 +50,13 @@ pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
 /// assert!(obj.symbols.iter().any(|s| s.name == "_main" && s.global));
 /// ```
 pub fn assemble_source(src: &str) -> Result<ObjectFile, AsmError> {
-    let stmts = parse::parse_with_locations(src).map_err(AsmError::from)?;
+    assemble_source_bytes(src.as_bytes())
+}
+
+/// Assemble raw source bytes into an ObjectFile without requiring UTF-8 for
+/// comments or string-literal payloads.
+pub fn assemble_source_bytes(src: &[u8]) -> Result<ObjectFile, AsmError> {
+    let stmts = parse::parse_bytes_with_locations(src).map_err(AsmError::from)?;
     assemble_located_stmts(&stmts)
 }
 
@@ -187,18 +192,54 @@ impl AsmError {
         self
     }
 
-    pub fn with_source_context(mut self, path: &Path, src: &str) -> Self {
+    pub fn with_source_context(self, path: &Path, src: &str) -> Self {
+        self.with_source_context_bytes(path, src.as_bytes())
+    }
+
+    pub fn with_source_context_bytes(mut self, path: &Path, src: &[u8]) -> Self {
         self = self.with_path(path);
         if self.snippet.is_none() {
             if let Some(line) = self.line {
-                self.snippet = src
-                    .lines()
-                    .nth(line.saturating_sub(1) as usize)
-                    .map(|line| line.to_string());
+                if let Some(source_line) = source_line_bytes(src, line) {
+                    if let Some(byte_col) = self.col {
+                        self.col = Some(scalar_column(source_line, byte_col));
+                    }
+                    self.snippet = Some(String::from_utf8_lossy(source_line).into_owned());
+                }
             }
         }
         self
     }
+}
+
+fn source_line_bytes(src: &[u8], line: u32) -> Option<&[u8]> {
+    if src.is_empty() || line == 0 {
+        return None;
+    }
+    let line_count =
+        src.iter().filter(|byte| **byte == b'\n').count() + usize::from(!src.ends_with(b"\n"));
+    if line as usize > line_count {
+        return None;
+    }
+    src.split(|byte| *byte == b'\n')
+        .nth(line.saturating_sub(1) as usize)
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+}
+
+/// Convert the parsers' one-based byte column into the one-based Unicode
+/// scalar column used by rendered diagnostics. Invalid byte sequences count
+/// exactly as the replacement characters shown in the lossy source snippet.
+fn scalar_column(line: &[u8], byte_col: u32) -> u32 {
+    let byte_offset = usize::try_from(byte_col.saturating_sub(1))
+        .unwrap_or(usize::MAX)
+        .min(line.len());
+    u32::try_from(
+        String::from_utf8_lossy(&line[..byte_offset])
+            .chars()
+            .count(),
+    )
+    .unwrap_or(u32::MAX)
+    .saturating_add(1)
 }
 
 #[allow(non_snake_case)]
@@ -398,6 +439,8 @@ struct LinkerOptimizationHint {
 struct CfiProcState {
     start_section: usize,
     start_offset: u64,
+    start_line: u32,
+    start_col: u32,
     function_symbol: String,
     cfa_register: GpReg,
     cfa_offset: i64,
@@ -449,10 +492,18 @@ const EH_FRAME_CIE_SIZE: u64 = 20;
 const EH_FRAME_FDE_FIXED_SIZE: usize = 25;
 
 impl CfiProcState {
-    fn new(start_section: usize, start_offset: u64, function_symbol: String) -> Self {
+    fn new(
+        start_section: usize,
+        start_offset: u64,
+        start_line: u32,
+        start_col: u32,
+        function_symbol: String,
+    ) -> Self {
         Self {
             start_section,
             start_offset,
+            start_line,
+            start_col,
             function_symbol,
             cfa_register: SP,
             cfa_offset: 0,
@@ -460,6 +511,11 @@ impl CfiProcState {
             compact_unwind_forbidden: false,
             events: Vec::new(),
         }
+    }
+
+    fn unterminated_error(&self) -> AsmError {
+        AsmError::new("unterminated .cfi_startproc before end of file".into())
+            .with_loc_if_absent(self.start_line, self.start_col)
     }
 
     fn code_offset(&self, current_offset: u64) -> u64 {
@@ -750,10 +806,8 @@ impl Assembler {
             self.collect_layout_stmt(stmt)?;
         }
 
-        if self.active_cfi_proc.is_some() {
-            return Err(AsmError(
-                "unterminated .cfi_startproc before end of file".into(),
-            ));
+        if let Some(proc) = &self.active_cfi_proc {
+            return Err(proc.unterminated_error());
         }
 
         Ok(())
@@ -778,7 +832,7 @@ impl Assembler {
                 }
             }
             Stmt::Directive(dir) => {
-                self.collect_directive_layout(dir)
+                self.collect_directive_layout(dir, stmt.line, stmt.col)
                     .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
             }
             Stmt::Instruction(_) | Stmt::InstructionWithReloc(_, _) => {
@@ -865,7 +919,12 @@ impl Assembler {
         Ok(())
     }
 
-    fn collect_directive_layout(&mut self, dir: &Directive) -> Result<(), AsmError> {
+    fn collect_directive_layout(
+        &mut self,
+        dir: &Directive,
+        line: u32,
+        col: u32,
+    ) -> Result<(), AsmError> {
         match dir {
             Directive::Text => self.switch_to("__TEXT", "__text")?,
             Directive::Data => self.switch_to("__DATA", "__data")?,
@@ -896,9 +955,7 @@ impl Assembler {
             }
             Directive::WeakReference(name) => {
                 self.note_symbol(name);
-                let attrs = self.symbol_attrs_mut(name);
-                attrs.global = true;
-                attrs.weak_ref = true;
+                self.symbol_attrs_mut(name).weak_ref = true;
             }
             Directive::WeakDefinition(name) => {
                 self.note_symbol(name);
@@ -950,7 +1007,7 @@ impl Assembler {
             } => {
                 self.reserve_zerofill(segment, section, symbol.as_deref(), *size, *align_pow2)?;
             }
-            Directive::CfiStartProc => self.start_cfi_proc()?,
+            Directive::CfiStartProc => self.start_cfi_proc(line, col)?,
             Directive::CfiEndProc => self.finish_cfi_proc()?,
             Directive::CfiDefCfa { .. }
             | Directive::CfiDefCfaOffset(_)
@@ -1136,7 +1193,7 @@ impl Assembler {
             .map(str::to_string)
     }
 
-    fn start_cfi_proc(&mut self) -> Result<(), AsmError> {
+    fn start_cfi_proc(&mut self, line: u32, col: u32) -> Result<(), AsmError> {
         if self.active_cfi_proc.is_some() {
             return Err(AsmError(
                 "nested .cfi_startproc directives are not supported".into(),
@@ -1154,6 +1211,8 @@ impl Assembler {
         self.active_cfi_proc = Some(CfiProcState::new(
             self.section,
             start_offset,
+            line,
+            col,
             function_symbol,
         ));
         Ok(())
@@ -1211,7 +1270,7 @@ impl Assembler {
                     current_offset,
                     CfiOp::Offset {
                         register: *register,
-                        offset: (-*offset) as u64,
+                        offset: offset.unsigned_abs(),
                     },
                 );
             }
@@ -1879,13 +1938,14 @@ impl Assembler {
         if self.labels.contains_key(name) || self.absolute_symbol_names.contains(name) {
             return Err(AsmError(format!("duplicate symbol '{}'", name)));
         }
-        if self
-            .common_symbols
-            .insert(name.to_string(), CommonSymbol { size, align_pow2 })
-            .is_some()
-        {
-            return Err(AsmError(format!("duplicate common symbol '{}'", name)));
+        if let Some(common) = self.common_symbols.get_mut(name) {
+            common.size = common.size.max(size);
+            common.align_pow2 = common.align_pow2.max(align_pow2);
+            return Ok(());
         }
+
+        self.common_symbols
+            .insert(name.to_string(), CommonSymbol { size, align_pow2 });
         self.note_symbol(name);
         Ok(())
     }
@@ -2226,6 +2286,15 @@ impl Assembler {
         }
     }
 
+    fn pack_build_version(version: parse::VersionTriple, context: &str) -> Result<u32, AsmError> {
+        macho::pack_version(version.major, version.minor, version.patch).map_err(|error| {
+            AsmError(format!(
+                "{} {} component {} exceeds {}",
+                context, error.component, error.value, error.max
+            ))
+        })
+    }
+
     fn build_version_command(&self) -> Result<BuildVersion, AsmError> {
         let Some(build_version) = &self.build_version else {
             return Ok(BuildVersion::default());
@@ -2240,18 +2309,17 @@ impl Assembler {
                 )));
             }
         };
+        let minos = Self::pack_build_version(build_version.minos, "build version minimum OS")?;
+        let sdk = build_version
+            .sdk
+            .map(|sdk| Self::pack_build_version(sdk, "build version SDK"))
+            .transpose()?
+            .unwrap_or(0);
 
         Ok(BuildVersion {
             platform,
-            minos: macho::pack_version(
-                build_version.minos.major,
-                build_version.minos.minor,
-                build_version.minos.patch,
-            ),
-            sdk: build_version
-                .sdk
-                .map(|sdk| macho::pack_version(sdk.major, sdk.minor, sdk.patch))
-                .unwrap_or(0),
+            minos,
+            sdk,
         })
     }
 
@@ -2383,10 +2451,8 @@ impl Assembler {
     }
 
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
-        if self.active_cfi_proc.is_some() {
-            return Err(AsmError(
-                "unterminated .cfi_startproc before end of file".into(),
-            ));
+        if let Some(proc) = &self.active_cfi_proc {
+            return Err(proc.unterminated_error());
         }
 
         self.materialize_compact_unwind_section();
@@ -2484,18 +2550,6 @@ impl Assembler {
 
         for (name, common) in &self.common_symbols {
             let attrs = self.symbol_attrs.get(name).copied().unwrap_or_default();
-            if attrs.private_extern {
-                return Err(AsmError(format!(
-                    "common symbol '{}' cannot be private extern",
-                    name
-                )));
-            }
-            if attrs.weak_def {
-                return Err(AsmError(format!(
-                    "common symbol '{}' cannot be a weak definition",
-                    name
-                )));
-            }
             symbols.push(Symbol {
                 name: name.clone(),
                 section: 0,
@@ -2505,9 +2559,9 @@ impl Assembler {
                 absolute: false,
                 common: true,
                 common_align_pow2: common.align_pow2,
-                private_extern: false,
+                private_extern: attrs.private_extern,
                 weak_ref: attrs.weak_ref,
-                weak_def: false,
+                weak_def: attrs.weak_def,
             });
         }
 
@@ -2517,12 +2571,6 @@ impl Assembler {
         // Explicit symbol directives.
         for (name, attrs) in &self.symbol_attrs {
             if let Some(value) = absolute_symbols.get(name) {
-                if attrs.weak_ref {
-                    return Err(AsmError(format!(
-                        "weak reference '{}' must remain undefined",
-                        name
-                    )));
-                }
                 known_symbols.insert(name.clone());
                 symbols.push(Symbol {
                     name: name.clone(),
@@ -2534,16 +2582,10 @@ impl Assembler {
                     common: false,
                     common_align_pow2: 0,
                     private_extern: attrs.private_extern,
-                    weak_ref: false,
+                    weak_ref: attrs.weak_ref,
                     weak_def: attrs.weak_def,
                 });
             } else if let Some((section, offset)) = self.labels.get(name) {
-                if attrs.weak_ref {
-                    return Err(AsmError(format!(
-                        "weak reference '{}' must remain undefined",
-                        name
-                    )));
-                }
                 let value = section_bases[*section] + offset;
                 known_symbols.insert(name.clone());
                 symbols.push(Symbol {
@@ -2556,22 +2598,10 @@ impl Assembler {
                     common: false,
                     common_align_pow2: 0,
                     private_extern: attrs.private_extern,
-                    weak_ref: false,
+                    weak_ref: attrs.weak_ref,
                     weak_def: attrs.weak_def,
                 });
             } else if !known_symbols.contains(name) {
-                if attrs.private_extern {
-                    return Err(AsmError(format!(
-                        "private extern '{}' must be defined in this object",
-                        name
-                    )));
-                }
-                if attrs.weak_def {
-                    return Err(AsmError(format!(
-                        "weak definition '{}' must be defined in this object",
-                        name
-                    )));
-                }
                 known_symbols.insert(name.clone());
                 symbols.push(Symbol {
                     name: name.clone(),
@@ -2582,9 +2612,9 @@ impl Assembler {
                     absolute: false,
                     common: false,
                     common_align_pow2: 0,
-                    private_extern: false,
+                    private_extern: attrs.private_extern,
                     weak_ref: attrs.weak_ref,
-                    weak_def: false,
+                    weak_def: attrs.weak_def,
                 });
             }
         }
@@ -3571,21 +3601,48 @@ mod tests {
     }
 
     #[test]
-    fn assemble_private_extern_requires_definition() {
-        let err = assemble_source(".private_extern _hidden\n.text\nret\n").unwrap_err();
-        assert!(err.msg.contains("private extern"), "got: {}", err);
-    }
+    fn assemble_preserves_symbol_attributes_across_definition_states() {
+        let obj = assemble_source(
+            ".weak_reference _section_weak_ref\n\
+             .weak_reference _absolute_weak_ref\n\
+             .private_extern _undefined_private\n\
+             .weak_definition _undefined_weak_def\n\
+             .private_extern _common_private\n\
+             .weak_definition _common_weak_def\n\
+             .text\n\
+             _section_weak_ref:\n\
+             ret\n\
+             .set _absolute_weak_ref, 7\n\
+             .comm _common_private, 8, 3\n\
+             .comm _common_weak_def, 16, 4\n",
+        )
+        .unwrap();
 
-    #[test]
-    fn assemble_weak_definition_requires_definition() {
-        let err = assemble_source(".weak_definition _entry\n.text\nret\n").unwrap_err();
-        assert!(err.msg.contains("weak definition"), "got: {}", err);
-    }
+        let mut bytes = Vec::new();
+        write_macho(&obj, &mut bytes).unwrap();
+        let (symoff, nsyms, stroff, _) = parse_symtab_info(&bytes);
+        let symbol_fields = |name: &str| {
+            let base = (0..nsyms)
+                .map(|index| symoff + index * 16)
+                .find(|&base| {
+                    let strx = u32::from_le_bytes(bytes[base..base + 4].try_into().expect("strx"));
+                    symbol_name_at(&bytes, stroff, strx) == name
+                })
+                .unwrap_or_else(|| panic!("missing symbol {name}"));
+            (
+                bytes[base + 4],
+                bytes[base + 5],
+                u16::from_le_bytes(bytes[base + 6..base + 8].try_into().expect("n_desc")),
+                u64::from_le_bytes(bytes[base + 8..base + 16].try_into().expect("n_value")),
+            )
+        };
 
-    #[test]
-    fn assemble_weak_reference_requires_undefined_symbol() {
-        let err = assemble_source(".weak_reference _helper\n.text\n_helper:\nret\n").unwrap_err();
-        assert!(err.msg.contains("must remain undefined"), "got: {}", err);
+        assert_eq!(symbol_fields("_section_weak_ref"), (0x0e, 1, 0x0040, 0));
+        assert_eq!(symbol_fields("_absolute_weak_ref"), (0x02, 0, 0x0060, 7));
+        assert_eq!(symbol_fields("_common_private"), (0x11, 0, 0x0300, 8));
+        assert_eq!(symbol_fields("_common_weak_def"), (0x01, 0, 0x0480, 16));
+        assert_eq!(symbol_fields("_undefined_private"), (0x11, 0, 0, 0));
+        assert_eq!(symbol_fields("_undefined_weak_def"), (0x01, 0, 0x0080, 0));
     }
 
     #[test]
@@ -3647,6 +3704,12 @@ mod tests {
     fn assemble_data_directive_byte() {
         let obj = assemble_source(".data\n.byte 0x41, 0x42, 0x43\n").unwrap();
         assert_eq!(data_bytes(&obj), vec![0x41, 0x42, 0x43]);
+    }
+
+    #[test]
+    fn assemble_raw_bytes_in_string_literals_and_comments() {
+        let obj = assemble_source_bytes(b".data\n.ascii \"\xff\"\n; ignored \xfe\n").unwrap();
+        assert_eq!(data_bytes(&obj), vec![0xff]);
     }
 
     #[test]
@@ -3723,6 +3786,44 @@ mod tests {
         assert_eq!(
             text_bytes(&obj),
             Inst::Ret { rn: X30 }.encode().to_le_bytes()
+        );
+    }
+
+    #[test]
+    fn assemble_repeated_comm_merges_size_and_alignment_maxima() {
+        let obj = assemble_source(
+            ".comm _merged, 8, 2\n\
+             .comm _merged, 4, 5\n\
+             .comm _merged, 32, 1\n\
+             .comm _merged, 32, 5\n\
+             .text\n\
+             ret\n",
+        )
+        .unwrap();
+        let matching: Vec<_> = obj
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.name == "_merged")
+            .collect();
+
+        assert_eq!(matching.len(), 1);
+        assert!(matching[0].global);
+        assert!(matching[0].undefined);
+        assert!(matching[0].common);
+        assert_eq!(matching[0].value, 32);
+        assert_eq!(matching[0].common_align_pow2, 5);
+    }
+
+    #[test]
+    fn assemble_repeated_comm_rejects_alignment_above_macho_limit() {
+        let err = assemble_source(".comm _common, 8, 15\n.comm _common, 16, 16\n")
+            .expect_err("alignment power 16 must be rejected");
+
+        assert_eq!(err.line, Some(2));
+        assert_eq!(err.col, Some(1));
+        assert_eq!(
+            err.msg,
+            "common symbol '_common' alignment power 16 too large (max 15)"
         );
     }
 
@@ -3871,6 +3972,23 @@ mod tests {
     }
 
     #[test]
+    fn assemble_minimum_cfi_offset_encodes_maximum_dwarf_operand() {
+        let obj = assemble_source(
+            ".text\n\
+            minimum_offset_target:\n\
+            .cfi_startproc\n\
+            .cfi_offset w19, -9223372036854775808\n\
+            ret\n\
+            .cfi_endproc\n",
+        )
+        .unwrap();
+
+        assert!(eh_frame_section(&obj)
+            .data
+            .ends_with(&[0x93, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x10,]));
+    }
+
+    #[test]
     fn assemble_frame_cfi_emits_compact_unwind() {
         let obj = assemble_source(
             ".text\n\
@@ -3929,13 +4047,18 @@ mod tests {
 
     #[test]
     fn assemble_unterminated_cfi_proc_is_rejected() {
-        let err =
-            assemble_source(".text\nunterminated_target:\n.cfi_startproc\nret\n").unwrap_err();
+        let source = ".text\nunterminated_target:\n.cfi_startproc\nret\n";
+        let err = assemble_source(source).unwrap_err();
+        assert_eq!((err.line, err.col), (Some(3), Some(1)));
         assert!(
             err.msg.contains("unterminated .cfi_startproc"),
             "got: {}",
             err
         );
+
+        let stmts = parse::parse(source).unwrap();
+        let unlocated = assemble_stmts(&stmts).unwrap_err();
+        assert_eq!((unlocated.line, unlocated.col), (None, None));
     }
 
     #[test]
@@ -3998,8 +4121,67 @@ mod tests {
             assemble_source(".text\nret\n.build_version macos, 11, 0 sdk_version 15, 5\n").unwrap();
 
         assert_eq!(obj.build_version.platform, macho::PLATFORM_MACOS);
-        assert_eq!(obj.build_version.minos, macho::pack_version(11, 0, 0));
-        assert_eq!(obj.build_version.sdk, macho::pack_version(15, 5, 0));
+        assert_eq!(
+            obj.build_version.minos,
+            macho::pack_version(11, 0, 0).unwrap()
+        );
+        assert_eq!(
+            obj.build_version.sdk,
+            macho::pack_version(15, 5, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn assemble_build_version_accepts_maximum_packed_components() {
+        let obj =
+            assemble_source(".build_version macos, 65535, 255, 255 sdk_version 65535, 255, 255\n")
+                .unwrap();
+
+        assert_eq!(obj.build_version.minos, u32::MAX);
+        assert_eq!(obj.build_version.sdk, u32::MAX);
+    }
+
+    #[test]
+    fn assemble_rejects_build_version_component_overflow() {
+        let cases = [
+            (
+                ".build_version macos, 65536, 0, 0\n",
+                23,
+                "build version minimum OS major component 65536 exceeds 65535",
+            ),
+            (
+                ".build_version macos, 1, 256, 0\n",
+                26,
+                "build version minimum OS minor component 256 exceeds 255",
+            ),
+            (
+                ".build_version macos, 1, 0, 256\n",
+                29,
+                "build version minimum OS patch component 256 exceeds 255",
+            ),
+            (
+                ".build_version macos, 1, 2, 3 sdk_version 65536, 0, 0\n",
+                43,
+                "build version SDK major component 65536 exceeds 65535",
+            ),
+            (
+                ".build_version macos, 1, 2, 3 sdk_version 1, 256, 0\n",
+                46,
+                "build version SDK minor component 256 exceeds 255",
+            ),
+            (
+                ".build_version macos, 1, 2, 3 sdk_version 1, 0, 256\n",
+                49,
+                "build version SDK patch component 256 exceeds 255",
+            ),
+        ];
+
+        for (source, col, expected) in cases {
+            let err = assemble_source(source).expect_err(source);
+            assert_eq!(err.line, Some(1), "source: {source}");
+            assert_eq!(err.col, Some(col), "source: {source}");
+            assert_eq!(err.msg, expected, "source: {source}");
+        }
     }
 
     #[test]

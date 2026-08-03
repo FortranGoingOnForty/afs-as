@@ -37,17 +37,17 @@ fn assemble_stmts_accepts_valid_preparsed_statements() {
 #[test]
 fn assemble_stmts_validates_without_source_context() {
     let stmts = vec![
-        Stmt::Directive(Directive::PrivateExtern("_hidden".into())),
         Stmt::Directive(Directive::Text),
-        Stmt::Instruction(Inst::Ret { rn: X30 }),
+        Stmt::Label("_duplicate".into()),
+        Stmt::Label("_duplicate".into()),
     ];
 
     let err = assemble::assemble_stmts(&stmts).unwrap_err();
     assert_eq!(err.line, None);
     assert_eq!(err.col, None);
     assert!(
-        err.msg.contains("private extern"),
-        "expected private-extern validation error, got {err}"
+        err.msg.contains("duplicate label"),
+        "expected duplicate-label validation error, got {err}"
     );
 }
 

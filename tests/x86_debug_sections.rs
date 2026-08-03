@@ -120,8 +120,8 @@ fn debug_section_surface_matches_gnu_as() {
         ".debug_scratch",
     ] {
         assert_eq!(
-            ours.sections.get(name),
-            gas.sections.get(name),
+            ours.sections.iter().find(|section| section.name == name),
+            gas.sections.iter().find(|section| section.name == name),
             "section {name}"
         );
     }

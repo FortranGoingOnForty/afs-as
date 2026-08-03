@@ -2,7 +2,7 @@
 //!
 //! Pass 1 builds per-section item streams (encoded bytes, relaxable
 //! branches, alignment marks, data) and the symbol bookkeeping
-//! (.globl/.local/.weak/.type/.size/.comm). The relaxation pass then
+//! (.globl/.local/.weak/.type/.size/.comm/.file). The relaxation pass then
 //! runs a fixed-point over each text section: every intra-section
 //! jmp/jcc starts optimistically at rel8 and grows to rel32 until no
 //! displacement overflows — growth is monotonic, so it terminates.
@@ -17,16 +17,19 @@
 //! relocation (they can be preempted).
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use crate::assemble::AsmError;
 
 use super::super::elf::{
     self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, EM_X86_64, SHF_ALLOC,
-    SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK, STT_FUNC,
-    STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
+    SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK, STT_FILE,
+    STT_FUNC, STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
 };
 use super::encode::{encode, InsnReloc};
-use super::parse::{parse, DataAtom, DataItem, Directive, SectionType, SizeArg, Stmt, SymKind};
+use super::parse::{
+    parse_bytes, DataAtom, DataItem, Directive, SectionType, SizeArg, Stmt, SymKind,
+};
 use super::Operand;
 
 pub type AsmX86Error = AsmError;
@@ -103,6 +106,67 @@ impl SecBuild {
     }
 }
 
+#[derive(Debug)]
+struct SubsectionBuild {
+    section: String,
+    subsection: u32,
+    build: SecBuild,
+}
+
+/// Concatenate each section's subsection streams in numeric order before
+/// relaxation and layout. Subsections are an assembler-only organization:
+/// labels, relocations, alignment, and `.` must all observe one final section
+/// address space.
+fn merge_subsections(streams: Vec<SubsectionBuild>) -> (Vec<(String, SecBuild)>, Vec<usize>) {
+    let mut section_order = Vec::new();
+    let mut merged_index = HashMap::new();
+    for stream in &streams {
+        if !merged_index.contains_key(&stream.section) {
+            let index = section_order.len();
+            section_order.push(stream.section.clone());
+            merged_index.insert(stream.section.clone(), index);
+        }
+    }
+
+    let section_metadata: HashMap<_, _> = streams
+        .iter()
+        .map(|stream| {
+            (
+                stream.section.clone(),
+                (stream.build.sh_type, stream.build.sh_flags),
+            )
+        })
+        .collect();
+    let mut indexed_streams: Vec<_> = streams.into_iter().enumerate().collect();
+    indexed_streams.sort_by_key(|(_, stream)| (merged_index[&stream.section], stream.subsection));
+
+    let mut sections: Vec<_> = section_order
+        .into_iter()
+        .map(|name| {
+            let (sh_type, sh_flags) = section_metadata[&name];
+            (name, SecBuild::new(sh_type, sh_flags))
+        })
+        .collect();
+    let mut stream_to_section = vec![0; indexed_streams.len()];
+    for (stream_index, stream) in indexed_streams {
+        let section_index = merged_index[&stream.section];
+        stream_to_section[stream_index] = section_index;
+
+        let target = &mut sections[section_index].1;
+        debug_assert_eq!(target.sh_type, stream.build.sh_type);
+        debug_assert_eq!(target.sh_flags, stream.build.sh_flags);
+        let item_base = target.items.len();
+        target.max_align = target.max_align.max(stream.build.max_align);
+        target.items.extend(stream.build.items);
+        target.label_order.extend(stream.build.label_order);
+        for (label, item_index) in stream.build.labels {
+            let previous = target.labels.insert(label, item_base + item_index);
+            debug_assert!(previous.is_none(), "duplicate label survived pass 1");
+        }
+    }
+    (sections, stream_to_section)
+}
+
 #[derive(Debug, Default, Clone)]
 struct SymInfo {
     globl: bool,
@@ -115,47 +179,87 @@ struct SymInfo {
     size_section: Option<usize>,
 }
 
+/// An assembled x86 object plus the exact `.text` byte ranges emitted as
+/// implicit NOP padding for `.p2align` directives.
+#[derive(Debug)]
+pub struct X86Assembly {
+    pub object: ObjectFile,
+    pub text_nop_padding: Vec<Range<usize>>,
+}
+
 pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
-    let stmts = parse(src).map_err(|e| AsmError::at(e.line, e.col, e.msg))?;
+    assemble_x86_bytes(src.as_bytes(), osabi)
+}
+
+pub fn assemble_x86_bytes(src: &[u8], osabi: u8) -> Result<ObjectFile, AsmX86Error> {
+    assemble_x86_bytes_with_provenance(src, osabi).map(|assembly| assembly.object)
+}
+
+pub fn assemble_x86_with_provenance(src: &str, osabi: u8) -> Result<X86Assembly, AsmX86Error> {
+    assemble_x86_bytes_with_provenance(src.as_bytes(), osabi)
+}
+
+pub fn assemble_x86_bytes_with_provenance(
+    src: &[u8],
+    osabi: u8,
+) -> Result<X86Assembly, AsmX86Error> {
+    let stmts = parse_bytes(src).map_err(|e| AsmError::at(e.line, e.col, e.msg))?;
 
     // ---- Pass 1: build sections -----------------------------------
-    let mut secs: Vec<(String, SecBuild)> = Vec::new();
-    let mut sec_index: HashMap<String, usize> = HashMap::new();
+    let mut streams: Vec<SubsectionBuild> = Vec::new();
+    let mut stream_index: HashMap<(String, u32), usize> = HashMap::new();
     let mut current: usize = usize::MAX;
     let mut syminfo: HashMap<String, SymInfo> = HashMap::new();
     let mut gnu_stack_flags: Option<u64> = None;
-    // (sym, size, align, line, column)
-    let mut commons: Vec<(String, u64, u64, u32, u32)> = Vec::new();
+    // The first directive or definition that makes a named ELF symbol exist.
+    // GNU as uses this order to interleave local symbols with `.file` groups.
+    let mut symbol_creation_order: HashMap<String, usize> = HashMap::new();
+    let mut file_symbols: Vec<(usize, String)> = Vec::new();
+    // (sym, size, explicit alignment, line, column)
+    let mut commons: Vec<(String, u64, Option<u64>, u32, u32)> = Vec::new();
     let mut common_names: HashSet<String> = HashSet::new();
-    // label -> section index (for cross-section checks + reloc targets)
+    let mut global_common_names: HashSet<String> = HashSet::new();
+    let mut local_common_names: HashSet<String> = HashSet::new();
+    // label -> subsection stream index; remapped to the merged section index
+    // before relaxation and relocation processing.
     let mut label_section: HashMap<String, usize> = HashMap::new();
 
-    let ensure_sec = |name: &str,
-                      secs: &mut Vec<(String, SecBuild)>,
-                      sec_index: &mut HashMap<String, usize>|
+    let ensure_stream = |name: &str,
+                         subsection: u32,
+                         streams: &mut Vec<SubsectionBuild>,
+                         stream_index: &mut HashMap<(String, u32), usize>|
      -> usize {
-        if let Some(&i) = sec_index.get(name) {
+        let key = (name.to_string(), subsection);
+        if let Some(&i) = stream_index.get(&key) {
             return i;
         }
+        let index = streams.len();
         let (sh_type, sh_flags) = default_section_metadata(name);
-        secs.push((name.to_string(), SecBuild::new(sh_type, sh_flags)));
-        sec_index.insert(name.to_string(), secs.len() - 1);
-        secs.len() - 1
+        streams.push(SubsectionBuild {
+            section: name.to_string(),
+            subsection,
+            build: SecBuild::new(sh_type, sh_flags),
+        });
+        stream_index.insert(key, index);
+        index
     };
 
     let err = |line: u32, col: u32, msg: String| AsmError::at(line, col, msg);
 
     // gas always creates .text/.data/.bss even when empty; match it so
     // objects diff clean against the system assembler.
-    ensure_sec(".text", &mut secs, &mut sec_index);
-    ensure_sec(".data", &mut secs, &mut sec_index);
-    ensure_sec(".bss", &mut secs, &mut sec_index);
+    ensure_stream(".text", 0, &mut streams, &mut stream_index);
+    ensure_stream(".data", 0, &mut streams, &mut stream_index);
+    ensure_stream(".bss", 0, &mut streams, &mut stream_index);
 
-    for located in &stmts {
+    for (statement_order, located) in stmts.iter().enumerate() {
         let line = located.line;
         let col = located.col;
         match &located.stmt {
             Stmt::Label(name) => {
+                symbol_creation_order
+                    .entry(name.clone())
+                    .or_insert(statement_order);
                 if common_names.contains(name) {
                     return Err(err(
                         line,
@@ -164,9 +268,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     ));
                 }
                 if current == usize::MAX {
-                    current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                 }
-                let sb = &mut secs[current].1;
+                let sb = &mut streams[current].build;
                 if label_section.insert(name.clone(), current).is_some() {
                     return Err(err(line, col, format!("duplicate label '{}'", name)));
                 }
@@ -174,17 +278,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 sb.label_order.push(name.clone());
             }
             Stmt::Directive(d) => match d {
-                Directive::Text => current = ensure_sec(".text", &mut secs, &mut sec_index),
-                Directive::Data => current = ensure_sec(".data", &mut secs, &mut sec_index),
-                Directive::Bss => current = ensure_sec(".bss", &mut secs, &mut sec_index),
                 Directive::Section {
                     name,
+                    subsection,
                     flags,
                     section_type,
                 } => {
-                    let existed = sec_index.contains_key(name);
-                    current = ensure_sec(name, &mut secs, &mut sec_index);
-                    let sb = &mut secs[current].1;
+                    let key = (name.clone(), *subsection);
+                    let existed = stream_index.contains_key(&key);
+                    current = ensure_stream(name, *subsection, &mut streams, &mut stream_index);
+                    let sb = &mut streams[current].build;
                     let declared_type = section_type.map(|kind| match kind {
                         SectionType::Progbits => SHT_PROGBITS,
                         SectionType::Nobits => SHT_NOBITS,
@@ -218,19 +321,50 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 Directive::NoteGnuStack { executable } => {
                     gnu_stack_flags.get_or_insert(if *executable { SHF_EXECINSTR } else { 0 });
                 }
-                Directive::Globl(s) => syminfo.entry(s.clone()).or_default().globl = true,
+                Directive::Globl(s) => {
+                    symbol_creation_order
+                        .entry(s.clone())
+                        .or_insert(statement_order);
+                    syminfo.entry(s.clone()).or_default().globl = true;
+                }
                 Directive::Extern(s) => {
+                    symbol_creation_order
+                        .entry(s.clone())
+                        .or_insert(statement_order);
                     syminfo.entry(s.clone()).or_default();
                 }
-                Directive::Weak(s) => syminfo.entry(s.clone()).or_default().weak = true,
-                Directive::Local(s) => syminfo.entry(s.clone()).or_default().local = true,
+                Directive::Weak(s) => {
+                    symbol_creation_order
+                        .entry(s.clone())
+                        .or_insert(statement_order);
+                    if global_common_names.contains(s) {
+                        return Err(err(
+                            line,
+                            col,
+                            format!("symbol '{}' can not be both weak and common", s),
+                        ));
+                    }
+                    syminfo.entry(s.clone()).or_default().weak = true;
+                }
+                Directive::Local(s) => {
+                    symbol_creation_order
+                        .entry(s.clone())
+                        .or_insert(statement_order);
+                    syminfo.entry(s.clone()).or_default().local = true;
+                }
                 Directive::Type { sym, kind } => {
+                    symbol_creation_order
+                        .entry(sym.clone())
+                        .or_insert(statement_order);
                     syminfo.entry(sym.clone()).or_default().typ = Some(match kind {
                         SymKind::Function => STT_FUNC,
                         SymKind::Object => STT_OBJECT,
                     })
                 }
                 Directive::Size { sym, arg } => {
+                    symbol_creation_order
+                        .entry(sym.clone())
+                        .or_insert(statement_order);
                     if matches!(arg, SizeArg::DotMinus(_)) && current == usize::MAX {
                         return Err(err(
                             line,
@@ -244,10 +378,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     e.size_col = col;
                     e.size_section = matches!(arg, SizeArg::DotMinus(_)).then_some(current);
                     if matches!(arg, SizeArg::DotMinus(_)) {
-                        secs[current].1.push(line, col, Item::SizeDot(sym.clone()));
+                        streams[current]
+                            .build
+                            .push(line, col, Item::SizeDot(sym.clone()));
                     }
                 }
                 Directive::Comm { sym, size, align } => {
+                    symbol_creation_order
+                        .entry(sym.clone())
+                        .or_insert(statement_order);
                     if label_section.contains_key(sym) {
                         return Err(err(
                             line,
@@ -255,19 +394,38 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                             format!("symbol '{}' is already defined", sym),
                         ));
                     }
+                    let info = syminfo.get(sym);
+                    if info.is_some_and(|info| info.weak && !info.local) {
+                        return Err(err(
+                            line,
+                            col,
+                            format!("symbol '{}' can not be both weak and common", sym),
+                        ));
+                    }
+                    let is_local = info.is_some_and(|info| info.local);
+                    if is_local && !local_common_names.insert(sym.clone()) {
+                        return Err(err(
+                            line,
+                            col,
+                            format!("symbol '{}' is already defined", sym),
+                        ));
+                    }
+                    if !is_local {
+                        global_common_names.insert(sym.clone());
+                    }
                     common_names.insert(sym.clone());
                     commons.push((sym.clone(), *size, *align, line, col))
                 }
-                Directive::File(_) => {}
+                Directive::File(name) => file_symbols.push((statement_order, name.clone())),
                 Directive::P2Align {
                     pow,
                     fill,
                     max_skip,
                 } => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
-                    let sb = &mut secs[current].1;
+                    let sb = &mut streams[current].build;
                     sb.max_align = sb.max_align.max(1u64 << pow);
                     sb.push(
                         line,
@@ -290,9 +448,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         _ => 8,
                     };
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
-                    let is_nobits = secs[current].1.sh_type == SHT_NOBITS;
+                    let is_nobits = streams[current].build.sh_type == SHT_NOBITS;
                     let has_nonzero_or_expr = items.iter().any(|item| match item {
                         DataItem::Num(value) => *value != 0,
                         _ => true,
@@ -305,11 +463,13 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         ));
                     }
                     if is_nobits {
-                        secs[current]
-                            .1
-                            .push(line, col, Item::Zero((width * items.len()) as u64));
+                        streams[current].build.push(
+                            line,
+                            col,
+                            Item::Zero((width * items.len()) as u64),
+                        );
                     } else {
-                        secs[current].1.push(
+                        streams[current].build.push(
                             line,
                             col,
                             Item::Data {
@@ -319,58 +479,68 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         );
                     }
                 }
-                Directive::Ascii(b) => {
+                Directive::Ascii(strings) => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
-                    if secs[current].1.sh_type == SHT_NOBITS && b.iter().any(|&x| x != 0) {
+                    let bytes = strings.concat();
+                    let is_nobits = streams[current].build.sh_type == SHT_NOBITS;
+                    if is_nobits && bytes.iter().any(|&byte| byte != 0) {
                         return Err(err(
                             line,
                             col,
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
-                    if secs[current].1.sh_type == SHT_NOBITS {
-                        secs[current].1.push(line, col, Item::Zero(b.len() as u64));
+                    if is_nobits {
+                        streams[current]
+                            .build
+                            .push(line, col, Item::Zero(bytes.len() as u64));
                     } else {
-                        secs[current]
-                            .1
-                            .push(line, col, Item::Bytes(b.clone(), vec![]));
+                        streams[current]
+                            .build
+                            .push(line, col, Item::Bytes(bytes, vec![]));
                     }
                 }
-                Directive::Asciz(b) => {
+                Directive::Asciz(strings) => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
-                    if secs[current].1.sh_type == SHT_NOBITS && b.iter().any(|&x| x != 0) {
+                    let mut bytes = Vec::new();
+                    for string in strings {
+                        bytes.extend_from_slice(string);
+                        bytes.push(0);
+                    }
+                    let is_nobits = streams[current].build.sh_type == SHT_NOBITS;
+                    if is_nobits && bytes.iter().any(|&byte| byte != 0) {
                         return Err(err(
                             line,
                             col,
                             "attempt to store non-empty string in section `.bss'".into(),
                         ));
                     }
-                    if secs[current].1.sh_type == SHT_NOBITS {
-                        secs[current]
-                            .1
-                            .push(line, col, Item::Zero(b.len() as u64 + 1));
+                    if is_nobits {
+                        streams[current]
+                            .build
+                            .push(line, col, Item::Zero(bytes.len() as u64));
                     } else {
-                        let mut v = b.clone();
-                        v.push(0);
-                        secs[current].1.push(line, col, Item::Bytes(v, vec![]));
+                        streams[current]
+                            .build
+                            .push(line, col, Item::Bytes(bytes, vec![]));
                     }
                 }
                 Directive::Space { size, fill } => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
-                    if secs[current].1.sh_type == SHT_NOBITS && *fill != 0 {
+                    if streams[current].build.sh_type == SHT_NOBITS && *fill != 0 {
                         return Err(err(
                             line,
                             col,
                             "attempt to store non-zero value in section `.bss'".into(),
                         ));
                     }
-                    secs[current].1.push(
+                    streams[current].build.push(
                         line,
                         col,
                         Item::Fill {
@@ -381,14 +551,14 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                 }
                 Directive::Zero(n) => {
                     if current == usize::MAX {
-                        current = ensure_sec(".text", &mut secs, &mut sec_index);
+                        current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                     }
-                    secs[current].1.push(line, col, Item::Zero(*n));
+                    streams[current].build.push(line, col, Item::Zero(*n));
                 }
             },
             Stmt::Insn { mnemonic, operands } => {
                 if current == usize::MAX {
-                    current = ensure_sec(".text", &mut secs, &mut sec_index);
+                    current = ensure_stream(".text", 0, &mut streams, &mut stream_index);
                 }
                 // Relaxable branch? jmp/jcc to a symbol that is a
                 // file-local label (decided in pass 2 — here we defer
@@ -404,8 +574,8 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     _ => None,
                 };
                 if let Some((kind, label)) = branch {
-                    secs[current]
-                        .1
+                    streams[current]
+                        .build
                         .push(line, col, Item::Branch { kind, label });
                     continue;
                 }
@@ -418,12 +588,22 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                         format!("unexpected label fix for {}", mnemonic),
                     ));
                 }
-                secs[current].1.push(
+                streams[current].build.push(
                     line,
                     col,
                     Item::Bytes(enc.bytes, enc.reloc.into_iter().collect()),
                 );
             }
+        }
+    }
+
+    let (secs, stream_to_section) = merge_subsections(streams);
+    for section in label_section.values_mut() {
+        *section = stream_to_section[*section];
+    }
+    for info in syminfo.values_mut() {
+        if let Some(section) = &mut info.size_section {
+            *section = stream_to_section[*section];
         }
     }
 
@@ -437,6 +617,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         /// sym -> dot position at its `.size sym, .-base` directive.
         size_dot: HashMap<String, u64>,
         max_align: u64,
+        text_nop_padding: Vec<Range<usize>>,
         sh_type: u32,
         sh_flags: u64,
     }
@@ -521,6 +702,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         // Materialize.
         let mut bytes: Vec<u8> = Vec::new();
         let mut relocs: Vec<LocatedReloc> = Vec::new();
+        let mut text_nop_padding = Vec::new();
         let mut item_offsets: Vec<u64> = Vec::with_capacity(sb.items.len());
         // First recompute final offsets (same walk as above).
         {
@@ -811,12 +993,16 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
                     let pad = align_pad(pos, *pow, *max_skip, line, col)?;
                     let section_end = checked_layout_add(pos, pad, line, col)?;
                     if !is_bss {
+                        let start = bytes.len();
                         let end = reserve_materialized_bytes(&mut bytes, pad, line, col)?;
-                        let len = end - bytes.len();
+                        let len = end - start;
                         if let Some(byte) = fill {
                             bytes.resize(end, *byte);
                         } else if is_text {
                             fill_nops(&mut bytes, len);
+                            if start != end {
+                                text_nop_padding.push(start..end);
+                            }
                         } else {
                             bytes.resize(end, 0);
                         }
@@ -838,6 +1024,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             relocs,
             labels: final_labels,
             max_align: sb.max_align,
+            text_nop_padding,
             sh_type: sb.sh_type,
             sh_flags: sb.sh_flags,
         });
@@ -883,14 +1070,28 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         }
         for (sym, size, align, line, col) in &commons {
             if syminfo.get(sym).is_some_and(|i| i.local) {
+                // Local COMMON storage is allocated directly in `.bss`, whose
+                // omitted alignment default is one byte. This differs from
+                // the size-derived default carried by global SHN_COMMON.
+                let align = align.unwrap_or(1);
+                if !align.is_power_of_two() {
+                    return Err(err(
+                        *line,
+                        *col,
+                        format!(
+                            "local COMMON '{}' alignment {} is not a power of two",
+                            sym, align
+                        ),
+                    ));
+                }
                 let bss = &mut obj.sections[model_sec_index[".bss"]];
-                let off = checked_align_up(bss.nobits_size, (*align).max(1)).ok_or_else(|| {
+                let off = checked_align_up(bss.nobits_size, align).ok_or_else(|| {
                     err(*line, *col, "local COMMON alignment overflows u64".into())
                 })?;
                 bss.nobits_size = off
                     .checked_add(*size)
                     .ok_or_else(|| err(*line, *col, "local COMMON size overflows u64".into()))?;
-                bss.sh_addralign = bss.sh_addralign.max(*align);
+                bss.sh_addralign = bss.sh_addralign.max(align);
                 local_bss.insert(sym.clone(), (off, *size));
             }
         }
@@ -951,6 +1152,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         // Deterministic: label_order from the build.
         for label in secs[li].1.label_order.iter() {
             let info = syminfo.get(label).cloned().unwrap_or_default();
+            // Validate metadata even when the temporary itself is omitted
+            // from the symbol table.
+            let size = symbol_size(label, &info, Some(li))?;
             if label.starts_with(".L") && !info.globl && !info.weak {
                 continue;
             }
@@ -962,9 +1166,6 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             } else {
                 STB_LOCAL
             };
-            // `.size sym, .-base`: dot recorded at the directive, so
-            // padding and local labels after the body don't skew it.
-            let size = symbol_size(label, &info, Some(li))?;
             model_sym_index.insert(label.clone(), obj.symbols.len());
             obj.symbols.push(Symbol {
                 name: label.clone(),
@@ -1011,6 +1212,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
         if local_bss.contains_key(sym) {
             continue;
         }
+        let align = align.unwrap_or_else(|| default_common_alignment(*size));
+        if let Some(&symbol_index) = model_sym_index.get(sym) {
+            let symbol = &mut obj.symbols[symbol_index];
+            symbol.value = symbol.value.max(align);
+            if symbol.size == 0 {
+                symbol.size = *size;
+            }
+            continue;
+        }
         model_sym_index.insert(sym.clone(), obj.symbols.len());
         obj.symbols.push(Symbol {
             name: sym.clone(),
@@ -1018,7 +1228,7 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             typ: STT_OBJECT,
             vis: STV_DEFAULT,
             place: SymbolPlace::Common,
-            value: *align,
+            value: align,
             size: *size,
         });
     }
@@ -1036,7 +1246,9 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             | Stmt::Directive(Directive::Size { sym, .. }) => sym,
             _ => continue,
         };
-        if model_sym_index.contains_key(symbol) {
+        // A defined label either already has a symbol-table entry or is an
+        // intentionally elided local temporary. Neither case is undefined.
+        if model_sym_index.contains_key(symbol) || label_section.contains_key(symbol) {
             continue;
         }
         let info = &syminfo[symbol];
@@ -1054,6 +1266,62 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
             value: 0,
             size,
         });
+    }
+
+    if !file_symbols.is_empty() {
+        // An STT_FILE entry begins a group of subsequent local symbols. GNU as
+        // preserves those creation boundaries, except that the first FILE is
+        // promoted ahead of locals created before any `.file`. Keep globals in
+        // their existing deterministic order; the ELF writer partitions them
+        // after all locals and remaps relocation indexes later.
+        let existing_symbols = std::mem::take(&mut obj.symbols);
+        let mut local_symbols = Vec::new();
+        let mut nonlocal_symbols = Vec::new();
+        for (serial, symbol) in existing_symbols.into_iter().enumerate() {
+            if symbol.bind == STB_LOCAL {
+                let creation_order = symbol_creation_order
+                    .get(&symbol.name)
+                    .copied()
+                    .unwrap_or(usize::MAX);
+                local_symbols.push((creation_order, serial, None, symbol));
+            } else {
+                nonlocal_symbols.push(symbol);
+            }
+        }
+        let serial_base = local_symbols.len();
+        for (file_index, (creation_order, name)) in file_symbols.into_iter().enumerate() {
+            local_symbols.push((
+                creation_order,
+                serial_base + file_index,
+                Some(file_index),
+                Symbol {
+                    name,
+                    bind: STB_LOCAL,
+                    typ: STT_FILE,
+                    vis: STV_DEFAULT,
+                    place: SymbolPlace::Abs,
+                    value: 0,
+                    size: 0,
+                },
+            ));
+        }
+        local_symbols.sort_by_key(|(creation_order, serial, _, _)| (*creation_order, *serial));
+        let first_file = local_symbols
+            .iter()
+            .position(|(_, _, file_index, _)| *file_index == Some(0))
+            .expect("non-empty file symbol list contains its first entry");
+        let first_file = local_symbols.remove(first_file);
+        local_symbols.insert(0, first_file);
+
+        obj.symbols
+            .extend(local_symbols.into_iter().map(|(_, _, _, symbol)| symbol));
+        obj.symbols.extend(nonlocal_symbols);
+        model_sym_index.clear();
+        for (symbol_index, symbol) in obj.symbols.iter().enumerate() {
+            if symbol.typ != STT_FILE {
+                model_sym_index.insert(symbol.name.clone(), symbol_index);
+            }
+        }
     }
 
     // Relocations. gas's rules for defined LOCAL targets (.L*,
@@ -1185,7 +1453,15 @@ pub fn assemble_x86(src: &str, osabi: u8) -> Result<ObjectFile, AsmX86Error> {
     }
 
     elf::validate(&obj).map_err(|e| AsmError::new(e.to_string()))?;
-    Ok(obj)
+    let text_nop_padding = laid
+        .iter()
+        .find(|section| section.name == ".text")
+        .map(|section| section.text_nop_padding.clone())
+        .unwrap_or_default();
+    Ok(X86Assembly {
+        object: obj,
+        text_nop_padding,
+    })
 }
 
 fn default_section_metadata(name: &str) -> (u32, u64) {
@@ -1256,6 +1532,10 @@ fn checked_align_up(value: u64, alignment: u64) -> Option<u64> {
     } else {
         value.checked_add(alignment - remainder)
     }
+}
+
+fn default_common_alignment(size: u64) -> u64 {
+    size.clamp(1, 16).next_power_of_two()
 }
 
 /// Padding a `.p2align pow` inserts at `pos`, honoring a `.p2align N,,M`

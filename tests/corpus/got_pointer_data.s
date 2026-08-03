@@ -1,3 +1,4 @@
+	.build_version macos, 15, 0
 	.data
 	.globl	_ptr64
 _ptr64:

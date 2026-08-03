@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .section __TEXT,__cstring
 msg:
     .asciz "hello"

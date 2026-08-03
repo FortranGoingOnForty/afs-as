@@ -47,8 +47,10 @@ pub const SHF_ALLOC: u64 = 0x2;
 pub const SHF_EXECINSTR: u64 = 0x4;
 
 pub const SHN_UNDEF: u16 = 0;
+pub const SHN_LORESERVE: u16 = 0xff00;
 pub const SHN_ABS: u16 = 0xfff1;
 pub const SHN_COMMON: u16 = 0xfff2;
+pub const SHN_XINDEX: u16 = 0xffff;
 
 pub const STB_LOCAL: u8 = 0;
 pub const STB_GLOBAL: u8 = 1;
@@ -58,6 +60,7 @@ pub const STT_NOTYPE: u8 = 0;
 pub const STT_OBJECT: u8 = 1;
 pub const STT_FUNC: u8 = 2;
 pub const STT_SECTION: u8 = 3;
+pub const STT_FILE: u8 = 4;
 
 pub const STV_DEFAULT: u8 = 0;
 pub const STV_HIDDEN: u8 = 2;
@@ -267,7 +270,10 @@ impl Elf64Shdr {
     }
 
     pub fn parse(b: &[u8], off: usize) -> Result<Self, ElfError> {
-        if b.len() < off + SHDR_SIZE {
+        let end = off
+            .checked_add(SHDR_SIZE)
+            .ok_or_else(|| ElfError::at(off as u64, "section header offset overflows usize"))?;
+        if b.len() < end {
             return Err(ElfError::at(off as u64, "section header out of bounds"));
         }
         Ok(Self {
@@ -548,11 +554,17 @@ impl ObjectFile {
 // Validation
 // ---------------------------------------------------------------------
 
-/// Validate relocations against the object's machine: known type,
-/// offset+width in bounds, symbol index in range. Loud errors over
-/// silently emitting a bad object.
+/// Validate section, relocation, and symbol invariants before writing:
+/// conforming section alignment, relocation type and bounds, and valid
+/// symbol indexes. Loud errors over silently emitting a bad object.
 pub fn validate(obj: &ObjectFile) -> Result<(), ElfError> {
     for sec in &obj.sections {
+        if sec.sh_addralign != 0 && !sec.sh_addralign.is_power_of_two() {
+            return Err(ElfError::new(format!(
+                "{}: section alignment {} is not a power of two",
+                sec.name, sec.sh_addralign
+            )));
+        }
         for r in &sec.relas {
             if r.symbol >= obj.symbols.len() {
                 return Err(ElfError::new(format!(
@@ -641,6 +653,57 @@ fn reserve_elf_bytes(bytes: &mut Vec<u8>, additional: usize) -> Result<(), ElfEr
     })
 }
 
+/// ELF gABI sentinel fields and their section-zero payloads for a
+/// section table whose count or name-table index enters the reserved range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SectionHeaderEncoding {
+    e_shnum: u16,
+    e_shstrndx: u16,
+    null_sh_size: u64,
+    null_sh_link: u32,
+}
+
+fn encode_section_header_table(
+    section_count: usize,
+    shstrtab_idx: usize,
+) -> Result<SectionHeaderEncoding, ElfError> {
+    if shstrtab_idx >= section_count {
+        return Err(ElfError::new(format!(
+            "section-name table index {} is outside {} section headers",
+            shstrtab_idx, section_count
+        )));
+    }
+
+    let extended_count = section_count >= usize::from(SHN_LORESERVE);
+    let extended_shstrndx = shstrtab_idx >= usize::from(SHN_LORESERVE);
+    Ok(SectionHeaderEncoding {
+        e_shnum: if extended_count {
+            0
+        } else {
+            u16::try_from(section_count)
+                .map_err(|_| ElfError::new("ELF section count exceeds u16"))?
+        },
+        e_shstrndx: if extended_shstrndx {
+            SHN_XINDEX
+        } else {
+            u16::try_from(shstrtab_idx)
+                .map_err(|_| ElfError::new("ELF section-name table index exceeds u16"))?
+        },
+        null_sh_size: if extended_count {
+            u64::try_from(section_count)
+                .map_err(|_| ElfError::new("ELF section count exceeds u64"))?
+        } else {
+            0
+        },
+        null_sh_link: if extended_shstrndx {
+            u32::try_from(shstrtab_idx)
+                .map_err(|_| ElfError::new("ELF section-name table index exceeds u32"))?
+        } else {
+            0
+        },
+    })
+}
+
 pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     validate(obj)?;
 
@@ -712,20 +775,23 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
         .collect();
     let first_rela_idx = strtab_idx + 1;
     let shstrtab_idx = first_rela_idx + relocated.len();
-    let e_shnum = (shstrtab_idx + 1) as u16;
+    let section_count = shstrtab_idx
+        .checked_add(1)
+        .ok_or_else(|| ElfError::new("ELF section count overflows usize"))?;
+    let section_encoding = encode_section_header_table(section_count, shstrtab_idx)?;
 
     // --- Lay out file contents.
     let mut body: Vec<u8> = Vec::new(); // everything after the ehdr
     let base = EHDR_SIZE as u64;
-    let mut shdrs: Vec<Elf64Shdr> = Vec::with_capacity(e_shnum as usize);
+    let mut shdrs: Vec<Elf64Shdr> = Vec::with_capacity(section_count);
     shdrs.push(Elf64Shdr {
         sh_name: 0,
         sh_type: SHT_NULL,
         sh_flags: 0,
         sh_addr: 0,
         sh_offset: 0,
-        sh_size: 0,
-        sh_link: 0,
+        sh_size: section_encoding.null_sh_size,
+        sh_link: section_encoding.null_sh_link,
         sh_info: 0,
         sh_addralign: 0,
         sh_entsize: 0,
@@ -876,7 +942,7 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
     for sh in &shdrs {
         sh.write(&mut body);
     }
-    debug_assert_eq!(shdrs.len(), e_shnum as usize);
+    debug_assert_eq!(shdrs.len(), section_count);
 
     let output_size = EHDR_SIZE
         .checked_add(body.len())
@@ -895,8 +961,8 @@ pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, ElfError> {
         e_phentsize: 0,
         e_phnum: 0,
         e_shentsize: SHDR_SIZE as u16,
-        e_shnum,
-        e_shstrndx: shstrtab_idx as u16,
+        e_shnum: section_encoding.e_shnum,
+        e_shstrndx: section_encoding.e_shstrndx,
     }
     .write(&mut out);
     out.extend_from_slice(&body);
@@ -931,18 +997,55 @@ pub fn parse_elf(bytes: &[u8]) -> Result<ObjectFile, ElfError> {
             format!("unexpected e_shentsize {}", ehdr.e_shentsize),
         ));
     }
-    let shoff = ehdr.e_shoff as usize;
-    let shnum = ehdr.e_shnum as usize;
-    let mut shdrs = Vec::with_capacity(shnum);
-    for i in 0..shnum {
-        shdrs.push(Elf64Shdr::parse(bytes, shoff + i * SHDR_SIZE)?);
-    }
-    if shdrs.is_empty() {
+    let shoff = usize::try_from(ehdr.e_shoff)
+        .map_err(|_| ElfError::at(40, "e_shoff exceeds addressable memory"))?;
+    if shoff == 0 {
         return Err(ElfError::new("no sections"));
     }
 
+    let null = Elf64Shdr::parse(bytes, shoff)?;
+    if null.sh_type != SHT_NULL {
+        return Err(ElfError::at(
+            ehdr.e_shoff,
+            "section header zero is not SHT_NULL",
+        ));
+    }
+    let shnum = if ehdr.e_shnum == 0 {
+        usize::try_from(null.sh_size)
+            .map_err(|_| ElfError::new("extended ELF section count exceeds addressable memory"))?
+    } else {
+        usize::from(ehdr.e_shnum)
+    };
+    if shnum == 0 {
+        return Err(ElfError::new("no sections"));
+    }
+    let shstrndx = if ehdr.e_shstrndx == SHN_XINDEX {
+        null.sh_link as usize
+    } else {
+        usize::from(ehdr.e_shstrndx)
+    };
+
+    let table_size = shnum
+        .checked_mul(SHDR_SIZE)
+        .ok_or_else(|| ElfError::new("ELF section-header table size overflows usize"))?;
+    let table_end = shoff
+        .checked_add(table_size)
+        .ok_or_else(|| ElfError::new("ELF section-header table range overflows usize"))?;
+    if table_end > bytes.len() {
+        return Err(ElfError::at(
+            ehdr.e_shoff,
+            format!("section-header table extends past EOF ({} entries)", shnum),
+        ));
+    }
+
+    let mut shdrs = Vec::with_capacity(shnum);
+    shdrs.push(null);
+    for i in 1..shnum {
+        shdrs.push(Elf64Shdr::parse(bytes, shoff + i * SHDR_SIZE)?);
+    }
+
     let shstr = &shdrs
-        .get(ehdr.e_shstrndx as usize)
+        .get(shstrndx)
         .ok_or_else(|| ElfError::new("e_shstrndx out of range"))?;
     let shstr_bytes = section_bytes(bytes, shstr)?;
     let sec_name =
@@ -1208,6 +1311,29 @@ mod tests {
     }
 
     #[test]
+    fn section_header_encoding_uses_the_reserved_boundary() {
+        let reserved = usize::from(SHN_LORESERVE);
+
+        let direct = encode_section_header_table(reserved - 1, reserved - 2).unwrap();
+        assert_eq!(direct.e_shnum, SHN_LORESERVE - 1);
+        assert_eq!(direct.e_shstrndx, SHN_LORESERVE - 2);
+        assert_eq!(direct.null_sh_size, 0);
+        assert_eq!(direct.null_sh_link, 0);
+
+        let extended_count = encode_section_header_table(reserved, reserved - 1).unwrap();
+        assert_eq!(extended_count.e_shnum, 0);
+        assert_eq!(extended_count.e_shstrndx, SHN_LORESERVE - 1);
+        assert_eq!(extended_count.null_sh_size, u64::from(SHN_LORESERVE));
+        assert_eq!(extended_count.null_sh_link, 0);
+
+        let both_extended = encode_section_header_table(reserved + 1, reserved).unwrap();
+        assert_eq!(both_extended.e_shnum, 0);
+        assert_eq!(both_extended.e_shstrndx, SHN_XINDEX);
+        assert_eq!(both_extended.null_sh_size, u64::from(SHN_LORESERVE) + 1);
+        assert_eq!(both_extended.null_sh_link, u32::from(SHN_LORESERVE));
+    }
+
+    #[test]
     fn sym_roundtrip_and_info_packing() {
         let s = Elf64Sym {
             st_name: 5,
@@ -1324,6 +1450,41 @@ mod tests {
     }
 
     #[test]
+    fn extended_section_numbering_roundtrips_wrapped_count() {
+        // The writer adds null, GNU-stack, symtab, strtab, and shstrtab
+        // headers, placing the count at u16 wrap and the name index at
+        // SHN_XINDEX.
+        const CONTENT_SECTIONS: usize = 65_531;
+        const SECTION_HEADERS: u64 = 65_536;
+        const SHSTRTAB_INDEX: u32 = 65_535;
+
+        let mut obj = ObjectFile::new(EM_X86_64, ELFOSABI_NONE);
+        obj.sections.reserve(CONTENT_SECTIONS);
+        for index in 0..CONTENT_SECTIONS {
+            obj.sections
+                .push(Section::progbits(&format!(".s{index}"), 0, 1));
+        }
+
+        let bytes = write_elf(&obj).expect("large section table should serialize");
+        let ehdr = Elf64Ehdr::parse(&bytes).unwrap();
+        assert_eq!(ehdr.e_shnum, 0);
+        assert_eq!(ehdr.e_shstrndx, SHN_XINDEX);
+
+        let null = Elf64Shdr::parse(&bytes, ehdr.e_shoff as usize).unwrap();
+        assert_eq!(null.sh_type, SHT_NULL);
+        assert_eq!(null.sh_size, SECTION_HEADERS);
+        assert_eq!(null.sh_link, SHSTRTAB_INDEX);
+
+        let roundtrip = parse_elf(&bytes).expect("extended section table should parse");
+        assert_eq!(roundtrip.sections.len(), CONTENT_SECTIONS);
+        assert_eq!(roundtrip.sections.first().unwrap().name, ".s0");
+        assert_eq!(
+            roundtrip.sections.last().unwrap().name,
+            format!(".s{}", CONTENT_SECTIONS - 1)
+        );
+    }
+
+    #[test]
     fn output_reservation_failure_is_reported() {
         let mut bytes = Vec::new();
         let err = reserve_elf_bytes(&mut bytes, usize::MAX)
@@ -1398,6 +1559,18 @@ mod tests {
         let mut obj = sample_object();
         obj.sections[0].relas[0].symbol = 99;
         assert!(write_elf(&obj).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_non_power_of_two_section_alignment() {
+        let mut obj = sample_object();
+        obj.sections[2].sh_addralign = 3;
+
+        let err = write_elf(&obj).expect_err("invalid section alignment was serialized");
+        assert_eq!(
+            err.message,
+            ".bss: section alignment 3 is not a power of two"
+        );
     }
 
     #[test]

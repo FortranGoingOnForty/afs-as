@@ -568,6 +568,27 @@ fn fixture_paths_are_resolved_from_corpus_directory() {
 }
 
 #[test]
+fn corpus_fixtures_pin_their_macos_deployment_target() {
+    let mut missing = fs::read_dir(common::fixture_path(""))
+        .expect("read corpus directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "s"))
+        .filter(|path| {
+            !fs::read_to_string(path)
+                .expect("read corpus fixture")
+                .lines()
+                .any(|line| line.trim_start().starts_with(".build_version "))
+        })
+        .collect::<Vec<_>>();
+    missing.sort();
+    assert!(
+        missing.is_empty(),
+        "corpus fixtures without an explicit .build_version: {missing:?}"
+    );
+}
+
+#[test]
 fn corpus_cstring_section_matches_load_commands_and_symbols() {
     if !common::native_macho_host(
         "corpus_compat",

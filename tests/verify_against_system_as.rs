@@ -15,16 +15,16 @@ use std::process::Command;
 use afs_as::encode::{AddrExtend, BarrierOpt, Inst, RegExtend, RegShift};
 use afs_as::reg::*;
 
+#[path = "common/owned_temp_dir.rs"]
+mod owned_temp_dir;
+
+use owned_temp_dir::OwnedTempDir;
+
 /// Assemble a single ARM64 instruction with Apple `as` and return its 4-byte encoding.
 fn system_encode(asm: &str) -> u32 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    let tid = std::thread::current().id();
-    let dir = std::env::temp_dir();
-    let s_path = dir.join(format!("afs_as_test_{}_{:?}_{}.s", pid, tid, id));
-    let o_path = dir.join(format!("afs_as_test_{}_{:?}_{}.o", pid, tid, id));
+    let temp = OwnedTempDir::new("afs_as_test");
+    let s_path = temp.path("input.s");
+    let o_path = temp.path("output.o");
 
     // Write assembly file
     let mut f = std::fs::File::create(&s_path).expect("create .s");

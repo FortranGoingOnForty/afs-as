@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .text
 .globl _branch_address_surface
 _branch_address_surface:

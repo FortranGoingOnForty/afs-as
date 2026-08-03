@@ -4,6 +4,11 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(target_os = "linux")]
+use std::ffi::OsString;
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStringExt;
+
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_root(prefix: &str) -> PathBuf {
@@ -17,7 +22,17 @@ fn afs_as() -> Command {
     Command::new(env!("CARGO_BIN_EXE_afs-as"))
 }
 
-fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
+#[cfg(target_os = "linux")]
+fn full_device() -> Stdio {
+    Stdio::from(
+        fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("open /dev/full"),
+    )
+}
+
+fn run_with_stdin_bytes(args: &[&str], input: &[u8]) -> std::process::Output {
     let mut child = afs_as()
         .args(args)
         .stdin(Stdio::piped())
@@ -29,9 +44,13 @@ fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
         .stdin
         .as_mut()
         .expect("stdin pipe")
-        .write_all(input.as_bytes())
+        .write_all(input)
         .expect("write stdin");
     child.wait_with_output().expect("wait for afs-as")
+}
+
+fn run_with_stdin(args: &[&str], input: &str) -> std::process::Output {
+    run_with_stdin_bytes(args, input.as_bytes())
 }
 
 #[test]
@@ -68,6 +87,52 @@ fn version_flag_prints_version_to_stdout() {
         format!("afs-as {}", env!("CARGO_PKG_VERSION"))
     );
     assert!(stderr.is_empty(), "stderr:\n{}", stderr);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn help_and_version_write_failures_exit_with_controlled_status() {
+    for flag in ["--help", "--version"] {
+        let output = afs_as()
+            .arg(flag)
+            .stdout(full_device())
+            .output()
+            .expect("run afs-as with failing stdout");
+
+        assert_eq!(output.status.code(), Some(1), "flag {flag}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("afs-as: failed to write stdout:"),
+            "flag {flag} stderr:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("panicked"),
+            "flag {flag} stderr:\n{stderr}"
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn broken_stderr_preserves_usage_and_assembly_statuses() {
+    let usage_status = afs_as()
+        .arg("--wat")
+        .stdout(Stdio::null())
+        .stderr(full_device())
+        .status()
+        .expect("run usage error with failing stderr");
+    assert_eq!(usage_status.code(), Some(2));
+
+    let root = temp_root("afs_cli_broken_stderr");
+    let missing_input = root.join("missing.s");
+    let assembly_status = afs_as()
+        .arg(&missing_input)
+        .stdout(Stdio::null())
+        .stderr(full_device())
+        .status()
+        .expect("run assembly error with failing stderr");
+    assert_eq!(assembly_status.code(), Some(1));
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -121,6 +186,69 @@ fn default_output_path_is_created_next_to_input() {
     assert!(!fs::read(&output).expect("read output").is_empty());
 }
 
+// Linux filesystems accept arbitrary non-NUL path bytes. Darwin rejects these
+// byte sequences before afs-as can observe them, so this is a Linux contract.
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_input_and_output_paths_are_preserved() {
+    let root = temp_root("afs_cli_non_utf8_paths");
+    let input = root.join(OsString::from_vec(b"input-\xff.s".to_vec()));
+    let output = root.join(OsString::from_vec(b"output-\xfe.o".to_vec()));
+    fs::write(&input, ".text\n.globl f\nf:\nret\n").expect("write raw-byte input");
+
+    let result = afs_as()
+        .args(["--64", "-o"])
+        .arg(&output)
+        .arg(&input)
+        .output()
+        .expect("run afs-as with raw-byte paths");
+
+    assert!(result.status.success(), "stderr bytes: {:?}", result.stderr);
+    assert!(output.exists(), "raw-byte output path was not created");
+    assert!(!fs::read(&output).expect("read raw-byte output").is_empty());
+    fs::remove_dir_all(&root).ok();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_dash_prefixed_path_requires_double_dash() {
+    let root = temp_root("afs_cli_non_utf8_dash_path");
+    let input_name = OsString::from_vec(b"-input-\xff.s".to_vec());
+    let input = root.join(&input_name);
+    let output = root.join(OsString::from_vec(b"-input-\xff.o".to_vec()));
+    fs::write(&input, ".text\n.globl _entry\n_entry:\nret\n")
+        .expect("write dash-prefixed raw-byte input");
+
+    let rejected = afs_as()
+        .current_dir(&root)
+        .arg(&input_name)
+        .output()
+        .expect("run afs-as without --");
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("afs-as: unrecognized option"),
+        "stderr bytes: {:?}",
+        rejected.stderr
+    );
+
+    let accepted = afs_as()
+        .current_dir(&root)
+        .arg("--")
+        .arg(&input_name)
+        .output()
+        .expect("run afs-as with --");
+    assert!(
+        accepted.status.success(),
+        "stderr bytes: {:?}",
+        accepted.stderr
+    );
+    assert!(
+        output.exists(),
+        "default raw-byte output path was not created"
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
 #[test]
 fn stdin_requires_explicit_output_path() {
     let output = run_with_stdin(&["-"], ".text\nret\n");
@@ -151,6 +279,64 @@ fn stdin_can_write_object_to_stdout() {
         "stdout bytes: {:?}",
         output.stdout.get(..8).unwrap_or(&output.stdout)
     );
+}
+
+#[test]
+fn raw_source_bytes_survive_file_and_stdin_assembly() {
+    let root = temp_root("afs_cli_raw_source_bytes");
+    let cases: [(&str, &[&str], &[u8]); 2] = [
+        (
+            "arm64",
+            &[],
+            b".data\n.ascii \"\xff\"\n; raw comment \xfe\n.text\n.globl _entry\n_entry:\nret\n",
+        ),
+        (
+            "x86_64",
+            &["--64"],
+            b".data\n.ascii \"\xff\"\n# raw comment \xfe\n.text\n.globl f\nf:\nret\n",
+        ),
+    ];
+
+    for (target, target_args, source) in cases {
+        let input = root.join(format!("{target}.s"));
+        let output = root.join(format!("{target}.o"));
+        fs::write(&input, source).expect("write raw assembly source");
+
+        let file_output = afs_as()
+            .args(target_args)
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .expect("assemble raw source file");
+        assert!(
+            file_output.status.success(),
+            "{target} file stderr bytes: {:?}",
+            file_output.stderr
+        );
+
+        let mut stdin_args = target_args.to_vec();
+        stdin_args.extend(["-", "-o", "-"]);
+        let stdin_output = run_with_stdin_bytes(&stdin_args, source);
+        assert!(
+            stdin_output.status.success(),
+            "{target} stdin stderr bytes: {:?}",
+            stdin_output.stderr
+        );
+
+        let file_bytes = fs::read(&output).expect("read assembled object");
+        assert_eq!(
+            stdin_output.stdout, file_bytes,
+            "{target} transport mismatch"
+        );
+
+        if target == "x86_64" {
+            let object = afs_as::elf::parse_elf(&file_bytes).expect("parse raw-byte ELF");
+            assert_eq!(object.section_by_name(".data").expect(".data").data, [0xff]);
+        }
+    }
+
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -190,6 +376,21 @@ fn parse_errors_include_file_line_source_and_caret() {
     assert!(stderr.contains("error:"), "stderr:\n{}", stderr);
     assert!(stderr.contains("add x0 x1, x2"), "stderr:\n{}", stderr);
     assert!(stderr.contains("^"), "stderr:\n{}", stderr);
+}
+
+#[test]
+fn utf8_source_diagnostics_use_scalar_columns_and_aligned_carets() {
+    let output = run_with_stdin(&["-", "-o", "-"], ".text\n.ascii \"é\" garbage\n");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("diagnostic is UTF-8"),
+        concat!(
+            "<stdin>:2:12: error: unexpected trailing token: garbage\n",
+            ".ascii \"é\" garbage\n",
+            "           ^\n",
+        )
+    );
 }
 
 #[test]

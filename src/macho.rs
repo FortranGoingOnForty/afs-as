@@ -6,8 +6,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Write};
-use std::process::Command;
-use std::sync::OnceLock;
 
 // ---- Mach-O Constants ----
 
@@ -74,6 +72,10 @@ const LINKEDIT_DATA_CMD_SIZE: u32 = 16;
 const NLIST_SIZE: u32 = 16;
 const RELOC_SIZE: u32 = 8;
 
+pub const PACKED_VERSION_MAJOR_MAX: u32 = 0xffff;
+pub const PACKED_VERSION_MINOR_MAX: u32 = 0xff;
+pub const PACKED_VERSION_PATCH_MAX: u32 = 0xff;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildVersion {
     pub platform: u32,
@@ -85,31 +87,20 @@ impl Default for BuildVersion {
     fn default() -> Self {
         Self {
             platform: PLATFORM_MACOS,
-            minos: default_host_minos(),
+            // Implicit metadata is a target policy, not a property of the host
+            // running the assembler. Use `.build_version` to select another target.
+            minos: pack_version(15, 0, 0)
+                .expect("fixed default version must fit Mach-O's 16.8.8 encoding"),
             sdk: 0,
         }
     }
 }
 
-fn default_host_minos() -> u32 {
-    static HOST_MINOS: OnceLock<u32> = OnceLock::new();
-    *HOST_MINOS.get_or_init(|| {
-        Command::new("sw_vers")
-            .arg("-productVersion")
-            .output()
-            .ok()
-            .and_then(|out| out.status.success().then_some(out.stdout))
-            .and_then(|stdout| {
-                let version = String::from_utf8(stdout).ok()?;
-                version
-                    .trim()
-                    .split('.')
-                    .next()
-                    .and_then(|major| major.parse::<u32>().ok())
-            })
-            .map(|major| pack_version(major, 0, 0))
-            .unwrap_or_else(|| pack_version(15, 0, 0))
-    })
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VersionComponentOverflow {
+    pub component: &'static str,
+    pub value: u32,
+    pub max: u32,
 }
 
 /// A symbol in the object file.
@@ -758,6 +749,13 @@ fn sorted_relocations(section: &Section) -> Vec<&Relocation> {
 }
 
 fn validate_relocations(obj: &ObjectFile, section: &Section) -> io::Result<()> {
+    if section.kind.is_zerofill() && !section.relocations.is_empty() {
+        return Err(invalid_input(format!(
+            "zerofill section {},{} cannot contain relocations",
+            section.segment, section.name
+        )));
+    }
+
     let relocations = sorted_relocations(section);
     for relocation in &relocations {
         validate_relocation(obj, section, relocation)?;
@@ -929,8 +927,22 @@ fn checked_align_value(value: u64, power: u32) -> Option<u64> {
         .map(|value| value & !(alignment - 1))
 }
 
-pub fn pack_version(major: u32, minor: u32, patch: u32) -> u32 {
-    (major << 16) | (minor << 8) | patch
+pub fn pack_version(major: u32, minor: u32, patch: u32) -> Result<u32, VersionComponentOverflow> {
+    for (component, value, max) in [
+        ("major", major, PACKED_VERSION_MAJOR_MAX),
+        ("minor", minor, PACKED_VERSION_MINOR_MAX),
+        ("patch", patch, PACKED_VERSION_PATCH_MAX),
+    ] {
+        if value > max {
+            return Err(VersionComponentOverflow {
+                component,
+                value,
+                max,
+            });
+        }
+    }
+
+    Ok((major << 16) | (minor << 8) | patch)
 }
 
 /// Write N zero bytes without heap allocation.
@@ -1241,34 +1253,53 @@ mod tests {
         assert_eq!((info >> 28) & 0xF, 3); // type = PAGE21
     }
 
-    fn zerofill_object_with_relocation(size: u64, offset: u32) -> ObjectFile {
-        let mut obj = ObjectFile::new();
-        let mut section = Section::new("__DATA", "__bss", SectionKind::ZeroFill);
-        section.size = size;
-        section.relocations.push(Relocation {
+    fn local_unsigned_relocation(offset: u32) -> Relocation {
+        Relocation {
             offset,
             symbol_idx: 1,
             pcrel: false,
             length: 3,
             extern_: false,
             reloc_type: ARM64_RELOC_UNSIGNED,
-        });
-        obj.sections.push(section);
-        obj
+        }
+    }
+
+    #[test]
+    fn zerofill_sections_reject_relocations() {
+        for (name, kind) in [
+            ("__bss", SectionKind::ZeroFill),
+            ("__thread_bss", SectionKind::ThreadLocalZeroFill),
+        ] {
+            let mut obj = ObjectFile::new();
+            let mut section = Section::new("__DATA", name, kind);
+            section.size = 8;
+            section.relocations.push(local_unsigned_relocation(0));
+            obj.sections.push(section);
+
+            let mut output = Vec::new();
+            let error = write_macho(&obj, &mut output).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert_eq!(
+                error.to_string(),
+                format!("zerofill section __DATA,{name} cannot contain relocations")
+            );
+            assert!(output.is_empty(), "writer emitted bytes before rejection");
+        }
     }
 
     #[test]
     fn relocation_address_accepts_the_signed_boundary() {
         let max = i32::MAX as u32;
-        let obj = zerofill_object_with_relocation(u64::from(max) + 8, max);
-        write_macho(&obj, &mut Vec::new()).unwrap();
+        assert_eq!(
+            relocation_address(&local_unsigned_relocation(max)).unwrap(),
+            i32::MAX
+        );
     }
 
     #[test]
     fn relocation_address_rejects_the_scattered_bit() {
         let offset = i32::MAX as u32 + 1;
-        let obj = zerofill_object_with_relocation(u64::from(offset) + 8, offset);
-        let error = write_macho(&obj, &mut Vec::new()).unwrap_err();
+        let error = relocation_address(&local_unsigned_relocation(offset)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(
             error.to_string(),
@@ -1280,15 +1311,18 @@ mod tests {
     fn relocation_extent_must_fit_its_section() {
         let offset = i32::MAX as u32 - 7;
         let exact_size = u64::from(offset) + 8;
-        let exact = zerofill_object_with_relocation(exact_size, offset);
-        write_macho(&exact, &mut Vec::new()).unwrap();
+        let obj = ObjectFile::new();
+        let mut section = Section::new("__DATA", "__data", SectionKind::Data);
+        section.size = exact_size;
+        section.relocations.push(local_unsigned_relocation(offset));
+        validate_relocations(&obj, &section).unwrap();
 
-        let outside = zerofill_object_with_relocation(exact_size - 1, offset);
-        let error = write_macho(&outside, &mut Vec::new()).unwrap_err();
+        section.size = exact_size - 1;
+        let error = validate_relocations(&obj, &section).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(
             error.to_string(),
-            "relocation at offset 2147483640 with width 8 exceeds section __DATA,__bss size 2147483647"
+            "relocation at offset 2147483640 with width 8 exceeds section __DATA,__data size 2147483647"
         );
     }
 
@@ -1833,9 +1867,53 @@ mod tests {
     }
 
     #[test]
-    fn version_packing() {
-        assert_eq!(pack_version(15, 0, 0), 0x000F0000);
-        assert_eq!(pack_version(14, 5, 1), 0x000E0501);
+    fn version_packing_checks_component_widths() {
+        assert_eq!(pack_version(15, 0, 0), Ok(0x000F0000));
+        assert_eq!(pack_version(14, 5, 1), Ok(0x000E0501));
+        assert_eq!(
+            pack_version(
+                PACKED_VERSION_MAJOR_MAX,
+                PACKED_VERSION_MINOR_MAX,
+                PACKED_VERSION_PATCH_MAX
+            ),
+            Ok(u32::MAX)
+        );
+        assert_eq!(
+            pack_version(PACKED_VERSION_MAJOR_MAX + 1, 0, 0),
+            Err(VersionComponentOverflow {
+                component: "major",
+                value: PACKED_VERSION_MAJOR_MAX + 1,
+                max: PACKED_VERSION_MAJOR_MAX,
+            })
+        );
+        assert_eq!(
+            pack_version(0, PACKED_VERSION_MINOR_MAX + 1, 0),
+            Err(VersionComponentOverflow {
+                component: "minor",
+                value: PACKED_VERSION_MINOR_MAX + 1,
+                max: PACKED_VERSION_MINOR_MAX,
+            })
+        );
+        assert_eq!(
+            pack_version(0, 0, PACKED_VERSION_PATCH_MAX + 1),
+            Err(VersionComponentOverflow {
+                component: "patch",
+                value: PACKED_VERSION_PATCH_MAX + 1,
+                max: PACKED_VERSION_PATCH_MAX,
+            })
+        );
+    }
+
+    #[test]
+    fn default_build_version_is_destination_fixed() {
+        assert_eq!(
+            BuildVersion::default(),
+            BuildVersion {
+                platform: PLATFORM_MACOS,
+                minos: pack_version(15, 0, 0).unwrap(),
+                sdk: 0,
+            }
+        );
     }
 
     #[test]
@@ -1855,8 +1933,8 @@ mod tests {
         let mut obj = ObjectFile::new();
         obj.build_version = BuildVersion {
             platform: PLATFORM_MACOS,
-            minos: pack_version(11, 0, 0),
-            sdk: pack_version(15, 5, 0),
+            minos: pack_version(11, 0, 0).unwrap(),
+            sdk: pack_version(15, 5, 0).unwrap(),
         };
 
         let mut buf = Vec::new();
@@ -1883,8 +1961,8 @@ mod tests {
         ]);
 
         assert_eq!(platform, PLATFORM_MACOS);
-        assert_eq!(minos, pack_version(11, 0, 0));
-        assert_eq!(sdk, pack_version(15, 5, 0));
+        assert_eq!(minos, pack_version(11, 0, 0).unwrap());
+        assert_eq!(sdk, pack_version(15, 5, 0).unwrap());
     }
 
     #[test]

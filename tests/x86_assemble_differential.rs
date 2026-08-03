@@ -14,7 +14,7 @@ use afs_as::elf::{
     parse_elf, SymbolPlace, ELFOSABI_FREEBSD, ELFOSABI_NONE, SHF_EXECINSTR, STB_GLOBAL, STB_WEAK,
     STT_FUNC, STT_NOTYPE, STT_OBJECT,
 };
-use afs_as::x86::assemble::assemble_x86;
+use afs_as::x86::assemble::{assemble_x86, assemble_x86_bytes, assemble_x86_with_provenance};
 
 fn host_osabi() -> u8 {
     if cfg!(target_os = "freebsd") {
@@ -22,6 +22,59 @@ fn host_osabi() -> u8 {
     } else {
         ELFOSABI_NONE
     }
+}
+
+#[test]
+fn nop_normalization_does_not_hide_explicit_text_bytes() {
+    let assembled = assemble_x86_with_provenance(
+        ".text\n.byte 0x66, 0x90\n.p2align 2\n.byte 0x90\n",
+        host_osabi(),
+    )
+    .expect("assemble explicit bytes and implicit padding");
+    assert_eq!(assembled.text_nop_padding, vec![2..4]);
+
+    let text = &assembled
+        .object
+        .section_by_name(".text")
+        .expect("text section")
+        .data;
+    let normalized = celf::canonicalize_nop_padding(text, &assembled.text_nop_padding)
+        .expect("normalize proven padding");
+    assert_eq!(&normalized[..2], &[0x66, 0x90]);
+    assert_eq!(&normalized[2..4], &[0x90, 0x90]);
+
+    assert_ne!(
+        celf::canonicalize_nop_padding(&[0x66, 0x90], &[]).unwrap(),
+        celf::canonicalize_nop_padding(&[0x90, 0x90], &[]).unwrap(),
+        "NOP-looking source bytes are architectural output outside proven alignment padding"
+    );
+    let corrupted_padding = 0..1;
+    assert!(
+        celf::canonicalize_nop_padding(&[0xcc], std::slice::from_ref(&corrupted_padding)).is_err()
+    );
+}
+
+#[test]
+fn raw_string_and_comment_bytes_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "raw_string_and_comment_bytes_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let source = b".data\n.ascii \"\xff\"\n# ignored \xfe\n";
+    let tmp = celf::TempArtifacts::new("afs_x86_raw_bytes");
+    let source_path = tmp.path("raw.s");
+    let object_path = tmp.path("raw.o");
+    std::fs::write(&source_path, source).expect("write raw source");
+    celf::assemble_with_gas(&gas, &source_path, &object_path);
+
+    let gas_object = parse_elf(&std::fs::read(&object_path).expect("read gas object"))
+        .expect("parse gas object");
+    let our_object = assemble_x86_bytes(source, host_osabi()).expect("assemble raw source bytes");
+    assert_eq!(celf::normalize(&our_object), celf::normalize(&gas_object));
 }
 
 fn diff_one(
@@ -36,19 +89,23 @@ fn diff_one(
     celf::assemble_with_gas(gas, &src_path, &obj_path);
     let gas_obj = parse_elf(&std::fs::read(&obj_path).unwrap()).expect("lift gas");
 
-    let ours = match assemble_x86(src, host_osabi()) {
+    let ours = match assemble_x86_with_provenance(src, host_osabi()) {
         Ok(o) => o,
         Err(e) => return Some(format!("{}: our assembler failed: {}", name, e)),
     };
 
-    // .text byte identity (the strong check), modulo NOP-fill split
-    // order which differs across binutils versions.
-    let gas_text = gas_obj
-        .section_by_name(".text")
-        .map(|s| celf::canonicalize_nop_fill(&s.data));
-    let our_text = ours
-        .section_by_name(".text")
-        .map(|s| celf::canonicalize_nop_fill(&s.data));
+    // .text byte identity (the strong check), modulo NOP-fill split order only
+    // at offsets the layout pass proved came from implicit text alignment.
+    let gas_text = match celf::normalized_text_with_padding(&gas_obj, &ours.text_nop_padding) {
+        Ok(text) => text,
+        Err(error) => return Some(format!("{}: invalid gas text padding: {}", name, error)),
+    };
+    let our_text = match celf::normalized_text_with_padding(&ours.object, &ours.text_nop_padding) {
+        Ok(text) => text,
+        Err(error) => {
+            return Some(format!("{}: invalid emitted text padding: {}", name, error));
+        }
+    };
     if gas_text != our_text {
         let (g, o) = (gas_text.unwrap_or_default(), our_text.unwrap_or_default());
         let first_diff = g
@@ -68,14 +125,23 @@ fn diff_one(
     }
 
     // Policy comparison for everything else.
-    let a = celf::normalize(&gas_obj);
-    let b = celf::normalize(&ours);
+    let a = match celf::normalize_with_text_padding(&gas_obj, &ours.text_nop_padding) {
+        Ok(object) => object,
+        Err(error) => return Some(format!("{}: cannot normalize gas object: {}", name, error)),
+    };
+    let b = match celf::normalize_with_text_padding(&ours.object, &ours.text_nop_padding) {
+        Ok(object) => object,
+        Err(error) => {
+            return Some(format!(
+                "{}: cannot normalize emitted object: {}",
+                name, error
+            ));
+        }
+    };
     if a.sections != b.sections {
         return Some(format!(
             "{}: sections diverge\n  gas:  {:?}\n  ours: {:?}",
-            name,
-            a.sections.keys().collect::<Vec<_>>(),
-            b.sections.keys().collect::<Vec<_>>()
+            name, a.sections, b.sections
         ));
     }
     if a.relocs != b.relocs {
@@ -267,6 +333,82 @@ fn explicit_fill_bytes_match_gas() {
 }
 
 #[test]
+fn subsection_layout_matches_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "subsection_layout_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_subsections");
+    let src = ".text 7\n\
+               text7a: .byte 0x70\n\
+               .text 0\n\
+               text0: jmp text7a\n\
+               .text 3\n\
+               .p2align 2\n\
+               text3: .byte 0x30\n\
+               .text 7\n\
+               text7b: ret\n\
+               .data 5\n\
+               data5: .quad text3\n\
+               .data 0\n\
+               data0: .byte 0x10\n\
+               .data 2\n\
+               data2: .byte 0x20\n\
+               .bss 4\n\
+               bss4: .zero 1\n\
+               .bss 0\n\
+               bss0: .zero 2\n\
+               .bss 2\n\
+               bss2: .zero 3\n";
+    if let Some(failure) = diff_one("subsection_layout", src, &gas, &tmp) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
+fn zero_fill_bytes_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "zero_fill_bytes_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_zero_fill");
+    let src = ".data\n.zero 4,0xa5\n.zero 2\n.zero 3,-1\n.zero 1,\n";
+    if let Some(failure) = diff_one("zero_fill", src, &gas, &tmp) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
+fn string_operand_groups_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "string_operand_groups_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_string_operands");
+    let src = ".data\n\
+               .ascii \"A\",\"B,C\"\n\
+               .ascii ,\"D\" \"E\",,\"F\",\n\
+               .asciz \"G\",\"H\"\n\
+               .asciz ,\"I\" \"J\",,\"\",\n\
+               .string \"K\" \"L\",\"M\"\n";
+    if let Some(failure) = diff_one("string_operands", src, &gas, &tmp) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
 fn default_common_alignment_matches_gas() {
     let Some(gas) = celf::gas_path() else {
         celf::skip(
@@ -280,6 +422,30 @@ fn default_common_alignment_matches_gas() {
     let src = ".text\nret\n.comm c0,0\n.comm c1,1\n.comm c2,2\n.comm c3,3\n.comm c5,5\n.comm c9,9\n.comm c16,16\n.comm c32,32\n";
     if let Some(f) = diff_one("default_common_alignment", src, &gas, &tmp) {
         panic!("{f}");
+    }
+}
+
+#[test]
+fn repeated_global_commons_match_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "repeated_global_commons_match_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_repeated_global_common");
+    let src = ".comm duplicate,8,8\n\
+               .comm duplicate,3,16\n\
+               .comm from_zero,0,1\n\
+               .comm from_zero,5,32\n\
+               .comm equal_size,4,2\n\
+               .comm equal_size,4,8\n\
+               .data\n\
+               .quad duplicate,from_zero,equal_size\n";
+    if let Some(failure) = diff_one("repeated_global_common", src, &gas, &tmp) {
+        panic!("{failure}");
     }
 }
 
@@ -319,6 +485,136 @@ fn exported_dot_l_symbols_match_gas() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+const DEFINED_TEMPORARY_METADATA: &str = ".text
+.type .Ltyped,@function
+.Ltyped:
+ret
+.Lsized:
+.byte 0x90
+.size .Lsized,.-.Lsized
+.local .Llocal
+.type .Llocal,@object
+.Llocal:
+.byte 0
+.size .Llocal,.-.Llocal
+.globl .Lexported
+.type .Lexported,@function
+.Lexported:
+ret
+.size .Lexported,.-.Lexported
+.weak .Lweak
+.type .Lweak,@function
+.Lweak:
+ret
+.size .Lweak,.-.Lweak
+.quad .Ltyped
+";
+
+#[test]
+fn defined_temporary_metadata_is_elided_without_hiding_exports() {
+    let object =
+        assemble_x86(DEFINED_TEMPORARY_METADATA, host_osabi()).expect("assemble .L metadata");
+    let dot_l_symbols: Vec<_> = object
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.name.starts_with(".L"))
+        .collect();
+
+    assert_eq!(
+        dot_l_symbols.len(),
+        2,
+        "only exported .L labels belong in symtab"
+    );
+    for (symbol, name, bind, value) in [
+        (dot_l_symbols[0], ".Lexported", STB_GLOBAL, 3),
+        (dot_l_symbols[1], ".Lweak", STB_WEAK, 4),
+    ] {
+        assert_eq!(symbol.name, name);
+        assert_eq!(symbol.bind, bind, "binding for {name}");
+        assert_eq!(symbol.typ, STT_FUNC, "type for {name}");
+        assert!(
+            matches!(symbol.place, SymbolPlace::Section(_)),
+            "{name} must remain defined"
+        );
+        assert_eq!(symbol.value, value, "value for {name}");
+        assert_eq!(symbol.size, 1, "size for {name}");
+    }
+}
+
+#[test]
+fn defined_temporary_metadata_matches_gas() {
+    let Some(gas) = celf::gas_path() else {
+        celf::skip(
+            "x86_assemble_differential",
+            "defined_temporary_metadata_matches_gas",
+            "no GNU assembler on this host",
+        );
+        return;
+    };
+    let tmp = celf::TempArtifacts::new("afs_x86_defined_temporary_metadata");
+    if let Some(failure) = diff_one(
+        "defined_temporary_metadata",
+        DEFINED_TEMPORARY_METADATA,
+        &gas,
+        &tmp,
+    ) {
+        panic!("{failure}");
+    }
+}
+
+#[test]
+fn invalid_defined_temporary_sizes_are_rejected_like_gas() {
+    let cases = [
+        (
+            "missing_base",
+            ".text\n.Lfoo:\nret\n.size .Lfoo,.-missing\n",
+            4,
+            "base 'missing' not defined in this section",
+        ),
+        (
+            "cross_section_base",
+            ".data\nbase:\n.byte 0\n.text\n.Lfoo:\nret\n.size .Lfoo,.-base\n",
+            7,
+            "base 'base' not defined in this section",
+        ),
+    ];
+    let gas = celf::gas_path();
+    let tmp = celf::TempArtifacts::new("afs_x86_invalid_temporary_size");
+
+    for (name, source, line, message) in cases {
+        let error = assemble_x86(source, host_osabi())
+            .expect_err("invalid temporary .size unexpectedly assembled");
+        assert_eq!(error.line, Some(line), "line for {name}");
+        assert_eq!(error.col, Some(1), "column for {name}");
+        assert_eq!(error.msg, format!(".size .Lfoo: {message}"));
+
+        if let Some(gas) = &gas {
+            let source_path = tmp.path(&format!("_{name}.s"));
+            let object_path = tmp.path(&format!("_{name}.o"));
+            std::fs::write(&source_path, source).expect("write gas input");
+            let output = std::process::Command::new(gas)
+                .arg("--64")
+                .arg("-o")
+                .arg(&object_path)
+                .arg(&source_path)
+                .output()
+                .expect("run gas");
+            assert!(
+                !output.status.success(),
+                "gas unexpectedly accepted invalid temporary .size {name}"
+            );
+        }
+    }
+
+    if gas.is_none() {
+        celf::skip(
+            "x86_assemble_differential",
+            "invalid_defined_temporary_sizes_are_rejected_like_gas",
+            "no GNU assembler on this host",
+        );
+    }
 }
 
 const UNDEFINED_SYMBOL_METADATA: &str = ".text

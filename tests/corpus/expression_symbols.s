@@ -1,5 +1,6 @@
 .set ABS1, 7
 
+.build_version macos, 15, 0
 .text
 .globl _main
 _main:

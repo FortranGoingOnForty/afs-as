@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .text
 .globl _system_hints
 _system_hints:

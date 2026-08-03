@@ -7,6 +7,7 @@
 use crate::encode::{AddrExtend, BarrierOpt, Inst, RegExtend, RegShift};
 use crate::expr::{self, Expr, SymbolModifier};
 use crate::lex::{LexError, Lexer, Tok, Token};
+use crate::macho::{PACKED_VERSION_MAJOR_MAX, PACKED_VERSION_MINOR_MAX, PACKED_VERSION_PATCH_MAX};
 use crate::reg::*;
 
 use std::collections::BTreeMap;
@@ -254,7 +255,12 @@ impl From<LexError> for ParseError {
 
 /// Parse assembly source text into a list of statements.
 pub fn parse(src: &str) -> Result<Vec<Stmt>, ParseError> {
-    Ok(parse_with_locations(src)?
+    parse_bytes(src.as_bytes())
+}
+
+/// Parse raw assembly bytes into a list of statements.
+pub fn parse_bytes(src: &[u8]) -> Result<Vec<Stmt>, ParseError> {
+    Ok(parse_bytes_with_locations(src)?
         .into_iter()
         .map(|stmt| stmt.stmt)
         .collect())
@@ -262,7 +268,12 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, ParseError> {
 
 /// Parse assembly source text into statements with source locations.
 pub fn parse_with_locations(src: &str) -> Result<Vec<LocatedStmt>, ParseError> {
-    let tokens = Lexer::tokenize(src)?;
+    parse_bytes_with_locations(src.as_bytes())
+}
+
+/// Parse raw assembly bytes into statements with source locations.
+pub fn parse_bytes_with_locations(src: &[u8]) -> Result<Vec<LocatedStmt>, ParseError> {
+    let tokens = Lexer::tokenize_bytes(src)?;
     let previews = scan_absolute_assignments(&tokens);
     let assignments: Vec<_> = previews
         .iter()
@@ -1032,11 +1043,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_version_triple(&mut self, context: &str) -> Result<VersionTriple, ParseError> {
-        let major = self.parse_version_component(context)?;
+        let major = self.parse_version_component(context, "major", PACKED_VERSION_MAJOR_MAX)?;
         self.expect(&Tok::Comma)?;
-        let minor = self.parse_version_component(context)?;
+        let minor = self.parse_version_component(context, "minor", PACKED_VERSION_MINOR_MAX)?;
         let patch = if self.eat(&Tok::Comma) {
-            self.parse_version_component(context)?
+            self.parse_version_component(context, "patch", PACKED_VERSION_PATCH_MAX)?
         } else {
             0
         };
@@ -1047,16 +1058,22 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_version_component(&mut self, context: &str) -> Result<u32, ParseError> {
+    fn parse_version_component(
+        &mut self,
+        context: &str,
+        component: &str,
+        max: u32,
+    ) -> Result<u32, ParseError> {
         match self.peek().clone() {
             Tok::Integer(value) if value >= 0 => {
+                if value > i64::from(max) {
+                    return Err(self.err(format!(
+                        "{} {} component {} exceeds {}",
+                        context, component, value, max
+                    )));
+                }
                 self.advance();
-                u32::try_from(value).map_err(|_| {
-                    self.err(format!(
-                        "{} component {} does not fit in u32",
-                        context, value
-                    ))
-                })
+                Ok(value as u32)
             }
             Tok::Integer(value) => Err(self.err(format!(
                 "{} component must be non-negative, got {}",
@@ -4539,6 +4556,12 @@ impl<'a> Parser<'a> {
                 "ldp/stp register pair must use matching register widths".into(),
             ));
         }
+        if is_load && rt1 == rt2 {
+            return Err(self.err_at(
+                rt2_start,
+                "ldp destination registers must be different".into(),
+            ));
+        }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
         let rn = self.parse_memory_base_reg("ldp/stp memory base")?;
@@ -4680,6 +4703,12 @@ impl<'a> Parser<'a> {
         }
         if matches!(width, FpMemWidth::B8 | FpMemWidth::H16) {
             return Err(self.err("ldp/stp does not support b/h FP register pairs".into()));
+        }
+        if is_load && rt1 == rt2 {
+            return Err(self.err_at(
+                rt2_start,
+                "ldp destination registers must be different".into(),
+            ));
         }
         self.expect(&Tok::Comma)?;
         self.expect(&Tok::LBracket)?;
@@ -8903,6 +8932,58 @@ mod tests {
     fn error_ldp_fp_pair_requires_matching_widths() {
         let err = parse_err("ldp d0, s1, [sp]");
         assert!(err.contains("matching register widths"), "got: {}", err);
+    }
+
+    #[test]
+    fn error_ldp_rejects_identical_destinations_in_every_supported_form() {
+        for source in [
+            "ldp w0, w0, [x2]",
+            "ldp w0, w0, [x2, #-4]!",
+            "ldp w0, w0, [x2], #4",
+            "ldp x0, x0, [x2]",
+            "ldp x0, x0, [x2, #-8]!",
+            "ldp x0, x0, [x2], #8",
+            "ldp x31, xzr, [x2]",
+            "ldp s0, s0, [x2]",
+            "ldp s0, s0, [x2, #-4]!",
+            "ldp s0, s0, [x2], #4",
+            "ldp d0, d0, [x2]",
+            "ldp d0, d0, [x2, #-8]!",
+            "ldp d0, d0, [x2], #8",
+            "ldp q0, q0, [x2]",
+            "ldp q0, q0, [x2, #-16]!",
+            "ldp q0, q0, [x2], #16",
+        ] {
+            let err = parse_err(source);
+            assert!(
+                err.contains("ldp destination registers must be different"),
+                "{source}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_stp_allows_identical_sources_in_every_supported_form() {
+        for source in [
+            "stp w0, w0, [x2]",
+            "stp w0, w0, [x2, #-4]!",
+            "stp w0, w0, [x2], #4",
+            "stp x0, x0, [x2]",
+            "stp x0, x0, [x2, #-8]!",
+            "stp x0, x0, [x2], #8",
+            "stp x31, xzr, [x2]",
+            "stp s0, s0, [x2]",
+            "stp s0, s0, [x2, #-4]!",
+            "stp s0, s0, [x2], #4",
+            "stp d0, d0, [x2]",
+            "stp d0, d0, [x2, #-8]!",
+            "stp d0, d0, [x2], #8",
+            "stp q0, q0, [x2]",
+            "stp q0, q0, [x2, #-16]!",
+            "stp q0, q0, [x2], #16",
+        ] {
+            let _ = parse_inst(source);
+        }
     }
 
     #[test]
