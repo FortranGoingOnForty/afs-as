@@ -73,7 +73,27 @@ pub enum Stmt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataItem {
     Num(i64),
-    Sym { name: String, addend: i64 },
+    Sym {
+        name: String,
+        addend: i64,
+    },
+    Difference {
+        minuend: DataAtom,
+        subtrahend: DataAtom,
+        addend: i64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataAtom {
+    Dot,
+    Sym(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SectionType {
+    Progbits,
+    Nobits,
 }
 
 /// `.size` argument: absolute or the idiomatic `.-sym`.
@@ -91,12 +111,14 @@ pub enum SymKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Directive {
-    /// Switch to an ELF section and one of its assembler-only subsection
-    /// streams. Bare `.text`, `.data`, `.bss`, and `.section` switches use
-    /// subsection zero.
+    /// Switch to a GNU ELF section and one of its assembler-only subsection
+    /// streams. Generic `.section` directives use subsection zero while
+    /// `.text`, `.data`, and `.bss` may select a numbered subsection.
     Section {
         name: String,
         subsection: u32,
+        flags: Option<String>,
+        section_type: Option<SectionType>,
     },
     Globl(String),
     Extern(String),
@@ -456,6 +478,59 @@ fn split_sym_addend(s: &str) -> Option<(String, i64)> {
     is_symbolish(s).then(|| (s.to_string(), 0))
 }
 
+fn parse_data_item(s: &str) -> Option<DataItem> {
+    let compact: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    if let Some(v) = parse_int(&compact) {
+        return Some(DataItem::Num(v));
+    }
+
+    // Parse the difference forms emitted by debug/unwind generators:
+    // `a-b`, `a-.`, `.-b`, with an optional trailing numeric addend.
+    for (i, c) in compact.char_indices().skip(1) {
+        if c != '-' {
+            continue;
+        }
+        let Some(lhs) = parse_data_atom(&compact[..i]) else {
+            continue;
+        };
+        let rhs_and_addend = &compact[i + 1..];
+        let split = rhs_and_addend
+            .char_indices()
+            .skip(1)
+            .find(|(_, c)| *c == '+' || *c == '-')
+            .map(|(i, _)| i)
+            .unwrap_or(rhs_and_addend.len());
+        let Some(rhs) = parse_data_atom(&rhs_and_addend[..split]) else {
+            continue;
+        };
+        let addend = if split == rhs_and_addend.len() {
+            0
+        } else {
+            let Some(addend) = parse_int(&rhs_and_addend[split..]) else {
+                continue;
+            };
+            addend
+        };
+        return Some(DataItem::Difference {
+            minuend: lhs,
+            subtrahend: rhs,
+            addend,
+        });
+    }
+
+    split_sym_addend(&compact).map(|(name, addend)| DataItem::Sym { name, addend })
+}
+
+fn parse_data_atom(s: &str) -> Option<DataAtom> {
+    if s == "." {
+        Some(DataAtom::Dot)
+    } else if is_symbolish(s) {
+        Some(DataAtom::Sym(s.to_string()))
+    } else {
+        None
+    }
+}
+
 fn is_symbolish(s: &str) -> bool {
     // No '@': `foo@PLT` / `foo@GOTPCREL` must NOT parse as a symbol
     // literally named "foo@PLT" — that would silently create the wrong
@@ -551,13 +626,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         args.split(',')
             .map(|p| {
                 let p = p.trim();
-                if let Some(v) = parse_int(p) {
-                    return Ok(DataItem::Num(v));
-                }
-                if let Some((sym, addend)) = split_sym_addend(p) {
-                    return Ok(DataItem::Sym { name: sym, addend });
-                }
-                Err(err(format!("bad data item '{}'", p)))
+                parse_data_item(p).ok_or_else(|| err(format!("bad data item '{}'", p)))
             })
             .collect()
     };
@@ -566,6 +635,8 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         "text" | "data" | "bss" => Directive::Section {
             name: format!(".{name}"),
             subsection: parse_subsection(args).map_err(&err)?,
+            flags: None,
+            section_type: None,
         },
         "section" => {
             let mut fields = args.split(',').map(str::trim);
@@ -593,13 +664,37 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                     )));
                 }
                 Directive::NoteGnuStack { executable }
-            } else if sec == ".rodata" || sec == ".text" || sec == ".data" || sec == ".bss" {
+            } else {
+                if !is_symbolish(&sec) {
+                    return Err(err(format!("bad section name '{}'", sec)));
+                }
+                let flags = match fields.next() {
+                    None => None,
+                    Some(quoted) if quoted.starts_with('"') && quoted.ends_with('"') => {
+                        Some(quoted[1..quoted.len() - 1].to_string())
+                    }
+                    Some(flags) => {
+                        return Err(err(format!(
+                            "expected quoted section flags, got '{}'",
+                            flags
+                        )))
+                    }
+                };
+                let section_type = match fields.next() {
+                    None => None,
+                    Some("@progbits" | "%progbits") => Some(SectionType::Progbits),
+                    Some("@nobits" | "%nobits") => Some(SectionType::Nobits),
+                    Some(kind) => return Err(err(format!("unsupported section type '{}'", kind))),
+                };
+                if let Some(extra) = fields.next() {
+                    return Err(err(format!("unexpected .section argument '{}'", extra)));
+                }
                 Directive::Section {
                     name: sec,
                     subsection: 0,
+                    flags,
+                    section_type,
                 }
-            } else {
-                return Err(err(format!("unsupported section '{}'", sec)));
             }
         }
         "globl" | "global" => Directive::Globl(one_sym(args)?),
@@ -967,7 +1062,7 @@ mod tests {
     #[test]
     fn directive_forms() {
         let stmts = parse(
-            ".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8\n.asciz \"hi\\n\"\n.p2align 4\n.extern ext\n",
+            ".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8, tbl-4\n.asciz \"hi\\n\"\n.p2align 4\n.extern ext\n",
         )
         .unwrap();
         assert_eq!(
@@ -987,10 +1082,16 @@ mod tests {
         );
         assert_eq!(
             stmts[2].stmt,
-            Stmt::Directive(Directive::Quad(vec![DataItem::Sym {
-                name: "tbl".into(),
-                addend: 8
-            }]))
+            Stmt::Directive(Directive::Quad(vec![
+                DataItem::Sym {
+                    name: "tbl".into(),
+                    addend: 8
+                },
+                DataItem::Sym {
+                    name: "tbl".into(),
+                    addend: -4
+                }
+            ]))
         );
         assert_eq!(
             stmts[3].stmt,
@@ -1033,6 +1134,8 @@ mod tests {
                 &Stmt::Directive(Directive::Section {
                     name: name.into(),
                     subsection,
+                    flags: None,
+                    section_type: None,
                 })
             );
         }
@@ -1049,6 +1152,55 @@ mod tests {
                 format!("subsection must be an integer literal from 0 to 8192, got '{argument}'")
             );
         }
+    }
+
+    #[test]
+    fn generic_elf_sections_and_data_differences() {
+        let stmts = parse(
+            ".section .debug_info,\"\",@progbits\n\
+             .long .Lend-.Lbegin, target-.\n\
+             .section .eh_frame,\"a\",%progbits\n\
+             .quad target-.+8\n\
+             .section .debug_scratch,\"\",@nobits\n",
+        )
+        .unwrap();
+        assert_eq!(
+            stmts[0].stmt,
+            Stmt::Directive(Directive::Section {
+                name: ".debug_info".into(),
+                subsection: 0,
+                flags: Some(String::new()),
+                section_type: Some(SectionType::Progbits),
+            })
+        );
+        assert!(matches!(
+            &stmts[1].stmt,
+            Stmt::Directive(Directive::Long(items))
+                if matches!(&items[0], DataItem::Difference {
+                    minuend: DataAtom::Sym(a),
+                    subtrahend: DataAtom::Sym(b),
+                    addend: 0,
+                } if a == ".Lend" && b == ".Lbegin")
+                && matches!(&items[1], DataItem::Difference {
+                    minuend: DataAtom::Sym(a),
+                    subtrahend: DataAtom::Dot,
+                    addend: 0,
+                } if a == "target")
+        ));
+        assert!(matches!(
+            &stmts[2].stmt,
+            Stmt::Directive(Directive::Section {
+                name,
+                subsection: 0,
+                flags: Some(flags),
+                section_type: Some(SectionType::Progbits),
+            }) if name == ".eh_frame" && flags == "a"
+        ));
+        assert!(matches!(
+            &stmts[3].stmt,
+            Stmt::Directive(Directive::Quad(items))
+                if matches!(&items[0], DataItem::Difference { addend: 8, .. })
+        ));
     }
 
     #[test]

@@ -263,8 +263,11 @@ fn library_scaling_stays_reasonable_on_large_generated_input() {
     let large_time = measure_library_pass(&large, 2);
 
     let ratio_ceiling = medium_time.mul_f64(8.0) + Duration::from_millis(250);
+    // The absolute cap is a runaway backstop, not the scaling guard (the
+    // ratio above is): 4s absorbs contended-CI noise — trunk flaked at
+    // 2.0018s against the old 2s cap while the ratio passed with 2x room.
     assert!(
-        large_time <= ratio_ceiling && large_time <= Duration::from_secs(2),
+        large_time <= ratio_ceiling && large_time <= Duration::from_secs(4),
         "library scaling regressed: medium {:?}, large {:?}, ratio ceiling {:?}",
         medium_time,
         large_time,

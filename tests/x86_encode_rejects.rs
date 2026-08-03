@@ -33,6 +33,11 @@ const REJECTED: &[&str] = &[
     "ret $-32769",
     "ret %rax",
     "ret $8, $16",
+    // Packed shuffle/shift immediates must not truncate before encoding.
+    "pshuflw $-129, %xmm0, %xmm1",
+    "pshuflw $256, %xmm0, %xmm1",
+    "psrldq $-1, %xmm0",
+    "psrldq $256, %xmm0",
 ];
 
 const ZERO_OPERAND_MNEMONICS: &[&str] = &["cqto", "cqo", "cltd", "cdq", "syscall"];

@@ -392,6 +392,35 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
             return encode_jcc(cc, ops);
         }
     }
+    // cmovcc r/m, r (0F 40+cc /r). AT&T suffixes: `cmovneq` = cc "ne" +
+    // width q; a bare `cmovne` takes the width from the destination.
+    // Longest-cc-first disambiguation: "cmovll" is cc "l" width l (the
+    // whole "ll" is not a condition), "cmovle" is cc "le".
+    if let Some(rest) = mnemonic.strip_prefix("cmov") {
+        let (cc, w) = match rest.as_bytes().last() {
+            Some(b'b' | b'w' | b'l' | b'q') if cond_code(&rest[..rest.len() - 1]).is_some() => {
+                let w = match rest.as_bytes()[rest.len() - 1] {
+                    b'w' => Width::W,
+                    b'l' => Width::L,
+                    b'q' => Width::Q,
+                    _ => return Err("cmov has no 8-bit form".into()),
+                };
+                (&rest[..rest.len() - 1], Some(w))
+            }
+            _ => (rest, None),
+        };
+        if let Some(code) = cond_code(cc) {
+            let w = match (w, ops.last()) {
+                (Some(w), _) => w,
+                (None, Some(Operand::Reg(r))) => r.width,
+                _ => return Err(format!("cannot infer width for '{}'", mnemonic)),
+            };
+            if w == Width::B || w == Width::X {
+                return Err("cmov has no 8-bit form".into());
+            }
+            return encode_rm_0f(0x40 + code, w, ops, mnemonic);
+        }
+    }
     if mnemonic == "pushq" || mnemonic == "popq" {
         let operand = match ops {
             [operand] => operand,
@@ -438,8 +467,16 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
                 return encode_arith(stem, w, ops, mnemonic)
             }
             "test" => return encode_test(w, ops, mnemonic),
-            // Two-byte-opcode RM forms sharing one shape.
-            "imul" => return encode_rm_0f(0xaf, w, ops, mnemonic),
+            // Two-byte-opcode RM forms sharing one shape; the
+            // immediate form (69/6B) is its own AT&T 3-operand shape
+            // `imul $imm, r/m, r` (cgfried emits it for scaled
+            // address arithmetic).
+            "imul" => {
+                if let [Operand::Imm(_), ..] = ops {
+                    return encode_imul_imm(w, ops, mnemonic);
+                }
+                return encode_rm_0f(0xaf, w, ops, mnemonic);
+            }
             "bsr" => return encode_rm_0f(0xbd, w, ops, mnemonic),
             "bsf" => return encode_rm_0f(0xbc, w, ops, mnemonic),
             "idiv" | "div" | "neg" | "not" | "mul" => {
@@ -461,10 +498,110 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
         return Ok(enc);
     }
 
+    // x87: the closed long-double whitelist (load-op-store discipline
+    // upstream; nothing else is sanctioned).
+    if let Some(enc) = encode_x87(mnemonic, ops)? {
+        return Ok(enc);
+    }
+
     Err(format!(
         "unsupported mnemonic '{}' — grow the encoder with corpus evidence",
         mnemonic
     ))
+}
+
+// -------------------------------------------------------------------
+// x87 (long double only — the whitelist is CLOSED)
+// -------------------------------------------------------------------
+
+/// No-operand x87 forms: two fixed bytes.
+const X87_NULLARY: &[(&str, [u8; 2])] = &[
+    ("faddp", [0xde, 0xc1]),
+    ("fmulp", [0xde, 0xc9]),
+    // THE gas AT&T x87 swap, differential-pinned: for the pop forms gas
+    // maps fsubp -> DE E1 (Intel FSUBRP) and fsubrp -> DE E9 (Intel
+    // FSUBP); likewise fdivp -> DE F1 and fdivrp -> DE F9. An emitter
+    // wanting "st1 := st1 OP st0, pop" must SPELL it fsubrp/fdivrp —
+    // cgfried's Sprint 24 mnemonic table carries this.
+    ("fsubp", [0xde, 0xe1]),
+    ("fsubrp", [0xde, 0xe9]),
+    ("fdivp", [0xde, 0xf1]),
+    ("fdivrp", [0xde, 0xf9]),
+    ("fchs", [0xd9, 0xe0]),
+    ("fabs", [0xd9, 0xe1]),
+    ("fldz", [0xd9, 0xee]),
+    ("fld1", [0xd9, 0xe8]),
+    // fucomip (bare) = fucomip %st(1), %st
+    ("fucomip", [0xdf, 0xe9]),
+];
+
+/// Memory x87 forms: opcode byte + ModRM /digit, width from mnemonic.
+const X87_MEM: &[(&str, u8, u8)] = &[
+    ("flds", 0xd9, 0),
+    ("fldl", 0xdd, 0),
+    ("fldt", 0xdb, 5),
+    ("fstps", 0xd9, 3),
+    ("fstpl", 0xdd, 3),
+    ("fstpt", 0xdb, 7),
+    ("fildl", 0xdb, 0),
+    ("fildq", 0xdf, 5),
+    ("fildll", 0xdf, 5),
+    ("fistpl", 0xdb, 3),
+    ("fistpq", 0xdf, 7),
+    ("fistpll", 0xdf, 7),
+    ("fnstcw", 0xd9, 7),
+    ("fldcw", 0xd9, 5),
+];
+
+fn encode_x87(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String> {
+    for (name, bytes) in X87_NULLARY {
+        if *name == mnemonic {
+            if !ops.is_empty() {
+                // Accept the explicit gas spellings too:
+                //   fucomip %st(1), %st ; f*p %st, %st(1)
+                if mnemonic == "fucomip" {
+                    if let [Operand::Reg(r)] | [Operand::Reg(r), Operand::Reg(_)] = ops {
+                        if r.class == RegClass::St && r.num == 1 {
+                            return Ok(Some(Encoded {
+                                bytes: bytes.to_vec(),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                }
+                return Err(format!("'{}' takes no operands here", mnemonic));
+            }
+            return Ok(Some(Encoded {
+                bytes: bytes.to_vec(),
+                ..Default::default()
+            }));
+        }
+    }
+    // fstp %st(i): DD D8+i (the pop-discard).
+    if mnemonic == "fstp" {
+        if let [Operand::Reg(r)] = ops {
+            if r.class == RegClass::St {
+                return Ok(Some(Encoded {
+                    bytes: vec![0xdd, 0xd8 + r.num],
+                    ..Default::default()
+                }));
+            }
+        }
+        return Err("fstp expects %st(i) (memory forms are fstpt/fstpl/fstps)".into());
+    }
+    for (name, opc, digit) in X87_MEM {
+        if *name == mnemonic {
+            let m = match ops {
+                [Operand::Mem(m)] => m,
+                _ => return Err(format!("'{}' expects one memory operand", mnemonic)),
+            };
+            let mut p = Parts::new();
+            p.opcode.push(*opc);
+            p.mem(*digit, m)?;
+            return p.finish().map(Some);
+        }
+    }
+    Ok(None)
 }
 
 // -------------------------------------------------------------------
@@ -544,9 +681,15 @@ const SSE_RM: &[(&str, Sse, u8)] = &[
     ("unpcklps", Sse::None, 0x14),
     ("unpcklpd", Sse::P66, 0x14),
     // packed integer
+    ("paddb", Sse::P66, 0xfc),
+    ("paddw", Sse::P66, 0xfd),
     ("paddd", Sse::P66, 0xfe),
     ("paddq", Sse::P66, 0xd4),
+    ("psubb", Sse::P66, 0xf8),
+    ("psubw", Sse::P66, 0xf9),
     ("psubd", Sse::P66, 0xfa),
+    ("punpcklbw", Sse::P66, 0x60),
+    ("punpcklwd", Sse::P66, 0x61),
     ("punpcklqdq", Sse::P66, 0x6c),
     ("psubq", Sse::P66, 0xfb),
     ("pxor", Sse::P66, 0xef),
@@ -559,6 +702,7 @@ const SSE_RM: &[(&str, Sse, u8)] = &[
     ("por", Sse::P66, 0xeb),
     ("pxor", Sse::P66, 0xef),
     ("pcmpgtd", Sse::P66, 0x66),
+    ("pmullw", Sse::P66, 0xd5),
     ("pmuludq", Sse::P66, 0xf4),
 ];
 
@@ -595,9 +739,9 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
                 }
                 _ => return Err("expected xmm/mem source, xmm destination".into()),
             }
-            // A trailing immediate (pshufd/shufps/cmpps/cmppd) must join the
-            // tail before finish() so a RIP-relative disp32 addend counts it —
-            // gas emits sym-5 for an imm8 form, not sym-4.
+            // A trailing immediate must join the tail before finish() so a
+            // RIP-relative disp32 addend counts it — gas emits sym-5 for an
+            // imm8 form, not sym-4.
             p.tail.extend_from_slice(imm);
             p.finish()
         };
@@ -642,19 +786,26 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
         return p.finish().map(Some);
     }
 
-    // pshufd/shufps/cmpps/cmppd carry a trailing imm8: `op $imm, src, dst`.
-    if matches!(mnemonic, "pshufd" | "shufps" | "cmpps" | "cmppd") {
+    // Packed shuffles/comparisons carry a trailing imm8:
+    // `op $imm, src, dst`.
+    if matches!(
+        mnemonic,
+        "pshufd" | "pshuflw" | "shufps" | "cmpps" | "cmppd"
+    ) {
         let (imm, src_op, dst_op) = match ops {
             [Operand::Imm(i), s, d] => (*i, s, d),
             _ => return Err(format!("{} expects $imm8, src, dst", mnemonic)),
         };
-        let prefix = if matches!(mnemonic, "pshufd" | "cmppd") {
-            Sse::P66
-        } else {
-            Sse::None
+        if mnemonic == "pshuflw" && !(-128..=255).contains(&imm) {
+            return Err(format!("pshuflw immediate {} out of range for imm8", imm));
+        }
+        let prefix = match mnemonic {
+            "pshufd" | "cmppd" => Sse::P66,
+            "pshuflw" => Sse::F2,
+            _ => Sse::None,
         };
         let opcode = match mnemonic {
-            "pshufd" => 0x70,
+            "pshufd" | "pshuflw" => 0x70,
             "shufps" => 0xc6,
             _ => 0xc2, // cmpps / cmppd
         };
@@ -665,6 +816,25 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
             &[imm as u8],
         )
         .map(Some);
+    }
+
+    // psrldq has the packed-shift group encoding 66 0F 73 /3 ib and a
+    // destructive two-operand AT&T spelling: `psrldq $imm, %xmm`.
+    if mnemonic == "psrldq" {
+        let (imm, dst) = match ops {
+            [Operand::Imm(i), Operand::Reg(dst)] if dst.class == RegClass::Xmm => (*i, *dst),
+            _ => return Err("psrldq expects $imm8, xmm".into()),
+        };
+        if !(0..=255).contains(&imm) {
+            return Err(format!("psrldq immediate {} out of range for imm8", imm));
+        }
+        let mut p = Parts::new();
+        Sse::P66.emit(&mut p.prefix);
+        p.rex.merge_reg(dst, RexSlot::B);
+        p.opcode.extend_from_slice(&[0x0f, 0x73]);
+        p.tail.push(0b11 << 6 | 3 << 3 | dst.low3());
+        p.tail.push(imm as u8);
+        return p.finish().map(Some);
     }
 
     // movd / movq between GP and xmm: 66 (REX.W) 0F 6E (gp->xmm),
@@ -1113,6 +1283,45 @@ fn encode_test(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
 }
 
 /// Shared 0F-xx RM shape: imul (AF), bsr (BD), bsf (BC) — rm -> reg.
+/// imul $imm, r/m, r — opcode 6B (imm8 sign-extended) or 69 (imm32).
+fn encode_imul_imm(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
+    let (imm, src, dst) = match ops {
+        [Operand::Imm(i), Operand::Reg(s), Operand::Reg(d)] => (*i, *s, *d),
+        _ => {
+            return Err(format!(
+                "'{}' immediate form expects $imm, %r, %r",
+                mnemonic
+            ))
+        }
+    };
+    if w == Width::B {
+        return Err("imul immediate form has no 8-bit variant".into());
+    }
+    check_width(src, w, mnemonic)?;
+    check_width(dst, w, mnemonic)?;
+    let mut p = Parts::new();
+    width_setup(w, &mut p.rex, &mut p.prefix);
+    p.rex.merge_reg(dst, RexSlot::R);
+    p.rex.merge_reg(src, RexSlot::B);
+    let imm8 = i8::try_from(imm).is_ok();
+    p.opcode.push(if imm8 { 0x6b } else { 0x69 });
+    p.tail.push(0b11 << 6 | dst.low3() << 3 | src.low3());
+    if imm8 {
+        p.tail.push(imm as i8 as u8);
+    } else if w == Width::W {
+        if i16::try_from(imm).is_err() && u16::try_from(imm).is_err() {
+            return Err("imul immediate does not fit 16 bits".into());
+        }
+        p.tail.extend_from_slice(&(imm as u16).to_le_bytes());
+    } else {
+        if i32::try_from(imm).is_err() {
+            return Err("imul immediate does not fit simm32".into());
+        }
+        p.tail.extend_from_slice(&(imm as i32).to_le_bytes());
+    }
+    p.finish()
+}
+
 fn encode_rm_0f(op2: u8, w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
     let mut p = Parts::new();
     width_setup(w, &mut p.rex, &mut p.prefix);
