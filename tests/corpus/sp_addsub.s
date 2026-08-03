@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .text
 .globl _sp_addsub
 _sp_addsub:

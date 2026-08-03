@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .text
 .byte 1
 .p2align 3

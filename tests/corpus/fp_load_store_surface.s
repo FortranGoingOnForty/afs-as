@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .text
 .globl _fp_load_store_surface
 _fp_load_store_surface:

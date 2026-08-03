@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .text
 .globl _numeric_locals
 _numeric_locals:

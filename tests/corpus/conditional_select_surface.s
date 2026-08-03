@@ -1,3 +1,4 @@
+.build_version macos, 15, 0
 .text
 .globl _conditional_select_surface
 _conditional_select_surface:
