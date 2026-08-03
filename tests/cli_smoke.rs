@@ -40,12 +40,15 @@ fn run_with_stdin_bytes(args: &[&str], input: &[u8]) -> std::process::Output {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn afs-as");
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin pipe")
-        .write_all(input)
-        .expect("write stdin");
+    let mut stdin = child.stdin.take().expect("stdin pipe");
+    if let Err(error) = stdin.write_all(input) {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "write stdin: {error}"
+        );
+    }
+    drop(stdin);
     child.wait_with_output().expect("wait for afs-as")
 }
 
