@@ -93,6 +93,7 @@ pub enum DataAtom {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SectionType {
     Progbits,
+    Note,
     Nobits,
 }
 
@@ -113,7 +114,8 @@ pub enum SymKind {
 pub enum Directive {
     /// Switch to a GNU ELF section and one of its assembler-only subsection
     /// streams. Generic `.section` directives use subsection zero while
-    /// `.text`, `.data`, and `.bss` may select a numbered subsection.
+    /// `.text`, `.data`, and `.bss` may select a numbered subsection. GNU
+    /// ELF section types include `@progbits`, `@note`, and `@nobits`.
     Section {
         name: String,
         subsection: u32,
@@ -683,6 +685,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                 let section_type = match fields.next() {
                     None => None,
                     Some("@progbits" | "%progbits") => Some(SectionType::Progbits),
+                    Some("@note" | "%note") => Some(SectionType::Note),
                     Some("@nobits" | "%nobits") => Some(SectionType::Nobits),
                     Some(kind) => return Err(err(format!("unsupported section type '{}'", kind))),
                 };
@@ -1161,6 +1164,8 @@ mod tests {
              .long .Lend-.Lbegin, target-.\n\
              .section .eh_frame,\"a\",%progbits\n\
              .quad target-.+8\n\
+             .section .note.cgf.safe,\"a\",@note\n\
+             .long 1\n\
              .section .debug_scratch,\"\",@nobits\n",
         )
         .unwrap();
@@ -1200,6 +1205,15 @@ mod tests {
             &stmts[3].stmt,
             Stmt::Directive(Directive::Quad(items))
                 if matches!(&items[0], DataItem::Difference { addend: 8, .. })
+        ));
+        assert!(matches!(
+            &stmts[4].stmt,
+            Stmt::Directive(Directive::Section {
+                name,
+                subsection: 0,
+                flags: Some(flags),
+                section_type: Some(SectionType::Note),
+            }) if name == ".note.cgf.safe" && flags == "a"
         ));
     }
 

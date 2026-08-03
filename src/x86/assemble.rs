@@ -23,8 +23,8 @@ use crate::assemble::AsmError;
 
 use super::super::elf::{
     self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, EM_X86_64, SHF_ALLOC,
-    SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK, STT_FILE,
-    STT_FUNC, STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
+    SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_NOTE, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK,
+    STT_FILE, STT_FUNC, STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
 };
 use super::encode::{encode, InsnReloc};
 use super::parse::{
@@ -290,6 +290,7 @@ pub fn assemble_x86_bytes_with_provenance(
                     let sb = &mut streams[current].build;
                     let declared_type = section_type.map(|kind| match kind {
                         SectionType::Progbits => SHT_PROGBITS,
+                        SectionType::Note => SHT_NOTE,
                         SectionType::Nobits => SHT_NOBITS,
                     });
                     let declared_flags = flags
