@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::ffi::OsString;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStringExt;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -186,7 +186,9 @@ fn default_output_path_is_created_next_to_input() {
     assert!(!fs::read(&output).expect("read output").is_empty());
 }
 
-#[cfg(unix)]
+// Linux filesystems accept arbitrary non-NUL path bytes. Darwin rejects these
+// byte sequences before afs-as can observe them, so this is a Linux contract.
+#[cfg(target_os = "linux")]
 #[test]
 fn non_utf8_input_and_output_paths_are_preserved() {
     let root = temp_root("afs_cli_non_utf8_paths");
@@ -207,7 +209,7 @@ fn non_utf8_input_and_output_paths_are_preserved() {
     fs::remove_dir_all(&root).ok();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn non_utf8_dash_prefixed_path_requires_double_dash() {
     let root = temp_root("afs_cli_non_utf8_dash_path");
