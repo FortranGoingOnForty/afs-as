@@ -368,6 +368,9 @@ struct Assembler {
     /// spec requires them and disassemblers rely on them.
     elf_mapping: Vec<Vec<(u64, bool)>>,
     elf_map_state: Vec<Option<bool>>,
+    /// Offset armed by an alignment directive, awaiting the content that
+    /// decides whether the region it opens is code or data.
+    elf_pending_align: Vec<Option<u64>>,
     /// Current section index in `sections`.
     section: usize,
     current_line: u32,
@@ -779,6 +782,7 @@ impl Assembler {
             elf_attrs: BTreeMap::new(),
             elf_mapping: vec![Vec::new(); nsections],
             elf_map_state: vec![None; nsections],
+            elf_pending_align: vec![None; nsections],
             section: 0,
             current_line: 0,
             current_col: 0,
@@ -830,16 +834,45 @@ impl Assembler {
         self.note_symbol(&format!("ltmp{}", index));
     }
 
-    fn elf_mark(&mut self, code: bool) {
+    /// Record an AArch64 mapping-symbol transition.
+    ///
+    /// `establishes` distinguishes the two kinds of data emission gas
+    /// treats differently: `.zero`/`.space`/`.fill` START a mapping state in
+    /// a section that has none, while `.byte`/`.quad`/`.ascii` merely FOLLOW
+    /// one. So `.data` holding only `.byte`s gets no `$d`, but the same
+    /// section holding a `.zero` does -- and once code has established a
+    /// state, every later data directive marks a transition.
+    fn elf_mark_kind(&mut self, code: bool, establishes: bool) {
         if self.format != OutputFormat::Elf {
+            return;
+        }
+        // An alignment ARMED a mark whose kind only this content can decide,
+        // and gas places the symbol where the padding began rather than
+        // where the content lands.
+        let armed = self.elf_pending_align[self.section].take();
+        if self.elf_map_state[self.section].is_none() && !establishes && armed.is_none() {
             return;
         }
         if self.elf_map_state[self.section] == Some(code) {
             return;
         }
-        let offset = self.current_offset();
+        let offset = armed.unwrap_or_else(|| self.current_offset());
         self.elf_map_state[self.section] = Some(code);
         self.elf_mapping[self.section].push((offset, code));
+    }
+
+    /// Arm an alignment's mapping mark. `.p2align 0` is a no-op alignment
+    /// and arms nothing.
+    fn elf_arm_align(&mut self, power: u32) {
+        if self.format != OutputFormat::Elf || power == 0 {
+            return;
+        }
+        let offset = self.current_offset();
+        self.elf_pending_align[self.section] = Some(offset);
+    }
+
+    fn elf_mark(&mut self, code: bool) {
+        self.elf_mark_kind(code, true);
     }
 
     fn reset_for_emission(&mut self) {
@@ -848,6 +881,9 @@ impl Assembler {
         }
         for state in &mut self.elf_map_state {
             *state = None;
+        }
+        for pending in &mut self.elf_pending_align {
+            *pending = None;
         }
         self.section = 0;
         self.current_line = 0;
@@ -1197,8 +1233,11 @@ impl Assembler {
     }
 
     fn process_directive(&mut self, dir: &Directive) -> Result<(), AsmError> {
-        if directive_emits_data(dir) {
-            self.elf_mark(false);
+        if let Some(establishes) = directive_data_mapping(dir) {
+            self.elf_mark_kind(false, establishes);
+        }
+        if let Directive::Align { power, .. } | Directive::P2Align { power, .. } = dir {
+            self.elf_arm_align(*power);
         }
         match dir {
             Directive::Text => self.switch_to_text()?,
@@ -2366,6 +2405,7 @@ impl Assembler {
         self.elf_idents.push(Some(ident));
         self.elf_mapping.push(Vec::new());
         self.elf_map_state.push(None);
+        self.elf_pending_align.push(None);
         self.pending_relocs.push(Vec::new());
         let index = self.sections.len() - 1;
         self.note_section_temp(index);
@@ -2389,6 +2429,7 @@ impl Assembler {
         self.elf_idents.push(None);
         self.elf_mapping.push(Vec::new());
         self.elf_map_state.push(None);
+        self.elf_pending_align.push(None);
         self.pending_relocs.push(Vec::new());
         let index = self.sections.len() - 1;
         self.note_section_temp(index);
@@ -2875,9 +2916,12 @@ impl Assembler {
 
         let mut defined: Vec<(String, usize, u64, bool)> = Vec::new();
         for (name, (section, offset)) in &labels {
-            // `.L` names are assembler temporaries; gas keeps them out of
-            // the symbol table entirely unless a relocation needs them.
-            if name.starts_with(".L") && !self.elf_label_needs_symbol(name) {
+            // `.L` names are assembler temporaries and never reach the ELF
+            // symbol table -- gas strips them even when `.local`, `.type`
+            // and `.size` name them, which is exactly the shape a compiler
+            // emits for an anonymous string literal. Relocations against
+            // them already resolve section-relative.
+            if name.starts_with(".L") {
                 continue;
             }
             let global = self.elf_symbol_binding_is_global(name);
@@ -2977,7 +3021,10 @@ impl Assembler {
             .cloned()
             .collect();
         for name in declared {
-            if index_of.contains_key(&name) {
+            // A `.L` name that carried `.local`/`.type`/`.size` was skipped
+            // above on purpose; it must not sneak back in here as an
+            // undefined global.
+            if index_of.contains_key(&name) || name.starts_with(".L") {
                 continue;
             }
             index_of.insert(name.clone(), obj.symbols.len());
@@ -2998,7 +3045,9 @@ impl Assembler {
                 let PendingRelocTarget::Symbol(symbol) = &reloc.target else {
                     return Err(AsmError("raw-payload relocations are Mach-O only".into()));
                 };
-                if index_of.contains_key(symbol) {
+                // A defined `.L` label is deliberately absent from
+                // index_of: its relocation resolves section-relative below.
+                if index_of.contains_key(symbol) || self.labels.contains_key(symbol) {
                     continue;
                 }
                 if is_assembler_local_symbol(symbol) {
@@ -3059,10 +3108,6 @@ impl Assembler {
 
         elf::validate(&obj).map_err(|e| AsmError(e.to_string()))?;
         Ok(obj)
-    }
-
-    fn elf_label_needs_symbol(&self, name: &str) -> bool {
-        self.symbol_attrs.contains_key(name) || self.elf_attrs.contains_key(name)
     }
 
     fn elf_symbol_binding_is_global(&self, name: &str) -> bool {
@@ -4023,18 +4068,20 @@ fn elf_lo12_reloc(word: u32) -> Result<u32, AsmError> {
 /// Directives that place data bytes, for AArch64 `$d` mapping-symbol
 /// placement. Alignment padding is deliberately absent: gas does not break
 /// a code region for `.p2align` fill.
-fn directive_emits_data(dir: &Directive) -> bool {
-    matches!(
-        dir,
+fn directive_data_mapping(dir: &Directive) -> Option<bool> {
+    match dir {
+        // `.zero`/`.space`/`.fill` establish a data region even in a section
+        // that has never held code.
+        Directive::Space(_) | Directive::Fill { .. } => Some(true),
+        // These only follow an already-established state.
         Directive::Byte(_)
-            | Directive::Short(_)
-            | Directive::Word(_)
-            | Directive::Quad(_)
-            | Directive::Ascii(_)
-            | Directive::Asciz(_)
-            | Directive::Space(_)
-            | Directive::Fill { .. }
-    )
+        | Directive::Short(_)
+        | Directive::Word(_)
+        | Directive::Quad(_)
+        | Directive::Ascii(_)
+        | Directive::Asciz(_) => Some(false),
+        _ => None,
+    }
 }
 
 fn is_assembler_local_symbol(name: &str) -> bool {
