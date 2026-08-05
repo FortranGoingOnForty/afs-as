@@ -9,9 +9,8 @@
 //! function of the model — no clock, no host queries.
 //!
 //! Scope (x13): `ET_REL` objects only. The relocation namespace is
-//! per-arch (`reloc::x86_64` now; `reloc::aarch64` reserved for x15);
-//! `r_type` stays a raw `u32` and validation dispatches on
-//! `ObjectFile.machine`.
+//! per-arch (`reloc::x86_64`, `reloc::aarch64`); `r_type` stays a raw
+//! `u32` and validation dispatches on `ObjectFile.machine`.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -32,7 +31,6 @@ pub const ELFOSABI_FREEBSD: u8 = 9;
 pub const ET_REL: u16 = 1;
 
 pub const EM_X86_64: u16 = 62;
-/// Reserved for x15 (arm64-linux); no `R_AARCH64_*` constants until then.
 pub const EM_AARCH64: u16 = 183;
 
 pub const SHT_NULL: u32 = 0;
@@ -93,6 +91,70 @@ pub mod reloc {
                 | R_X86_64_32S
                 | R_X86_64_GOTPCRELX
                 | R_X86_64_REX_GOTPCRELX => Some(4),
+                _ => None,
+            }
+        }
+    }
+
+    /// AArch64 relocation types (binutils include/elf/aarch64.h).
+    ///
+    /// The set is the one a C compiler actually needs: absolute data words,
+    /// the ADRP/lo12 pair that materializes a global address, the two
+    /// 26-bit branch forms, and the GOT/initial-exec TLS pair the driver
+    /// starts using when `-fPIC` lands. Anything outside this list is
+    /// rejected by `width` rather than written blind — an unknown type
+    /// would be silently mis-linked, not diagnosed.
+    pub mod aarch64 {
+        pub const R_AARCH64_NONE: u32 = 0;
+        pub const R_AARCH64_ABS64: u32 = 257;
+        pub const R_AARCH64_ABS32: u32 = 258;
+        pub const R_AARCH64_ABS16: u32 = 259;
+        pub const R_AARCH64_PREL64: u32 = 260;
+        pub const R_AARCH64_PREL32: u32 = 261;
+        pub const R_AARCH64_PREL16: u32 = 262;
+        pub const R_AARCH64_ADR_PREL_PG_HI21: u32 = 275;
+        pub const R_AARCH64_ADD_ABS_LO12_NC: u32 = 277;
+        pub const R_AARCH64_LDST8_ABS_LO12_NC: u32 = 278;
+        pub const R_AARCH64_TSTBR14: u32 = 279;
+        pub const R_AARCH64_CONDBR19: u32 = 280;
+        pub const R_AARCH64_JUMP26: u32 = 282;
+        pub const R_AARCH64_CALL26: u32 = 283;
+        pub const R_AARCH64_LDST16_ABS_LO12_NC: u32 = 284;
+        pub const R_AARCH64_LDST32_ABS_LO12_NC: u32 = 285;
+        pub const R_AARCH64_LDST64_ABS_LO12_NC: u32 = 286;
+        pub const R_AARCH64_LDST128_ABS_LO12_NC: u32 = 299;
+        pub const R_AARCH64_ADR_GOT_PAGE: u32 = 311;
+        pub const R_AARCH64_LD64_GOT_LO12_NC: u32 = 312;
+        pub const R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21: u32 = 541;
+        pub const R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC: u32 = 542;
+
+        /// Field width in bytes patched by a relocation type.
+        ///
+        /// Every instruction relocation patches one 4-byte word: the
+        /// relocation names which BITS of that word move, not how wide the
+        /// field is. Only the data relocations vary.
+        pub fn width(r_type: u32) -> Option<u64> {
+            match r_type {
+                R_AARCH64_NONE => Some(0),
+                R_AARCH64_ABS64 | R_AARCH64_PREL64 => Some(8),
+                R_AARCH64_ABS16 | R_AARCH64_PREL16 => Some(2),
+                R_AARCH64_ABS32
+                | R_AARCH64_PREL32
+                | R_AARCH64_ADR_PREL_PG_HI21
+                | R_AARCH64_ADD_ABS_LO12_NC
+                | R_AARCH64_LDST8_ABS_LO12_NC
+                | R_AARCH64_TSTBR14
+                | R_AARCH64_CONDBR19
+                | R_AARCH64_JUMP26
+                | R_AARCH64_CALL26
+                | R_AARCH64_LDST16_ABS_LO12_NC
+                | R_AARCH64_LDST32_ABS_LO12_NC
+                | R_AARCH64_LDST64_ABS_LO12_NC
+                | R_AARCH64_LDST128_ABS_LO12_NC
+                | R_AARCH64_ADR_GOT_PAGE
+                | R_AARCH64_LD64_GOT_LO12_NC
+                | R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21
+                | R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC => Some(4),
                 _ => None,
             }
         }
@@ -522,7 +584,7 @@ impl Section {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectFile {
-    /// EM_X86_64 (EM_AARCH64 reserved for x15).
+    /// EM_X86_64 or EM_AARCH64.
     pub machine: u16,
     /// ELFOSABI_FREEBSD on FreeBSD targets, ELFOSABI_NONE on Linux —
     /// gas brands relocatables per OS and the differential compares it.
@@ -578,6 +640,7 @@ pub fn validate(obj: &ObjectFile) -> Result<(), ElfError> {
             }
             let width = match obj.machine {
                 EM_X86_64 => reloc::x86_64::width(r.r_type),
+                EM_AARCH64 => reloc::aarch64::width(r.r_type),
                 m => {
                     return Err(ElfError::new(format!(
                         "unsupported machine {} for relocation validation",

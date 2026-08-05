@@ -118,9 +118,51 @@ pub enum Directive {
     CfiRestore(GpReg),
     CfiAdjustCfaOffset(i64),
     Section(String, String),
+    /// GNU ELF `.section NAME[,"flags"[,@type]]`, plus the `.text`/`.data`/
+    /// `.bss` shorthands when the assembler is producing ELF. Kept distinct
+    /// from the Mach-O two-name `Section` because the identity of an ELF
+    /// section is its single name plus flags, not a segment/section pair.
+    ElfSection {
+        name: String,
+        flags: Option<String>,
+        section_type: Option<ElfSectionType>,
+    },
+    ElfType {
+        sym: String,
+        kind: ElfSymKind,
+    },
+    ElfSize {
+        sym: String,
+        arg: ElfSizeArg,
+    },
+    ElfLocal(String),
+    ElfWeak(String),
+    ElfHidden(String),
     SubsectionsViaSymbols,
     BuildVersion(BuildVersionDirective),
     LinkerOptimizationHint(LinkerOptimizationHintDirective),
+}
+
+/// GNU ELF `.section` type keyword (`@progbits`, `@nobits`, `@note`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElfSectionType {
+    Progbits,
+    Nobits,
+    Note,
+}
+
+/// `.type sym, @function|@object`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElfSymKind {
+    Function,
+    Object,
+}
+
+/// `.size` argument: an absolute count or the idiomatic `.-sym`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ElfSizeArg {
+    Const(u64),
+    DotMinus(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -876,6 +918,13 @@ impl<'a> Parser<'a> {
                 Directive::CfiAdjustCfaOffset(self.parse_const_expr("CFA adjustment")?)
             }
             ".section" => {
+                // GNU ELF sections are a single dotted name; Mach-O sections
+                // are a `__SEG,__sect` pair. The spelling of the first
+                // operand is the discriminator, so one grammar serves both
+                // output formats with no parser mode to get wrong.
+                if matches!(self.peek(), Tok::Ident(name) if name.starts_with('.')) {
+                    return Ok(Stmt::Directive(self.parse_elf_section_directive()?));
+                }
                 let seg = self.expect_ident()?;
                 self.expect(&Tok::Comma)?;
                 let sect = self.expect_ident()?;
@@ -888,6 +937,26 @@ impl<'a> Parser<'a> {
                 }
                 Directive::Section(seg, sect)
             }
+            ".type" => {
+                let sym = self.expect_ident()?;
+                self.expect(&Tok::Comma)?;
+                let kind = self.parse_elf_type_keyword()?;
+                Directive::ElfType { sym, kind }
+            }
+            ".size" => {
+                let sym = self.expect_ident()?;
+                self.expect(&Tok::Comma)?;
+                let arg = self.parse_elf_size_arg()?;
+                Directive::ElfSize { sym, arg }
+            }
+            ".local" => Directive::ElfLocal(self.expect_ident()?),
+            ".weak" => Directive::ElfWeak(self.expect_ident()?),
+            ".hidden" => Directive::ElfHidden(self.expect_ident()?),
+            ".bss" => Directive::ElfSection {
+                name: ".bss".into(),
+                flags: None,
+                section_type: None,
+            },
             ".subsections_via_symbols" => Directive::SubsectionsViaSymbols,
             ".build_version" => {
                 let platform = self.expect_ident()?.to_ascii_lowercase();
@@ -1573,6 +1642,115 @@ impl<'a> Parser<'a> {
 
         Err(self.err(format!(
             "unsupported relocation modifier '@{}' for {}",
+            modifier, context
+        )))
+    }
+
+    /// GNU ELF `.section NAME[,"flags"[,@type]]`. The leading `.section`
+    /// keyword is already consumed.
+    fn parse_elf_section_directive(&mut self) -> Result<Directive, ParseError> {
+        let name = self.expect_ident()?;
+        let mut flags = None;
+        let mut section_type = None;
+        if self.eat(&Tok::Comma) {
+            let Tok::StringLit(bytes) = self.peek().clone() else {
+                return Err(self.err("expected a quoted flag string after section name".into()));
+            };
+            self.advance();
+            flags = Some(
+                String::from_utf8(bytes)
+                    .map_err(|_| self.err("section flags must be valid UTF-8".into()))?,
+            );
+            if self.eat(&Tok::Comma) {
+                section_type = Some(self.parse_elf_section_type_keyword()?);
+            }
+        }
+        Ok(Directive::ElfSection {
+            name,
+            flags,
+            section_type,
+        })
+    }
+
+    fn parse_elf_section_type_keyword(&mut self) -> Result<ElfSectionType, ParseError> {
+        self.expect(&Tok::At)?;
+        let word = self.expect_ident()?;
+        match word.to_ascii_lowercase().as_str() {
+            "progbits" => Ok(ElfSectionType::Progbits),
+            "nobits" => Ok(ElfSectionType::Nobits),
+            "note" => Ok(ElfSectionType::Note),
+            other => Err(self.err(format!(
+                "unsupported section type '@{}' (expected @progbits, @nobits, or @note)",
+                other
+            ))),
+        }
+    }
+
+    fn parse_elf_type_keyword(&mut self) -> Result<ElfSymKind, ParseError> {
+        self.expect(&Tok::At)?;
+        let word = self.expect_ident()?;
+        match word.to_ascii_lowercase().as_str() {
+            "function" => Ok(ElfSymKind::Function),
+            "object" => Ok(ElfSymKind::Object),
+            other => Err(self.err(format!(
+                "unsupported symbol type '@{}' (expected @function or @object)",
+                other
+            ))),
+        }
+    }
+
+    /// `.size sym, N` or the compiler idiom `.size sym, .-sym`.
+    fn parse_elf_size_arg(&mut self) -> Result<ElfSizeArg, ParseError> {
+        if matches!(self.peek(), Tok::Dot) {
+            self.advance();
+            self.expect(&Tok::Minus)?;
+            return Ok(ElfSizeArg::DotMinus(self.expect_ident()?));
+        }
+        Ok(ElfSizeArg::Const(
+            self.parse_unsigned_const_expr::<u64>("size expression")?,
+        ))
+    }
+
+    /// ELF operand relocation prefix: `:lo12:sym`, `:got:sym`, and friends,
+    /// optionally behind the `#` an immediate operand would otherwise carry.
+    ///
+    /// Mach-O spells the same three relocation families as a `@PAGE`-style
+    /// SUFFIX, so both syntaxes collapse onto one `RelocKind` here and the
+    /// object writers decide what each means on the wire. Returns `None`
+    /// when no prefix is present, having consumed nothing.
+    fn eat_elf_reloc_prefix(
+        &mut self,
+        allowed: &[(&str, RelocKind)],
+        context: &str,
+    ) -> Result<Option<RelocKind>, ParseError> {
+        let hash = matches!(self.peek(), Tok::Hash);
+        let colon_at = if hash { self.pos + 1 } else { self.pos };
+        if !matches!(
+            self.tokens.get(colon_at).map(|token| &token.kind),
+            Some(Tok::Colon)
+        ) {
+            return Ok(None);
+        }
+        if !matches!(
+            self.tokens.get(colon_at + 1).map(|token| &token.kind),
+            Some(Tok::Ident(_))
+        ) {
+            return Ok(None);
+        }
+        if hash {
+            self.advance();
+        }
+        self.advance();
+        let modifier = self.expect_ident()?;
+        self.expect(&Tok::Colon)?;
+        let lower = modifier.to_ascii_lowercase();
+        for (name, kind) in allowed {
+            if lower == *name {
+                return Ok(Some(*kind));
+            }
+        }
+        Err(self.err(format!(
+            "unsupported relocation modifier ':{}:' for {}",
             modifier, context
         )))
     }
@@ -2393,6 +2571,40 @@ impl<'a> Parser<'a> {
         let rn_operand = self.parse_add_sub_gp_reg_with_size_kind()?;
         let (rn, rn_is_64bit, rn_kind) = rn_operand;
         self.expect(&Tok::Comma)?;
+
+        // ELF spells the ADRP companion `add xN, xN, #:lo12:sym`; Mach-O
+        // spells the same relocation `add xN, xN, sym@PAGEOFF`.
+        let elf_kind = self.eat_elf_reloc_prefix(
+            &[
+                ("lo12", RelocKind::PageOff12),
+                ("got_lo12", RelocKind::GotLoadPageOff12),
+                ("gottprel_lo12", RelocKind::TlvpLoadPageOff12),
+            ],
+            "add/sub symbol operand",
+        )?;
+        if let Some(kind) = elf_kind {
+            self.validate_add_sub_immediate_registers(
+                GpOperandMeta::new(sf, rd_kind, rd_start),
+                GpOperandMeta::new(rn_is_64bit, rn_kind, rn_start),
+                sets_flags,
+            )?;
+            let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
+            return Ok(Stmt::InstructionWithReloc(
+                Inst::AddImm {
+                    rd,
+                    rn,
+                    imm12: 0,
+                    shift: false,
+                    sf,
+                },
+                LabelRef {
+                    symbol: label,
+                    kind,
+                    addend,
+                },
+            ));
+        }
 
         // Check for label@PAGEOFF (identifier or numeric local reference followed by @).
         if self.starts_non_register_symbol_reference() {
@@ -3582,6 +3794,25 @@ impl<'a> Parser<'a> {
     fn parse_adrp(&mut self) -> Result<Stmt, ParseError> {
         let rd = self.parse_x_reg("adrp destination")?;
         self.expect(&Tok::Comma)?;
+        if let Some(kind) = self.eat_elf_reloc_prefix(
+            &[
+                ("got", RelocKind::GotLoadPage21),
+                ("gottprel", RelocKind::TlvpLoadPage21),
+                ("pg_hi21", RelocKind::Page21),
+            ],
+            "adrp symbol operand",
+        )? {
+            let label = self.parse_label_reference()?;
+            let addend = self.parse_optional_symbol_addend()?;
+            return Ok(Stmt::InstructionWithReloc(
+                Inst::Adrp { rd, imm: 0 },
+                LabelRef {
+                    symbol: label,
+                    kind,
+                    addend,
+                },
+            ));
+        }
         if self.starts_immediate_expr() {
             let imm = self.parse_signed_scaled_immediate("adrp immediate", 21, 12)?;
             Ok(Stmt::Instruction(Inst::Adrp { rd, imm }))
@@ -3821,7 +4052,19 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
-        if self.starts_non_register_symbol_reference() {
+        let elf_kind = self.eat_elf_reloc_prefix(
+            if is_load {
+                &[
+                    ("lo12", RelocKind::PageOff12),
+                    ("got_lo12", RelocKind::GotLoadPageOff12),
+                    ("gottprel_lo12", RelocKind::TlvpLoadPageOff12),
+                ][..]
+            } else {
+                &[("lo12", RelocKind::PageOff12)][..]
+            },
+            "memory symbol operand",
+        )?;
+        if elf_kind.is_some() || self.starts_non_register_symbol_reference() {
             let label = self.parse_label_reference()?;
             let allowed = if is_load {
                 &[
@@ -3832,7 +4075,10 @@ impl<'a> Parser<'a> {
             } else {
                 &[("PAGEOFF", RelocKind::PageOff12)][..]
             };
-            let kind = self.parse_symbol_reloc_modifier(None, allowed, "memory symbol operand")?;
+            let kind = match elf_kind {
+                Some(kind) => kind,
+                None => self.parse_symbol_reloc_modifier(None, allowed, "memory symbol operand")?,
+            };
             let addend = self.parse_optional_symbol_addend()?;
             self.expect(&Tok::RBracket)?;
             let inst = if sf {
@@ -4009,16 +4255,23 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
-        if self.starts_non_register_symbol_reference() {
+        let elf_kind = self.eat_elf_reloc_prefix(
+            &[("lo12", RelocKind::PageOff12)],
+            "FP/SIMD memory symbol operand",
+        )?;
+        if elf_kind.is_some() || self.starts_non_register_symbol_reference() {
             if is_scalar_narrow {
                 return Err(self.err("symbolic narrow FP loads/stores are not supported".into()));
             }
             let label = self.parse_label_reference()?;
-            let kind = self.parse_symbol_reloc_modifier(
-                None,
-                &[("PAGEOFF", RelocKind::PageOff12)],
-                "FP/SIMD memory symbol operand",
-            )?;
+            let kind = match elf_kind {
+                Some(kind) => kind,
+                None => self.parse_symbol_reloc_modifier(
+                    None,
+                    &[("PAGEOFF", RelocKind::PageOff12)],
+                    "FP/SIMD memory symbol operand",
+                )?,
+            };
             let addend = self.parse_optional_symbol_addend()?;
             self.expect(&Tok::RBracket)?;
             let inst = match (is_load, width) {
@@ -4408,6 +4661,23 @@ impl<'a> Parser<'a> {
         }
 
         self.expect(&Tok::Comma)?;
+        if matches!(self.peek(), Tok::Colon)
+            || (matches!(self.peek(), Tok::Hash)
+                && matches!(
+                    self.tokens.get(self.pos + 1).map(|token| &token.kind),
+                    Some(Tok::Colon)
+                ))
+        {
+            // The scaled LDST8/LDST16 lo12 forms would need this parser to
+            // produce a relocated statement, which it cannot: it returns a
+            // bare `Inst`. Say so, rather than failing as "expected
+            // expression" three tokens later.
+            return Err(self.err(format!(
+                "{} does not support a symbolic :lo12: operand; \
+                 materialize the address with adrp + add first",
+                mnemonic
+            )));
+        }
         if self.starts_register_like_operand() {
             let scale = match mnemonic {
                 "ldrb" | "strb" => 0,
