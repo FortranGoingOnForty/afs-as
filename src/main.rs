@@ -18,6 +18,9 @@ usage: afs-as <input.s> [-o <output.o>]
 options:
   -o <path>    write object to path, or '-' for stdout
   --64         assemble x86_64 AT&T source to an ELF64 object
+  --target=aarch64-elf
+               assemble arm64 GNU source to an ELF64 object
+               (the default arm64 target is Mach-O)
   --           stop option parsing
 
 exit status:
@@ -31,6 +34,7 @@ Input '-' requires an explicit -o <output.o> or -o -.";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Target {
     Arm64Macho,
+    Arm64Elf,
     X8664Elf,
 }
 
@@ -83,6 +87,9 @@ fn run() -> Result<(), (i32, String)> {
             target,
         }) => match target {
             Target::Arm64Macho => assemble_cli(&input, &output).map_err(|err| (1, err.to_string())),
+            Target::Arm64Elf => {
+                assemble_cli_arm64_elf(&input, &output).map_err(|err| (1, err.to_string()))
+            }
             Target::X8664Elf => assemble_cli_x86(&input, &output).map_err(|err| (1, err)),
         },
         Err(message) => Err((2, format!("afs-as: {}\n\n{}", message, USAGE))),
@@ -109,6 +116,8 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Command, String> {
             return Ok(Command::Version);
         } else if parsing_options && arg_os == OsStr::new("--64") {
             target = Target::X8664Elf;
+        } else if parsing_options && arg_os == OsStr::new("--target=aarch64-elf") {
+            target = Target::Arm64Elf;
         } else if parsing_options && arg_os == OsStr::new("-o") {
             let Some(path) = args.next() else {
                 return Err("option '-o' requires an output path".into());
@@ -198,6 +207,50 @@ fn assemble_cli_x86(input: &Path, output: &Path) -> Result<(), String> {
     } else {
         fs::write(output, &bytes).map_err(write_err)?;
     }
+    Ok(())
+}
+
+fn assemble_cli_arm64_elf(input: &Path, output: &Path) -> Result<(), afs_as::assemble::AsmError> {
+    let stdin_display = Path::new("<stdin>");
+    let stdout_display = Path::new("<stdout>");
+    let input_display = if is_stdio_path(input) {
+        stdin_display
+    } else {
+        input
+    };
+
+    let src = if is_stdio_path(input) {
+        let mut src = Vec::new();
+        io::stdin().read_to_end(&mut src).map_err(|err| {
+            afs_as::assemble::AsmError::new(format!("{}", err)).with_path(input_display)
+        })?;
+        src
+    } else {
+        fs::read(input)
+            .map_err(|err| afs_as::assemble::AsmError::new(format!("{}", err)).with_path(input))?
+    };
+
+    let obj = afs_as::assemble::assemble_source_bytes_elf(&src)
+        .map_err(|err| err.with_source_context_bytes(input_display, &src))?;
+    let bytes = afs_as::elf::write_elf(&obj).map_err(|err| {
+        afs_as::assemble::AsmError::new(format!("writing output: {}", err)).with_path(output)
+    })?;
+
+    if is_stdio_path(output) {
+        let stdout = io::stdout();
+        let mut writer = BufWriter::new(stdout.lock());
+        writer
+            .write_all(&bytes)
+            .and_then(|()| writer.flush())
+            .map_err(|err| {
+                afs_as::assemble::AsmError::new(format!("writing output: {}", err))
+                    .with_path(stdout_display)
+            })?;
+    } else {
+        fs::write(output, &bytes)
+            .map_err(|err| afs_as::assemble::AsmError::new(format!("{}", err)).with_path(output))?;
+    }
+
     Ok(())
 }
 

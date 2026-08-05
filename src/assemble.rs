@@ -11,16 +11,60 @@ use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
+use crate::elf;
 use crate::encode::Inst;
 use crate::expr::{self, ClassifiedExpr, Expr, SymbolValue};
 use crate::macho::{self, BuildVersion, ObjectFile, Relocation, Section, SectionKind, Symbol};
 use crate::parse::{
-    self, BuildVersionDirective, Directive, LabelRef, LinkerOptimizationHintDirective, LocatedStmt,
-    RelocKind, Stmt,
+    self, BuildVersionDirective, Directive, ElfSectionType, ElfSizeArg, ElfSymKind, LabelRef,
+    LinkerOptimizationHintDirective, LocatedStmt, RelocKind, Stmt,
 };
 use crate::reg::{GpReg, SP};
 
 /// Assemble a source file to a Mach-O object file.
+/// Object format the arm64 assembler emits.
+///
+/// The instruction encoder, layout, fixup resolution and expression engine are
+/// format-neutral; only section identity, symbol attributes and the relocation
+/// spelling differ. Mach-O stays the default because that is what the arm64
+/// path has always produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    MachO,
+    Elf,
+}
+
+/// Assemble arm64 GNU-syntax source into an ELF64 relocatable object.
+pub fn assemble_file_elf(input: &Path, output: &Path) -> Result<(), AsmError> {
+    let src = fs::read(input).map_err(|e| AsmError::new(format!("{}", e)).with_path(input))?;
+
+    let obj =
+        assemble_source_bytes_elf(&src).map_err(|e| e.with_source_context_bytes(input, &src))?;
+
+    let bytes = elf::write_elf(&obj)
+        .map_err(|e| AsmError::new(format!("writing output: {}", e)).with_path(output))?;
+    fs::write(output, &bytes).map_err(|e| AsmError::new(format!("{}", e)).with_path(output))?;
+    Ok(())
+}
+
+/// Assemble arm64 GNU-syntax source bytes into an ELF object model.
+pub fn assemble_source_bytes_elf(src: &[u8]) -> Result<elf::ObjectFile, AsmError> {
+    let stmts = parse::parse_bytes_with_locations(src).map_err(AsmError::from)?;
+    let mut asm = Assembler::new_with_format(OutputFormat::Elf);
+    asm.collect_layout(&stmts)?;
+    asm.prepare_unwind_layout()?;
+    asm.prepare_expression_state(&stmts)?;
+    asm.reset_for_emission();
+    asm.process(&stmts)?;
+    asm.resolve_fixups()?;
+    asm.finish_elf()
+}
+
+/// Assemble arm64 GNU-syntax source text into an ELF object model.
+pub fn assemble_source_elf(src: &str) -> Result<elf::ObjectFile, AsmError> {
+    assemble_source_bytes_elf(src.as_bytes())
+}
+
 pub fn assemble_file(input: &Path, output: &Path) -> Result<(), AsmError> {
     let src = fs::read(input).map_err(|e| AsmError::new(format!("{}", e)).with_path(input))?;
 
@@ -291,7 +335,39 @@ impl From<parse::ParseError> for AsmError {
 }
 
 /// Internal assembler state.
+/// ELF identity of an internal section: the single name plus the header
+/// fields gas would derive from the `.section` flags string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ElfSectionIdent {
+    name: String,
+    sh_type: u32,
+    sh_flags: u64,
+}
+
+/// ELF-only symbol attributes, gathered from `.type`, `.size`, `.local`,
+/// `.weak` and `.hidden`.
+#[derive(Debug, Clone, Default)]
+struct ElfSymbolAttrs {
+    kind: Option<ElfSymKind>,
+    size: u64,
+    local: bool,
+    weak: bool,
+    hidden: bool,
+}
+
 struct Assembler {
+    /// Output object format. Only section identity, symbol attributes and
+    /// relocation spelling depend on it.
+    format: OutputFormat,
+    /// ELF identity per section, parallel to `sections`. `None` in Mach-O
+    /// mode and for sections a Mach-O directive created.
+    elf_idents: Vec<Option<ElfSectionIdent>>,
+    elf_attrs: BTreeMap<String, ElfSymbolAttrs>,
+    /// AArch64 mapping symbols: per section, the offsets where the content
+    /// switches between instructions (`$x`) and data (`$d`). The AAELF64
+    /// spec requires them and disassemblers rely on them.
+    elf_mapping: Vec<Vec<(u64, bool)>>,
+    elf_map_state: Vec<Option<bool>>,
     /// Current section index in `sections`.
     section: usize,
     current_line: u32,
@@ -398,6 +474,9 @@ struct PendingReloc {
     reloc_type: u32,
     pcrel: bool,
     extern_: bool,
+    /// ELF RELA addend. Mach-O carries the same value as a separate paired
+    /// ARM64_RELOC_ADDEND entry and leaves this zero.
+    addend: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -658,12 +737,53 @@ impl CfiProcState {
 
 impl Assembler {
     fn new() -> Self {
+        Self::new_with_format(OutputFormat::MachO)
+    }
+
+    fn new_with_format(format: OutputFormat) -> Self {
+        // gas materializes `.text`, `.data` and `.bss` in that order in every
+        // ELF object, empty or not, and relocations against a local name
+        // carry the section symbol's INDEX — so seeding them here is what
+        // makes the byte differential against gas meaningful.
+        let (sections, elf_idents) = match format {
+            OutputFormat::MachO => (vec![Section::text()], vec![None]),
+            OutputFormat::Elf => (
+                vec![
+                    Section::new("__ELF", ".text", SectionKind::Text),
+                    Section::new("__ELF", ".data", SectionKind::Data),
+                    Section::new("__ELF", ".bss", SectionKind::ZeroFill),
+                ],
+                vec![
+                    Some(ElfSectionIdent {
+                        name: ".text".into(),
+                        sh_type: elf::SHT_PROGBITS,
+                        sh_flags: elf::SHF_ALLOC | elf::SHF_EXECINSTR,
+                    }),
+                    Some(ElfSectionIdent {
+                        name: ".data".into(),
+                        sh_type: elf::SHT_PROGBITS,
+                        sh_flags: elf::SHF_ALLOC | elf::SHF_WRITE,
+                    }),
+                    Some(ElfSectionIdent {
+                        name: ".bss".into(),
+                        sh_type: elf::SHT_NOBITS,
+                        sh_flags: elf::SHF_ALLOC | elf::SHF_WRITE,
+                    }),
+                ],
+            ),
+        };
+        let nsections = sections.len();
         Self {
+            format,
+            elf_idents,
+            elf_attrs: BTreeMap::new(),
+            elf_mapping: vec![Vec::new(); nsections],
+            elf_map_state: vec![None; nsections],
             section: 0,
             current_line: 0,
             current_col: 0,
-            sections: vec![Section::text()],
-            source_section_count: 1,
+            sections,
+            source_section_count: nsections,
             labels: BTreeMap::new(),
             absolute_assignments: Vec::new(),
             absolute_symbol_names: BTreeSet::new(),
@@ -679,7 +799,7 @@ impl Assembler {
             expected_section_layout: Vec::new(),
             symbol_attrs: BTreeMap::new(),
             fixups: Vec::new(),
-            pending_relocs: vec![Vec::new()],
+            pending_relocs: (0..nsections).map(|_| Vec::new()).collect(),
             subsections_via_symbols: false,
             build_version: None,
             linker_optimization_hints: Vec::new(),
@@ -710,7 +830,25 @@ impl Assembler {
         self.note_symbol(&format!("ltmp{}", index));
     }
 
+    fn elf_mark(&mut self, code: bool) {
+        if self.format != OutputFormat::Elf {
+            return;
+        }
+        if self.elf_map_state[self.section] == Some(code) {
+            return;
+        }
+        let offset = self.current_offset();
+        self.elf_map_state[self.section] = Some(code);
+        self.elf_mapping[self.section].push((offset, code));
+    }
+
     fn reset_for_emission(&mut self) {
+        for entries in &mut self.elf_mapping {
+            entries.clear();
+        }
+        for state in &mut self.elf_map_state {
+            *state = None;
+        }
         self.section = 0;
         self.current_line = 0;
         self.current_col = 0;
@@ -883,12 +1021,14 @@ impl Assembler {
                     .process_directive(dir)
                     .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?,
                 Stmt::Instruction(inst) => {
+                    self.elf_mark(true);
                     self.sections[self.section].has_instructions = true;
                     let word = inst.encode();
                     self.emit_initialized_bytes(&word.to_le_bytes(), "instruction")
                         .map_err(|e| e.with_loc_if_absent(stmt.line, stmt.col))?;
                 }
                 Stmt::InstructionWithReloc(inst, label_ref) => {
+                    self.elf_mark(true);
                     self.sections[self.section].has_instructions = true;
                     let offset = self.current_offset() as u32;
                     self.emit_initialized_bytes(&inst.encode().to_le_bytes(), "fixup instruction")
@@ -926,8 +1066,8 @@ impl Assembler {
         col: u32,
     ) -> Result<(), AsmError> {
         match dir {
-            Directive::Text => self.switch_to("__TEXT", "__text")?,
-            Directive::Data => self.switch_to("__DATA", "__data")?,
+            Directive::Text => self.switch_to_text()?,
+            Directive::Data => self.switch_to_data()?,
             Directive::Set(name, expr) => {
                 self.note_symbol(name);
                 self.absolute_symbol_names.insert(name.clone());
@@ -1018,6 +1158,31 @@ impl Assembler {
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
+            Directive::ElfSection {
+                name,
+                flags,
+                section_type,
+            } => {
+                self.switch_to_elf_section(name, flags.as_deref(), *section_type)?;
+            }
+            Directive::ElfType { sym, kind } => {
+                self.note_symbol(sym);
+                self.elf_attrs_mut(sym).kind = Some(*kind);
+            }
+            // `.size` needs final offsets, so it is a no-op during layout.
+            Directive::ElfSize { sym, .. } => self.note_symbol(sym),
+            Directive::ElfLocal(name) => {
+                self.note_symbol(name);
+                self.elf_attrs_mut(name).local = true;
+            }
+            Directive::ElfWeak(name) => {
+                self.note_symbol(name);
+                self.elf_attrs_mut(name).weak = true;
+            }
+            Directive::ElfHidden(name) => {
+                self.note_symbol(name);
+                self.elf_attrs_mut(name).hidden = true;
+            }
             Directive::SubsectionsViaSymbols => {
                 self.subsections_via_symbols = true;
             }
@@ -1032,9 +1197,12 @@ impl Assembler {
     }
 
     fn process_directive(&mut self, dir: &Directive) -> Result<(), AsmError> {
+        if directive_emits_data(dir) {
+            self.elf_mark(false);
+        }
         match dir {
-            Directive::Text => self.switch_to("__TEXT", "__text")?,
-            Directive::Data => self.switch_to("__DATA", "__data")?,
+            Directive::Text => self.switch_to_text()?,
+            Directive::Data => self.switch_to_data()?,
             Directive::Set(name, _) => self.activate_absolute_definition(name)?,
             Directive::Comm { .. }
             | Directive::Extern(_)
@@ -1148,6 +1316,18 @@ impl Assembler {
             Directive::Section(seg, sect) => {
                 self.switch_to(seg, sect)?;
             }
+            Directive::ElfSection {
+                name,
+                flags,
+                section_type,
+            } => {
+                self.switch_to_elf_section(name, flags.as_deref(), *section_type)?;
+            }
+            Directive::ElfType { .. }
+            | Directive::ElfLocal(_)
+            | Directive::ElfWeak(_)
+            | Directive::ElfHidden(_) => {}
+            Directive::ElfSize { sym, arg } => self.record_elf_size(sym, arg)?,
             Directive::SubsectionsViaSymbols => {
                 self.subsections_via_symbols = true;
             }
@@ -1613,19 +1793,15 @@ impl Assembler {
                 symbol
             )));
         }
-        if addend != 0 {
-            self.record_addend_reloc(fixup.section, fixup.offset, 2, addend)?;
-        }
-
-        self.record_pending_reloc(
+        self.record_symbol_reloc(
             fixup.section,
             fixup.offset,
             symbol,
             2,
             crate::macho::ARM64_RELOC_BRANCH26,
             true,
-        );
-        Ok(())
+            addend,
+        )
     }
 
     fn should_emit_local_branch_reloc(
@@ -1636,12 +1812,35 @@ impl Assembler {
         addend: i64,
         bits: u8,
     ) -> bool {
+        if self.format == OutputFormat::Elf {
+            // gas resolves a branch at assembly time only when the target is
+            // an ordinary local in this very section. A `.globl` target keeps
+            // its relocation because the linker may bind the call elsewhere,
+            // and resolving it here would silently defeat interposition.
+            return bits == 26
+                && (source_section != target_section || self.elf_symbol_is_preemptible(symbol));
+        }
         bits == 26
             && addend == 0
             && self.subsections_via_symbols
             && source_section == target_section
             && self.sections[target_section].kind == SectionKind::Text
             && !is_assembler_local_symbol(symbol)
+    }
+
+    /// True when an ELF symbol defined in this object can still be bound
+    /// elsewhere at link time: anything `.globl` or `.weak` that `.local`
+    /// has not pulled back.
+    fn elf_symbol_is_preemptible(&self, symbol: &str) -> bool {
+        let elf = self.elf_attrs.get(symbol);
+        if elf.is_some_and(|attrs| attrs.local) {
+            return false;
+        }
+        elf.is_some_and(|attrs| attrs.weak)
+            || self
+                .symbol_attrs
+                .get(symbol)
+                .is_some_and(|attrs| attrs.global)
     }
 
     fn resolve_page_fixup(
@@ -1652,19 +1851,25 @@ impl Assembler {
     ) -> Result<(), AsmError> {
         let context = if pcrel { "page fixup" } else { "pageoff fixup" };
         let (symbol, addend) = self.require_relocatable_symbol(&fixup.expr, context)?;
-        if addend != 0 {
-            if !matches!(
+        if addend != 0
+            && !matches!(
                 reloc_type,
                 crate::macho::ARM64_RELOC_PAGE21 | crate::macho::ARM64_RELOC_PAGEOFF12
-            ) {
-                return Err(AsmError(
-                    "GOT and TLVP page relocations do not support addends".into(),
-                ));
-            }
-            self.record_addend_reloc(fixup.section, fixup.offset, 2, addend)?;
+            )
+        {
+            return Err(AsmError(
+                "GOT and TLVP page relocations do not support addends".into(),
+            ));
         }
-        self.record_pending_reloc(fixup.section, fixup.offset, symbol, 2, reloc_type, pcrel);
-        Ok(())
+        self.record_symbol_reloc(
+            fixup.section,
+            fixup.offset,
+            symbol,
+            2,
+            reloc_type,
+            pcrel,
+            addend,
+        )
     }
 
     fn resolve_literal_fixup(&mut self, fixup: Fixup, template: Inst) -> Result<(), AsmError> {
@@ -1893,6 +2098,20 @@ impl Assembler {
         reloc_type: u32,
         pcrel: bool,
     ) {
+        self.record_pending_reloc_addend(section, offset, symbol, length, reloc_type, pcrel, 0);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_pending_reloc_addend(
+        &mut self,
+        section: usize,
+        offset: u32,
+        symbol: String,
+        length: u8,
+        reloc_type: u32,
+        pcrel: bool,
+        addend: i64,
+    ) {
         self.pending_relocs[section].push(PendingReloc {
             section,
             offset,
@@ -1901,6 +2120,7 @@ impl Assembler {
             reloc_type,
             pcrel,
             extern_: true,
+            addend,
         });
     }
 
@@ -1919,7 +2139,35 @@ impl Assembler {
             reloc_type: crate::macho::ARM64_RELOC_ADDEND,
             pcrel: false,
             extern_: false,
+            addend: 0,
         });
+        Ok(())
+    }
+
+    /// Record a symbol relocation with its addend in the form the output
+    /// format wants: an explicit RELA field for ELF, a paired
+    /// `ARM64_RELOC_ADDEND` entry for Mach-O.
+    #[allow(clippy::too_many_arguments)]
+    fn record_symbol_reloc(
+        &mut self,
+        section: usize,
+        offset: u32,
+        symbol: String,
+        length: u8,
+        reloc_type: u32,
+        pcrel: bool,
+        addend: i64,
+    ) -> Result<(), AsmError> {
+        if self.format == OutputFormat::Elf {
+            self.record_pending_reloc_addend(
+                section, offset, symbol, length, reloc_type, pcrel, addend,
+            );
+            return Ok(());
+        }
+        if addend != 0 {
+            self.record_addend_reloc(section, offset, length, addend)?;
+        }
+        self.record_pending_reloc(section, offset, symbol, length, reloc_type, pcrel);
         Ok(())
     }
 
@@ -2036,6 +2284,95 @@ impl Assembler {
         Ok(())
     }
 
+    fn elf_attrs_mut(&mut self, name: &str) -> &mut ElfSymbolAttrs {
+        self.elf_attrs.entry(name.to_string()).or_default()
+    }
+
+    fn switch_to_text(&mut self) -> Result<(), AsmError> {
+        match self.format {
+            OutputFormat::MachO => self.switch_to("__TEXT", "__text"),
+            OutputFormat::Elf => self.switch_to_elf_section(".text", None, None),
+        }
+    }
+
+    fn switch_to_data(&mut self) -> Result<(), AsmError> {
+        match self.format {
+            OutputFormat::MachO => self.switch_to("__DATA", "__data"),
+            OutputFormat::Elf => self.switch_to_elf_section(".data", None, None),
+        }
+    }
+
+    /// `.size sym, .-sym` resolves against the offset reached at the
+    /// directive, so it is recorded on the emission pass rather than during
+    /// layout.
+    fn record_elf_size(&mut self, sym: &str, arg: &ElfSizeArg) -> Result<(), AsmError> {
+        let size = match arg {
+            ElfSizeArg::Const(value) => *value,
+            ElfSizeArg::DotMinus(base) => {
+                let Some((section, offset)) = self.labels.get(base).copied() else {
+                    return Err(AsmError(format!(
+                        ".size references undefined symbol '{}'",
+                        base
+                    )));
+                };
+                if section != self.section {
+                    return Err(AsmError(format!(".size for '{}' spans sections", base)));
+                }
+                self.current_offset()
+                    .checked_sub(offset)
+                    .ok_or_else(|| AsmError(format!(".size for '{}' is negative", base)))?
+            }
+        };
+        self.elf_attrs_mut(sym).size = size;
+        Ok(())
+    }
+
+    /// Select (creating if needed) a GNU ELF section. Sections are identified
+    /// by name; a repeat `.section` with different flags keeps the first
+    /// header, which is what gas does.
+    fn switch_to_elf_section(
+        &mut self,
+        name: &str,
+        flags: Option<&str>,
+        section_type: Option<ElfSectionType>,
+    ) -> Result<(), AsmError> {
+        if self.format != OutputFormat::Elf {
+            return Err(AsmError(format!(
+                "GNU ELF section '{}' requires an ELF output target",
+                name
+            )));
+        }
+        let ident = elf_section_ident(name, flags, section_type)?;
+        if let Some(index) = self
+            .elf_idents
+            .iter()
+            .position(|slot| slot.as_ref().is_some_and(|have| have.name == ident.name))
+        {
+            self.section = index;
+            return Ok(());
+        }
+        // The internal model still carries a Mach-O-shaped kind; only
+        // `is_zerofill` and the initialized-byte guards consult it.
+        let kind = if ident.sh_type == elf::SHT_NOBITS {
+            SectionKind::ZeroFill
+        } else if ident.sh_flags & elf::SHF_EXECINSTR != 0 {
+            SectionKind::Text
+        } else if ident.sh_flags & elf::SHF_WRITE != 0 {
+            SectionKind::Data
+        } else {
+            SectionKind::ConstData
+        };
+        self.sections.push(Section::new("__ELF", &ident.name, kind));
+        self.elf_idents.push(Some(ident));
+        self.elf_mapping.push(Vec::new());
+        self.elf_map_state.push(None);
+        self.pending_relocs.push(Vec::new());
+        let index = self.sections.len() - 1;
+        self.note_section_temp(index);
+        self.section = index;
+        Ok(())
+    }
+
     fn switch_to(&mut self, seg: &str, sect: &str) -> Result<(), AsmError> {
         self.section = self.ensure_section(seg, sect)?;
         Ok(())
@@ -2049,6 +2386,9 @@ impl Assembler {
             return Ok(index);
         }
         self.sections.push(Section::new(segment, name, kind));
+        self.elf_idents.push(None);
+        self.elf_mapping.push(Vec::new());
+        self.elf_map_state.push(None);
         self.pending_relocs.push(Vec::new());
         let index = self.sections.len() - 1;
         self.note_section_temp(index);
@@ -2448,6 +2788,337 @@ impl Assembler {
         }
 
         Ok(sections)
+    }
+
+    /// Build the ELF object model from the assembled state.
+    ///
+    /// Deliberately parallel to `finish`, not layered on it: `finish`
+    /// synthesizes Mach-O's `ltmp` section anchors, flattens every section
+    /// into one address space, and orders symbols the way `ld64` wants.
+    /// None of that is meaningful in ELF, where section offsets stay
+    /// section-relative and the symbol table is partitioned by binding.
+    fn finish_elf(mut self) -> Result<elf::ObjectFile, AsmError> {
+        if let Some(proc) = &self.active_cfi_proc {
+            return Err(proc.unterminated_error());
+        }
+        if self.subsections_via_symbols {
+            return Err(AsmError(
+                ".subsections_via_symbols is a Mach-O directive".into(),
+            ));
+        }
+        if self.build_version.is_some() {
+            return Err(AsmError(".build_version is a Mach-O directive".into()));
+        }
+        if !self.linker_optimization_hints.is_empty() {
+            return Err(AsmError(
+                ".loh linker optimization hints are Mach-O only".into(),
+            ));
+        }
+
+        let mut obj = elf::ObjectFile::new(elf::EM_AARCH64, elf::ELFOSABI_NONE);
+        // gas emits `.note.GNU-stack` only when the source asks for it.
+        obj.gnu_stack_flags = None;
+        for (index, section) in self.sections.iter().enumerate() {
+            let Some(ident) = self.elf_idents[index].clone() else {
+                return Err(AsmError(format!(
+                    "Mach-O section {},{} has no ELF identity",
+                    section.segment, section.name
+                )));
+            };
+            let align = 1u64 << section.align_pow2;
+            let nobits = ident.sh_type == elf::SHT_NOBITS;
+            if nobits && !section.data.is_empty() {
+                return Err(AsmError(format!(
+                    "{} is SHT_NOBITS but carries {} initialized bytes",
+                    ident.name,
+                    section.data.len()
+                )));
+            }
+            obj.sections.push(elf::Section {
+                name: ident.name,
+                sh_type: ident.sh_type,
+                sh_flags: ident.sh_flags,
+                sh_addralign: align,
+                data: if nobits {
+                    Vec::new()
+                } else {
+                    section.data.clone()
+                },
+                nobits_size: if nobits { section.size } else { 0 },
+                relas: Vec::new(),
+            });
+        }
+
+        // Symbol table. Section symbols first (gas emits one per section),
+        // then defined locals, then globals and undefineds; `write_elf`
+        // partitions locals-first and keeps each partition's order.
+        let mut index_of: HashMap<String, usize> = HashMap::new();
+        let mut section_symbol: Vec<usize> = Vec::with_capacity(obj.sections.len());
+        for section in 0..obj.sections.len() {
+            section_symbol.push(obj.symbols.len());
+            obj.symbols.push(elf::Symbol {
+                name: String::new(),
+                bind: elf::STB_LOCAL,
+                typ: elf::STT_SECTION,
+                vis: elf::STV_DEFAULT,
+                place: elf::SymbolPlace::Section(section),
+                value: 0,
+                size: 0,
+            });
+        }
+
+        let labels: Vec<(String, (usize, u64))> = self
+            .labels
+            .iter()
+            .map(|(name, place)| (name.clone(), *place))
+            .collect();
+
+        let mut defined: Vec<(String, usize, u64, bool)> = Vec::new();
+        for (name, (section, offset)) in &labels {
+            // `.L` names are assembler temporaries; gas keeps them out of
+            // the symbol table entirely unless a relocation needs them.
+            if name.starts_with(".L") && !self.elf_label_needs_symbol(name) {
+                continue;
+            }
+            let global = self.elf_symbol_binding_is_global(name);
+            defined.push((name.clone(), *section, *offset, global));
+        }
+        // Address order, which for a compiler-emitted file is source order.
+        defined.sort_by(|a, b| (a.1, a.2, &a.0).cmp(&(b.1, b.2, &b.0)));
+
+        // AArch64 mapping symbols are locals and come before other locals in
+        // gas's output for a given section.
+        let mapping = std::mem::take(&mut self.elf_mapping);
+        for (section, entries) in mapping.iter().enumerate() {
+            for (offset, code) in entries {
+                obj.symbols.push(elf::Symbol {
+                    name: if *code { "$x".into() } else { "$d".into() },
+                    bind: elf::STB_LOCAL,
+                    typ: elf::STT_NOTYPE,
+                    vis: elf::STV_DEFAULT,
+                    place: elf::SymbolPlace::Section(section),
+                    value: *offset,
+                    size: 0,
+                });
+            }
+        }
+
+        for (name, section, offset, global) in defined.iter().filter(|row| !row.3) {
+            index_of.insert(name.clone(), obj.symbols.len());
+            let _ = global;
+            obj.symbols
+                .push(self.elf_defined_symbol(name, *section, *offset, false));
+        }
+        for (name, _) in self.absolute_symbols.clone() {
+            if index_of.contains_key(&name) || self.elf_symbol_binding_is_global(&name) {
+                continue;
+            }
+            let value = self.absolute_symbols[&name];
+            index_of.insert(name.clone(), obj.symbols.len());
+            obj.symbols.push(elf::Symbol {
+                name: name.clone(),
+                bind: elf::STB_LOCAL,
+                typ: elf::STT_NOTYPE,
+                vis: self.elf_visibility(&name),
+                place: elf::SymbolPlace::Abs,
+                value: value as u64,
+                size: 0,
+            });
+        }
+
+        for (name, section, offset, global) in defined.iter().filter(|row| row.3) {
+            let _ = global;
+            index_of.insert(name.clone(), obj.symbols.len());
+            obj.symbols
+                .push(self.elf_defined_symbol(name, *section, *offset, true));
+        }
+        for (name, value) in self.absolute_symbols.clone() {
+            if index_of.contains_key(&name) {
+                continue;
+            }
+            index_of.insert(name.clone(), obj.symbols.len());
+            obj.symbols.push(elf::Symbol {
+                name: name.clone(),
+                bind: elf::STB_GLOBAL,
+                typ: elf::STT_NOTYPE,
+                vis: self.elf_visibility(&name),
+                place: elf::SymbolPlace::Abs,
+                value: value as u64,
+                size: 0,
+            });
+        }
+        for (name, common) in self.common_symbols.clone() {
+            if index_of.contains_key(&name) {
+                return Err(AsmError(format!(
+                    "symbol '{}' cannot be both common and defined in this object",
+                    name
+                )));
+            }
+            index_of.insert(name.clone(), obj.symbols.len());
+            obj.symbols.push(elf::Symbol {
+                name: name.clone(),
+                bind: elf::STB_GLOBAL,
+                typ: elf::STT_OBJECT,
+                vis: self.elf_visibility(&name),
+                // SHN_COMMON: `value` is the required alignment and `size`
+                // the byte count, the inverse of an ordinary definition.
+                place: elf::SymbolPlace::Common,
+                value: 1u64 << common.align_pow2,
+                size: common.size,
+            });
+        }
+
+        // Declared-but-undefined names, then anything only a relocation
+        // mentions. Both become undefined globals.
+        let declared: Vec<String> = self
+            .symbol_attrs
+            .keys()
+            .chain(self.elf_attrs.keys())
+            .cloned()
+            .collect();
+        for name in declared {
+            if index_of.contains_key(&name) {
+                continue;
+            }
+            index_of.insert(name.clone(), obj.symbols.len());
+            obj.symbols.push(elf::Symbol {
+                name: name.clone(),
+                bind: self.elf_undefined_binding(&name),
+                typ: elf::STT_NOTYPE,
+                vis: self.elf_visibility(&name),
+                place: elf::SymbolPlace::Undef,
+                value: 0,
+                size: 0,
+            });
+        }
+
+        let pending = std::mem::take(&mut self.pending_relocs);
+        for relocs in &pending {
+            for reloc in relocs {
+                let PendingRelocTarget::Symbol(symbol) = &reloc.target else {
+                    return Err(AsmError("raw-payload relocations are Mach-O only".into()));
+                };
+                if index_of.contains_key(symbol) {
+                    continue;
+                }
+                if is_assembler_local_symbol(symbol) {
+                    return Err(AsmError(format!(
+                        "local symbol '{}' must be defined in this object",
+                        symbol
+                    )));
+                }
+                index_of.insert(symbol.clone(), obj.symbols.len());
+                obj.symbols.push(elf::Symbol {
+                    name: symbol.clone(),
+                    bind: elf::STB_GLOBAL,
+                    typ: elf::STT_NOTYPE,
+                    vis: elf::STV_DEFAULT,
+                    place: elf::SymbolPlace::Undef,
+                    value: 0,
+                    size: 0,
+                });
+            }
+        }
+
+        for relocs in &pending {
+            for reloc in relocs {
+                let PendingRelocTarget::Symbol(symbol) = &reloc.target else {
+                    continue;
+                };
+                let word = self.sections[reloc.section]
+                    .data
+                    .get(reloc.offset as usize..reloc.offset as usize + 4)
+                    .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
+                let r_type = elf_reloc_type(reloc, word)?;
+                // A relocation against a symbol this object defines locally
+                // is spelled section-relative, exactly as gas does, so the
+                // linker never needs the local name to resolve it.
+                let (sym_index, extra) = match self.labels.get(symbol) {
+                    // gas names the SECTION, not the local symbol: a local
+                    // definition cannot be preempted, so its section plus an
+                    // offset says the same thing without depending on a name
+                    // the linker is free to strip.
+                    Some((section, offset)) if !self.elf_symbol_is_preemptible(symbol) => {
+                        (section_symbol[*section], *offset as i64)
+                    }
+                    _ => (
+                        *index_of.get(symbol).ok_or_else(|| {
+                            AsmError(format!("relocation names unknown symbol '{}'", symbol))
+                        })?,
+                        0,
+                    ),
+                };
+                obj.sections[reloc.section].relas.push(elf::Rela {
+                    offset: reloc.offset as u64,
+                    symbol: sym_index,
+                    r_type,
+                    addend: reloc.addend + extra,
+                });
+            }
+        }
+
+        elf::validate(&obj).map_err(|e| AsmError(e.to_string()))?;
+        Ok(obj)
+    }
+
+    fn elf_label_needs_symbol(&self, name: &str) -> bool {
+        self.symbol_attrs.contains_key(name) || self.elf_attrs.contains_key(name)
+    }
+
+    fn elf_symbol_binding_is_global(&self, name: &str) -> bool {
+        if self.elf_attrs.get(name).is_some_and(|attrs| attrs.local) {
+            return false;
+        }
+        self.elf_attrs.get(name).is_some_and(|attrs| attrs.weak)
+            || self
+                .symbol_attrs
+                .get(name)
+                .is_some_and(|attrs| attrs.global)
+    }
+
+    fn elf_undefined_binding(&self, name: &str) -> u8 {
+        if self.elf_attrs.get(name).is_some_and(|attrs| attrs.weak) {
+            elf::STB_WEAK
+        } else {
+            elf::STB_GLOBAL
+        }
+    }
+
+    fn elf_visibility(&self, name: &str) -> u8 {
+        if self.elf_attrs.get(name).is_some_and(|attrs| attrs.hidden) {
+            elf::STV_HIDDEN
+        } else {
+            elf::STV_DEFAULT
+        }
+    }
+
+    fn elf_defined_symbol(
+        &self,
+        name: &str,
+        section: usize,
+        offset: u64,
+        global: bool,
+    ) -> elf::Symbol {
+        let attrs = self.elf_attrs.get(name);
+        elf::Symbol {
+            name: name.to_string(),
+            bind: if !global {
+                elf::STB_LOCAL
+            } else if attrs.is_some_and(|a| a.weak) {
+                elf::STB_WEAK
+            } else {
+                elf::STB_GLOBAL
+            },
+            typ: match attrs.and_then(|a| a.kind) {
+                Some(ElfSymKind::Function) => elf::STT_FUNC,
+                Some(ElfSymKind::Object) => elf::STT_OBJECT,
+                None => elf::STT_NOTYPE,
+            },
+            vis: self.elf_visibility(name),
+            place: elf::SymbolPlace::Section(section),
+            value: offset,
+            size: attrs.map(|a| a.size).unwrap_or(0),
+        }
     }
 
     fn finish(mut self) -> Result<ObjectFile, AsmError> {
@@ -3197,6 +3868,173 @@ fn append_uleb128(out: &mut Vec<u8>, mut value: u64) {
             break;
         }
     }
+}
+
+/// Derive an ELF section header from a GNU `.section` line.
+///
+/// An explicit flag string wins. Without one, gas falls back to the
+/// well-known name table; an unknown name with no flags is an error rather
+/// than a guess, because guessing `SHF_ALLOC` wrong is invisible until link
+/// time.
+fn elf_section_ident(
+    name: &str,
+    flags: Option<&str>,
+    section_type: Option<ElfSectionType>,
+) -> Result<ElfSectionIdent, AsmError> {
+    let mut sh_flags = 0u64;
+    let mut sh_type = match section_type {
+        Some(ElfSectionType::Progbits) => elf::SHT_PROGBITS,
+        Some(ElfSectionType::Nobits) => elf::SHT_NOBITS,
+        Some(ElfSectionType::Note) => elf::SHT_NOTE,
+        None => elf::SHT_PROGBITS,
+    };
+
+    match flags {
+        Some(spec) => {
+            for ch in spec.chars() {
+                match ch {
+                    'a' => sh_flags |= elf::SHF_ALLOC,
+                    'w' => sh_flags |= elf::SHF_WRITE,
+                    'x' => sh_flags |= elf::SHF_EXECINSTR,
+                    other => {
+                        return Err(AsmError(format!(
+                            "unsupported section flag '{}' in \"{}\" (supported: a, w, x)",
+                            other, spec
+                        )))
+                    }
+                }
+            }
+        }
+        None => {
+            let (default_flags, default_type) = match name {
+                ".text" => (elf::SHF_ALLOC | elf::SHF_EXECINSTR, elf::SHT_PROGBITS),
+                ".data" => (elf::SHF_ALLOC | elf::SHF_WRITE, elf::SHT_PROGBITS),
+                ".bss" => (elf::SHF_ALLOC | elf::SHF_WRITE, elf::SHT_NOBITS),
+                ".rodata" => (elf::SHF_ALLOC, elf::SHT_PROGBITS),
+                _ => {
+                    return Err(AsmError(format!(
+                        "section '{}' needs an explicit flag string",
+                        name
+                    )))
+                }
+            };
+            sh_flags = default_flags;
+            if section_type.is_none() {
+                sh_type = default_type;
+            }
+        }
+    }
+
+    Ok(ElfSectionIdent {
+        name: name.to_string(),
+        sh_type,
+        sh_flags,
+    })
+}
+
+/// Map an internal (Mach-O-spelled) relocation onto its AArch64 ELF type.
+///
+/// Mach-O collapses distinctions ELF keeps: one `PAGEOFF12` covers both the
+/// `add` and the scaled load/store lo12 forms, and one `BRANCH26` covers both
+/// `bl` and a tail `b`. The relocated instruction word is the discriminator,
+/// and it is already sitting in the section data — no extra bookkeeping
+/// needs to survive fixup resolution to recover it.
+fn elf_reloc_type(reloc: &PendingReloc, word: Option<u32>) -> Result<u32, AsmError> {
+    use crate::elf::reloc::aarch64 as r;
+    use crate::macho as m;
+
+    let word = || -> Result<u32, AsmError> {
+        word.ok_or_else(|| {
+            AsmError(format!(
+                "relocation at offset {:#x} is not backed by an instruction word",
+                reloc.offset
+            ))
+        })
+    };
+
+    Ok(match reloc.reloc_type {
+        m::ARM64_RELOC_UNSIGNED => match reloc.length {
+            3 => r::R_AARCH64_ABS64,
+            2 => r::R_AARCH64_ABS32,
+            other => {
+                return Err(AsmError(format!(
+                    "unsupported absolute relocation width {} bytes",
+                    1 << other
+                )))
+            }
+        },
+        m::ARM64_RELOC_BRANCH26 => {
+            // BL is 100101xx…, B is 000101xx…: bit 31 is the only difference.
+            if word()? & 0x8000_0000 != 0 {
+                r::R_AARCH64_CALL26
+            } else {
+                r::R_AARCH64_JUMP26
+            }
+        }
+        m::ARM64_RELOC_PAGE21 => r::R_AARCH64_ADR_PREL_PG_HI21,
+        m::ARM64_RELOC_PAGEOFF12 => elf_lo12_reloc(word()?)?,
+        m::ARM64_RELOC_GOT_LOAD_PAGE21 => r::R_AARCH64_ADR_GOT_PAGE,
+        m::ARM64_RELOC_GOT_LOAD_PAGEOFF12 => r::R_AARCH64_LD64_GOT_LO12_NC,
+        m::ARM64_RELOC_TLVP_LOAD_PAGE21 => r::R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21,
+        m::ARM64_RELOC_TLVP_LOAD_PAGEOFF12 => r::R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC,
+        other => {
+            return Err(AsmError(format!(
+                "relocation kind {} has no AArch64 ELF spelling",
+                other
+            )))
+        }
+    })
+}
+
+/// Pick the lo12 relocation matching the instruction it patches.
+///
+/// `add` takes the unscaled `ADD_ABS_LO12_NC`; a load/store unsigned-offset
+/// instruction takes the `LDST<n>` form for its access width, because the
+/// immediate field there is SCALED and the linker has to know by how much.
+fn elf_lo12_reloc(word: u32) -> Result<u32, AsmError> {
+    use crate::elf::reloc::aarch64 as r;
+
+    // ADD (immediate), 64- or 32-bit: sf 0 0 100010 sh imm12 Rn Rd.
+    if word & 0x7F80_0000 == 0x1100_0000 {
+        return Ok(r::R_AARCH64_ADD_ABS_LO12_NC);
+    }
+    // LDR/STR (immediate, unsigned offset): size:2 111 V:1 01 opc:2 imm12.
+    if word & 0x3B00_0000 == 0x3900_0000 {
+        let size = word >> 30;
+        let simd = word & 0x0400_0000 != 0;
+        let opc_high = word & 0x0080_0000 != 0;
+        return Ok(match (size, simd && opc_high) {
+            // A SIMD access with opc<1> set is the 128-bit q form, which
+            // encodes size=00 and would otherwise read as a byte access.
+            (0, true) => r::R_AARCH64_LDST128_ABS_LO12_NC,
+            (0, false) => r::R_AARCH64_LDST8_ABS_LO12_NC,
+            (1, _) => r::R_AARCH64_LDST16_ABS_LO12_NC,
+            (2, _) => r::R_AARCH64_LDST32_ABS_LO12_NC,
+            (3, _) => r::R_AARCH64_LDST64_ABS_LO12_NC,
+            _ => unreachable!("size is two bits"),
+        });
+    }
+    Err(AsmError(format!(
+        "instruction {:#010x} cannot carry a :lo12: relocation",
+        word
+    )))
+}
+
+/// Directives that place data bytes, for AArch64 `$d` mapping-symbol
+/// placement. Alignment padding is deliberately absent: gas does not break
+/// a code region for `.p2align` fill.
+fn directive_emits_data(dir: &Directive) -> bool {
+    matches!(
+        dir,
+        Directive::Byte(_)
+            | Directive::Short(_)
+            | Directive::Word(_)
+            | Directive::Quad(_)
+            | Directive::Ascii(_)
+            | Directive::Asciz(_)
+            | Directive::Space(_)
+            | Directive::Fill { .. }
+    )
 }
 
 fn is_assembler_local_symbol(name: &str) -> bool {
