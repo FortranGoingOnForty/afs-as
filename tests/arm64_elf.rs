@@ -47,6 +47,14 @@ fn symbol(obj: &ObjectFile, name: &str) -> afs_as::elf::Symbol {
         .clone()
 }
 
+fn mapping_symbols(obj: &ObjectFile) -> Vec<(&str, u64)> {
+    obj.symbols
+        .iter()
+        .filter(|s| s.name == "$x" || s.name == "$d")
+        .map(|s| (s.name.as_str(), s.value))
+        .collect()
+}
+
 fn symbol_names(obj: &ObjectFile) -> Vec<&str> {
     obj.symbols.iter().map(|s| s.name.as_str()).collect()
 }
@@ -329,7 +337,7 @@ fn defined_symbols_come_out_in_address_order() {
 
 #[test]
 fn code_and_data_regions_get_their_mapping_symbols() {
-    let obj = assemble(".text\nf:\n    ret\n.data\nd:\n    .quad 0\n");
+    let obj = assemble(".text\nf:\n    ret\n.data\nd:\n    .zero 8\n");
     let mapping: Vec<_> = obj
         .symbols
         .iter()
@@ -343,6 +351,63 @@ fn code_and_data_regions_get_their_mapping_symbols() {
             ("$d", SymbolPlace::Section(1), 0),
         ]
     );
+}
+
+#[test]
+fn ordinary_data_directives_do_not_start_a_mapping_state() {
+    // gas distinguishes the two kinds: `.zero`/`.space` ESTABLISH a data
+    // region in a section that has never held code, while `.byte`/`.quad`
+    // merely FOLLOW an existing state. A `.data` of pure `.byte`s therefore
+    // has no `$d` at all -- which is exactly the shape a compiler emits for
+    // an anonymous string literal.
+    let bytes_only = assemble(".data\nd:\n    .byte 1\n    .byte 2\n");
+    assert_eq!(mapping_symbols(&bytes_only), Vec::<(&str, u64)>::new());
+
+    // ...but a `.zero` in the same section establishes one at its offset.
+    let with_zero = assemble(".data\nd:\n    .byte 1\n    .zero 8\n");
+    assert_eq!(mapping_symbols(&with_zero), vec![("$d", 1)]);
+
+    // ...and once code has established a state, data directives do mark.
+    let after_code = assemble(".text\nf:\n    ret\n    .quad 0\n");
+    assert_eq!(mapping_symbols(&after_code), vec![("$x", 0), ("$d", 4)]);
+}
+
+#[test]
+fn alignment_arms_a_mark_whose_kind_the_next_content_decides() {
+    // gas does not decide an alignment's mapping kind at the alignment: it
+    // records where the padding began and lets the NEXT content choose. So
+    // the same `.p2align` opens a `$d` region before data and no region at
+    // all before code, and the symbol sits at the pre-padding offset.
+    let before_data = assemble(".data\nd:\n    .byte 1\n    .p2align 3\n    .quad 2\n");
+    assert_eq!(mapping_symbols(&before_data), vec![("$d", 1)]);
+
+    let before_code = assemble(".text\n    .p2align 2\nf:\n    ret\n");
+    assert_eq!(mapping_symbols(&before_code), vec![("$x", 0)]);
+
+    // `.p2align 0` is a no-op alignment and arms nothing.
+    let noop = assemble(".data\nd:\n    .p2align 0\n    .byte 1\n");
+    assert_eq!(mapping_symbols(&noop), Vec::<(&str, u64)>::new());
+}
+
+#[test]
+fn dot_l_names_never_reach_the_symbol_table() {
+    // gas strips them even when `.local`, `.type` and `.size` name them --
+    // the exact shape a compiler emits for an anonymous string literal.
+    let obj = assemble(
+        ".data\n.local .Lstr.0\n.type .Lstr.0, @object\n.size .Lstr.0, 2\n\
+         .Lstr.0:\n    .byte 104\n    .byte 0\n\
+         .text\nf:\n    adrp x0, .Lstr.0\n    add x0, x0, #:lo12:.Lstr.0\n",
+    );
+    assert!(
+        !symbol_names(&obj).contains(&".Lstr.0"),
+        "symbols: {:?}",
+        symbol_names(&obj)
+    );
+    // The relocation still resolves, section-relative.
+    for r in text_relocs(&obj) {
+        assert_eq!(reloc_symbol_name(&obj, r), ".data");
+        assert_eq!(r.addend, 0);
+    }
 }
 
 #[test]
