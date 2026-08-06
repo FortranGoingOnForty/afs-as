@@ -1952,6 +1952,47 @@ pub enum Inst {
         rn: FpReg,
         rm: FpReg,
     },
+    /// ADD.2D Vd, Vn, Vm
+    AddV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
+    /// SUB.2D Vd, Vn, Vm
+    SubV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
+    /// DUP Vd.<T>, Rn -- splat a GENERAL register across every lane. The
+    /// lane-indexed DupV* forms above splat a vector lane instead.
+    DupGpV16B {
+        rd: FpReg,
+        rn: GpReg,
+    },
+    DupGpV8H {
+        rd: FpReg,
+        rn: GpReg,
+    },
+    DupGpV4S {
+        rd: FpReg,
+        rn: GpReg,
+    },
+    DupGpV2D {
+        rd: FpReg,
+        rn: GpReg,
+    },
+    /// UMOV Wd, Vn.S[i] / UMOV Xd, Vn.D[i]
+    UmovFromLaneS {
+        rd: GpReg,
+        rn: FpReg,
+        index: u8,
+    },
+    UmovFromLaneD {
+        rd: GpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// ADDP.2D Vd, Vn, Vm
     AddpV2D {
         rd: FpReg,
@@ -4150,6 +4191,14 @@ impl Inst {
             Inst::FmlsV4S { rd, rn, rm } => simd_fp_arith_4s(0x4EA0CC00, *rm, *rn, *rd),
             Inst::FmlsV2D { rd, rn, rm } => simd_fp_arith_2d(0x4EE0CC00, *rm, *rn, *rd),
             Inst::AddV4S { rd, rn, rm } => simd_binary(0x4EA08400, *rm, *rn, *rd),
+            Inst::AddV2D { rd, rn, rm } => simd_binary(0x4EE08400, *rm, *rn, *rd),
+            Inst::SubV2D { rd, rn, rm } => simd_binary(0x6EE08400, *rm, *rn, *rd),
+            Inst::DupGpV16B { rd, rn } => simd_dup_gp(0, *rn, *rd),
+            Inst::DupGpV8H { rd, rn } => simd_dup_gp(1, *rn, *rd),
+            Inst::DupGpV4S { rd, rn } => simd_dup_gp(2, *rn, *rd),
+            Inst::DupGpV2D { rd, rn } => simd_dup_gp(3, *rn, *rd),
+            Inst::UmovFromLaneS { rd, rn, index } => simd_extract_lane_gp(2, *rn, *index, *rd),
+            Inst::UmovFromLaneD { rd, rn, index } => simd_extract_lane_gp(3, *rn, *index, *rd),
             Inst::AddpV2D { rd, rn, rm } => simd_binary(0x4EE0BC00, *rm, *rn, *rd),
             Inst::AddpV16B { rd, rn, rm } => simd_binary(0x4E20BC00, *rm, *rn, *rd),
             Inst::AddpV8H { rd, rn, rm } => simd_binary(0x4E60BC00, *rm, *rn, *rd),
@@ -4931,6 +4980,13 @@ fn assert_simd_lane_index(size_log2: u8, index: u8) {
 
 fn simd_dup_lane(size_log2: u8, rn: FpReg, index: u8, rd: FpReg) -> u32 {
     0x4E000400 | (simd_lane_imm5(size_log2, index) << 16) | (rn.enc() << 5) | rd.enc()
+}
+
+/// DUP (general): imm5 carries only the ELEMENT SIZE, with no lane index --
+/// every lane receives the same register.
+fn simd_dup_gp(size_log2: u8, rn: GpReg, rd: FpReg) -> u32 {
+    assert!(size_log2 <= 3, "SIMD lane element size is invalid");
+    0x4E000C00 | ((1u32 << size_log2) << 16) | (rn.enc() << 5) | rd.enc()
 }
 
 fn simd_ext_16b(rm: FpReg, rn: FpReg, rd: FpReg, index: u8) -> u32 {

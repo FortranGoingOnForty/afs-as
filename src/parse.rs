@@ -412,6 +412,10 @@ struct Parser<'a> {
     absolute_symbols: BTreeMap<String, i64>,
     absolute_assignment_values: BTreeMap<(u32, u32), Result<i64, LocatedAbsoluteAssignmentError>>,
     numeric_labels: BTreeMap<u32, u32>,
+    /// GNU-dialect SIMD: the arrangement taken from the FIRST vector operand,
+    /// which every later vector operand of the same instruction must repeat.
+    /// None outside a GNU-dialect instruction, where operands are bare `vN`.
+    gnu_simd_arrangement: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -498,6 +502,7 @@ impl<'a> Parser<'a> {
             absolute_symbols: BTreeMap::new(),
             absolute_assignment_values: BTreeMap::new(),
             numeric_labels: BTreeMap::new(),
+            gnu_simd_arrangement: None,
         }
     }
 
@@ -1823,6 +1828,28 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_instruction(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
+        // GNU-dialect SIMD arrives as a BARE mnemonic whose first operand
+        // carries the arrangement (`eor v0.16b, v1.16b, v2.16b`). Apple
+        // spells the same instruction `eor.16b v0, v1, v2`, and every
+        // dispatch row and encoder below is written for that form. Rather
+        // than duplicate them, synthesize the Apple mnemonic and let
+        // parse_simd_reg strip the suffix off each operand, checking that
+        // they all agree.
+        //
+        // Only mnemonics that ALREADY have an Apple `.arrangement` row can
+        // take this path, so a bare `add x0, x1, x2` is untouched: the
+        // decision is made on the OPERAND, not the mnemonic.
+        if !mnemonic.contains('.') {
+            if let Some(arrangement) = self.peek_gnu_simd_arrangement() {
+                let apple = format!("{mnemonic}.{arrangement}");
+                if mnemonic_has_apple_simd_row(&apple) {
+                    self.gnu_simd_arrangement = Some(arrangement);
+                    let parsed = self.parse_instruction(&apple);
+                    self.gnu_simd_arrangement = None;
+                    return parsed;
+                }
+            }
+        }
         // ADRP and ADD-with-label return Stmt directly (may carry relocation info).
         if mnemonic == "adrp" {
             return self.parse_adrp();
@@ -2039,11 +2066,12 @@ impl<'a> Parser<'a> {
             "cneg" => self.parse_cneg(),
             "mov" => self.parse_mov(),
             "mov.s" | "mov.d" | "mov.h" | "mov.b" => self.parse_simd_lane_insert(mnemonic),
-            "umov.h" | "umov.b" => self.parse_simd_lane_extract_gp(mnemonic),
+
             "smov.h" | "smov.b" => self.parse_simd_lane_extract_gp_signed(mnemonic),
             "ld1.s" | "ld1.d" | "ld1.h" | "ld1.b" => self.parse_simd_lane_load(mnemonic),
             "mov.8b" | "mov.16b" | "mov.4s" | "mov.2d" => self.parse_simd_mov(mnemonic),
             "dup.16b" | "dup.8h" | "dup.4s" | "dup.2d" => self.parse_simd_dup(mnemonic),
+            "umov.b" | "umov.h" | "umov.s" | "umov.d" => self.parse_simd_lane_extract_gp(mnemonic),
             "tbl.16b" => self.parse_simd_table_lookup("tbl.16b"),
             "tbx.16b" => self.parse_simd_table_lookup("tbx.16b"),
             "ext.16b" => self.parse_simd_ext_16b(),
@@ -2096,7 +2124,7 @@ impl<'a> Parser<'a> {
             "addp.16b" | "smaxp.16b" | "sminp.16b" | "umaxp.16b" | "uminp.16b" => {
                 self.parse_simd_int_arith_16b(mnemonic)
             }
-            "addp.2d" => self.parse_simd_int_arith_2d(mnemonic),
+            "add.2d" | "sub.2d" | "addp.2d" => self.parse_simd_int_arith_2d(mnemonic),
             "addp.8h" | "smaxp.8h" | "sminp.8h" | "umaxp.8h" | "uminp.8h" => {
                 self.parse_simd_int_arith_8h(mnemonic)
             }
@@ -3437,6 +3465,8 @@ impl<'a> Parser<'a> {
         let width = match mnemonic {
             "umov.h" => SimdLaneWidth::H16,
             "umov.b" => SimdLaneWidth::B8,
+            "umov.s" => SimdLaneWidth::S32,
+            "umov.d" => SimdLaneWidth::D64,
             _ => unreachable!(),
         };
         let rd = self.parse_lane_gp_reg(width, mnemonic)?;
@@ -3445,7 +3475,8 @@ impl<'a> Parser<'a> {
         Ok(match width {
             SimdLaneWidth::H16 => Inst::UmovFromLaneH { rd, rn, index },
             SimdLaneWidth::B8 => Inst::UmovFromLaneB { rd, rn, index },
-            SimdLaneWidth::S32 | SimdLaneWidth::D64 => unreachable!(),
+            SimdLaneWidth::S32 => Inst::UmovFromLaneS { rd, rn, index },
+            SimdLaneWidth::D64 => Inst::UmovFromLaneD { rd, rn, index },
         })
     }
 
@@ -5456,6 +5487,8 @@ impl<'a> Parser<'a> {
         let rm = self.parse_simd_reg()?;
         Ok(match mnemonic {
             "addp.2d" => Inst::AddpV2D { rd, rn, rm },
+            "add.2d" => Inst::AddV2D { rd, rn, rm },
+            "sub.2d" => Inst::SubV2D { rd, rn, rm },
             _ => unreachable!(),
         })
     }
@@ -5736,6 +5769,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_simd_dup(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        // DUP has two shapes sharing one mnemonic: splat a GENERAL register
+        // across every lane, or splat one LANE of a vector. The destination
+        // is a vector either way, so the SECOND operand is what decides --
+        // testing the first would always see a vector and never take the
+        // general-register path.
         let (width, make_inst): (SimdLaneWidth, fn(FpReg, FpReg, u8) -> Inst) = match mnemonic {
             "dup.16b" => (SimdLaneWidth::B8, |rd, rn, index| Inst::DupV16B {
                 rd,
@@ -5761,6 +5799,15 @@ impl<'a> Parser<'a> {
         };
         let rd = self.parse_simd_reg()?;
         self.expect(&Tok::Comma)?;
+        if self.peek_is_gp_reg() {
+            let (rn, _sf) = self.parse_gp_data_reg_with_size(mnemonic)?;
+            return Ok(match mnemonic {
+                "dup.16b" => Inst::DupGpV16B { rd, rn },
+                "dup.8h" => Inst::DupGpV8H { rd, rn },
+                "dup.4s" => Inst::DupGpV4S { rd, rn },
+                _ => Inst::DupGpV2D { rd, rn },
+            });
+        }
         let (rn, index) = self.parse_simd_lane_ref(width)?;
         Ok(make_inst(rd, rn, index))
     }
@@ -5994,8 +6041,54 @@ impl<'a> Parser<'a> {
         let start = self.pos;
         let name = self.expect_ident()?;
         let lower = name.to_lowercase();
+        // GNU dialect spells the arrangement on the OPERAND (`v0.16b`) where
+        // Apple spells it on the mnemonic (`eor.16b v0, ...`). `.` is an
+        // identifier character to the lexer, so the whole thing arrives as
+        // one token and the suffix can simply be split off here -- which lets
+        // both dialects share every dispatch table and every encoder below.
+        if let Some(expected) = self.gnu_simd_arrangement.clone() {
+            if let Some((reg, arrangement)) = lower.split_once('.') {
+                if arrangement != expected {
+                    return Err(self.err_at(
+                        start,
+                        format!(
+                            "vector operands must share one arrangement: expected                              '{expected}', got '{arrangement}'"
+                        ),
+                    ));
+                }
+                return parse_simd_reg_name(reg).ok_or_else(|| {
+                    self.err_at(start, format!("expected vector register, got '{name}'"))
+                });
+            }
+        }
         parse_simd_reg_name(&lower)
             .ok_or_else(|| self.err_at(start, format!("expected vector register, got '{}'", name)))
+    }
+
+    /// The arrangement carried by the FIRST GNU-dialect vector operand on
+    /// this line, e.g. `16b` from `eor v0.16b, v1.16b, v2.16b`.
+    ///
+    /// It scans to end of line rather than looking only at the next token,
+    /// because the vector operand is not always first: `umov w1, v0.s[2]`
+    /// puts a general register there and the arrangement on the SOURCE.
+    fn peek_gnu_simd_arrangement(&self) -> Option<String> {
+        let mut i = self.pos;
+        while i < self.tokens.len() {
+            match &self.tokens[i].kind {
+                Tok::Newline | Tok::Eof => return None,
+                Tok::Ident(name) => {
+                    let lower = name.to_lowercase();
+                    if let Some((reg, arrangement)) = lower.split_once('.') {
+                        if looks_like_simd_register_spelling(reg) && !arrangement.is_empty() {
+                            return Some(arrangement.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
     }
 
     fn peek_is_gp_reg(&self) -> bool {
@@ -6669,6 +6762,25 @@ fn looks_like_scalar_fp_register_spelling(name: &str) -> bool {
     matches!(chars.next(), Some('d' | 's'))
         && chars.clone().next().is_some()
         && chars.all(|ch| ch.is_ascii_digit())
+}
+
+/// True when `apple` is a mnemonic the Apple-dialect dispatch below knows,
+/// e.g. `eor.16b`. The GNU bridge consults this so it only rewrites
+/// mnemonics that actually have a SIMD row -- otherwise `add v0.16b, ...`
+/// and `add x0, x1, x2` could not be told apart on the mnemonic alone.
+///
+/// Kept as an explicit list rather than derived from the dispatch match,
+/// because a mnemonic reaching the match with no row produces a parse error
+/// AFTER consuming operands, which would report the wrong position.
+fn mnemonic_has_apple_simd_row(apple: &str) -> bool {
+    const ROWS: &[&str] = &[
+        "and.16b", "bic.16b", "bif.16b", "bit.16b", "bsl.16b", "orr.16b", "eor.16b", "add.16b",
+        "add.8h", "add.4s", "add.2d", "sub.16b", "sub.8h", "sub.4s", "sub.2d", "mul.16b", "mul.8h",
+        "mul.4s", "fadd.4s", "fadd.2d", "fsub.4s", "fsub.2d", "fmul.4s", "fmul.2d", "fdiv.4s",
+        "fdiv.2d", "dup.16b", "dup.8h", "dup.4s", "dup.2d", "ext.16b", "mov.8b", "mov.16b",
+        "mov.4s", "mov.2d", "umov.b", "umov.h", "umov.s", "umov.d",
+    ];
+    ROWS.contains(&apple)
 }
 
 fn looks_like_simd_register_spelling(name: &str) -> bool {
@@ -11240,6 +11352,53 @@ mod tests {
                 index: 1
             }
         );
+    }
+
+    /// The GNU bridge's whole contract: both dialects must reach the SAME
+    /// instruction. If they ever diverge, one of them is silently wrong and
+    /// no encoding test would notice, because each spelling would still
+    /// encode whatever it produced.
+    #[test]
+    fn gnu_and_apple_simd_dialects_agree() {
+        for (gnu, apple) in [
+            ("eor v0.16b, v1.16b, v2.16b", "eor.16b v0, v1, v2"),
+            ("add v1.4s, v2.4s, v0.4s", "add.4s v1, v2, v0"),
+            ("add v2.2d, v0.2d, v1.2d", "add.2d v2, v0, v1"),
+            ("sub v2.2d, v0.2d, v1.2d", "sub.2d v2, v0, v1"),
+            ("dup v0.4s, w0", "dup.4s v0, w0"),
+            ("dup v0.2d, x0", "dup.2d v0, x0"),
+            ("ext v0.16b, v2.16b, v2.16b, #4", "ext.16b v0, v2, v2, #4"),
+            ("umov w1, v0.s[2]", "umov.s w1, v0[2]"),
+            ("umov x1, v2.d[1]", "umov.d x1, v2[1]"),
+        ] {
+            assert_eq!(
+                parse_inst(gnu),
+                parse_inst(apple),
+                "dialects disagree on {gnu}"
+            );
+        }
+    }
+
+    /// A bare mnemonic with GP operands must NOT be rewritten: the decision
+    /// is made on the OPERAND carrying an arrangement, never on the mnemonic.
+    #[test]
+    fn gnu_bridge_leaves_scalar_instructions_alone() {
+        assert_eq!(
+            parse_inst("add x0, x1, x2"),
+            Inst::AddReg {
+                rd: X0,
+                rn: X1,
+                rm: X2,
+                sf: true,
+            }
+        );
+    }
+
+    /// Every vector operand of one instruction must carry the same
+    /// arrangement; a mismatch is a typo, not a wider operation.
+    #[test]
+    fn gnu_simd_rejects_mismatched_arrangements() {
+        assert!(parse("eor v0.16b, v1.8b, v2.16b").is_err());
     }
 
     #[test]
