@@ -231,7 +231,29 @@ pub enum Inst {
         sf: bool,
     },
     /// UMULL Xd, Wn, Wm
-    Umull { rd: GpReg, rn: GpReg, rm: GpReg },
+    Umull {
+        rd: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+    },
+    /// SMULL Xd, Wn, Wm -- UMULL with the U bit clear
+    Smull {
+        rd: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+    },
+    /// SMULH Xd, Xn, Xm
+    Smulh {
+        rd: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+    },
+    /// UMULH Xd, Xn, Xm
+    Umulh {
+        rd: GpReg,
+        rn: GpReg,
+        rm: GpReg,
+    },
     /// SDIV Xd, Xn, Xm
     Sdiv {
         rd: GpReg,
@@ -432,13 +454,27 @@ pub enum Inst {
         sf: bool,
     },
     /// SXTW Xd, Wn  (alias for SBFM Xd, Xn, #0, #31)
-    Sxtw { rd: GpReg, rn: GpReg },
+    Sxtw {
+        rd: GpReg,
+        rn: GpReg,
+    },
     /// SXTB Wd, Wn / Xd, Wn  (alias for SBFM with imms = 7)
-    Sxtb { rd: GpReg, rn: GpReg, sf: bool },
+    Sxtb {
+        rd: GpReg,
+        rn: GpReg,
+        sf: bool,
+    },
     /// SXTH Wd, Wn / Xd, Wn  (alias for SBFM with imms = 15)
-    Sxth { rd: GpReg, rn: GpReg, sf: bool },
+    Sxth {
+        rd: GpReg,
+        rn: GpReg,
+        sf: bool,
+    },
     /// UXTW Xd, Wn  (alias for UBFM Xd, Xn, #0, #31)
-    Uxtw { rd: GpReg, rn: GpReg },
+    Uxtw {
+        rd: GpReg,
+        rn: GpReg,
+    },
     /// LSL Xd, Xn, #amount  (alias for UBFM)
     LslImm {
         rd: GpReg,
@@ -487,15 +523,30 @@ pub enum Inst {
 
     // ---- Branches ----
     /// B #offset  (unconditional, PC-relative, offset in bytes, must be aligned)
-    B { offset: i32 },
+    B {
+        offset: i32,
+    },
     /// BL #offset  (branch and link / call)
-    Bl { offset: i32 },
+    Bl {
+        offset: i32,
+    },
     /// B.cond #offset  (conditional branch)
-    BCond { cond: Cond, offset: i32 },
+    BCond {
+        cond: Cond,
+        offset: i32,
+    },
     /// CBZ Xt, #offset
-    Cbz { rt: GpReg, offset: i32, sf: bool },
+    Cbz {
+        rt: GpReg,
+        offset: i32,
+        sf: bool,
+    },
     /// CBNZ Xt, #offset
-    Cbnz { rt: GpReg, offset: i32, sf: bool },
+    Cbnz {
+        rt: GpReg,
+        offset: i32,
+        sf: bool,
+    },
     /// TBZ Xt, #bit, #offset
     Tbz {
         rt: GpReg,
@@ -511,11 +562,17 @@ pub enum Inst {
         sf: bool,
     },
     /// RET {Xn}
-    Ret { rn: GpReg },
+    Ret {
+        rn: GpReg,
+    },
     /// BR Xn  (indirect branch)
-    Br { rn: GpReg },
+    Br {
+        rn: GpReg,
+    },
     /// BLR Xn  (indirect call)
-    Blr { rn: GpReg },
+    Blr {
+        rn: GpReg,
+    },
     /// CSINC Xd, Xn, Xm, cond
     Csinc {
         rd: GpReg,
@@ -527,45 +584,119 @@ pub enum Inst {
 
     // ---- Address generation ----
     /// ADR Xd, #imm  (PC-relative, ±1MB range)
-    Adr { rd: GpReg, imm: i32 },
+    Adr {
+        rd: GpReg,
+        imm: i32,
+    },
     /// ADRP Xd, #imm  (page-relative, 4KB pages, ±4GB range)
-    Adrp { rd: GpReg, imm: i64 },
+    Adrp {
+        rd: GpReg,
+        imm: i64,
+    },
 
     // ---- Load/Store (unsigned offset) ----
     /// LDR Xt, [Xn, #offset]  (64-bit, offset is byte offset, must be 8-byte aligned)
-    LdrImm64 { rt: GpReg, rn: GpReg, offset: u16 },
+    LdrImm64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDR Wt, [Xn, #offset]  (32-bit, 4-byte aligned)
-    LdrImm32 { rt: GpReg, rn: GpReg, offset: u16 },
+    LdrImm32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// STR Xt, [Xn, #offset]  (64-bit)
-    StrImm64 { rt: GpReg, rn: GpReg, offset: u16 },
+    StrImm64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// STR Wt, [Xn, #offset]  (32-bit)
-    StrImm32 { rt: GpReg, rn: GpReg, offset: u16 },
+    StrImm32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDUR Xt, [Xn, #offset]  (64-bit signed unscaled offset)
-    Ldur64 { rt: GpReg, rn: GpReg, offset: i16 },
+    Ldur64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDUR Wt, [Xn, #offset]  (32-bit signed unscaled offset)
-    Ldur32 { rt: GpReg, rn: GpReg, offset: i16 },
+    Ldur32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STUR Xt, [Xn, #offset]  (64-bit signed unscaled offset)
-    Stur64 { rt: GpReg, rn: GpReg, offset: i16 },
+    Stur64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STUR Wt, [Xn, #offset]  (32-bit signed unscaled offset)
-    Stur32 { rt: GpReg, rn: GpReg, offset: i16 },
+    Stur32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDURB Wt, [Xn, #offset]  (byte load, signed unscaled offset)
-    Ldurb { rt: GpReg, rn: GpReg, offset: i16 },
+    Ldurb {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDURSB Wt, [Xn, #offset]  (signed byte load, sign-extend to 32)
-    Ldursb32 { rt: GpReg, rn: GpReg, offset: i16 },
+    Ldursb32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDURSB Xt, [Xn, #offset]  (signed byte load, sign-extend to 64)
-    Ldursb64 { rt: GpReg, rn: GpReg, offset: i16 },
+    Ldursb64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDURH Wt, [Xn, #offset]  (halfword load, signed unscaled offset)
-    Ldurh { rt: GpReg, rn: GpReg, offset: i16 },
+    Ldurh {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDURSH Wt, [Xn, #offset]  (signed halfword load, sign-extend to 32)
-    Ldursh32 { rt: GpReg, rn: GpReg, offset: i16 },
+    Ldursh32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDURSH Xt, [Xn, #offset]  (signed halfword load, sign-extend to 64)
-    Ldursh64 { rt: GpReg, rn: GpReg, offset: i16 },
+    Ldursh64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STURB Wt, [Xn, #offset]  (byte store, signed unscaled offset)
-    Sturb { rt: GpReg, rn: GpReg, offset: i16 },
+    Sturb {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STURH Wt, [Xn, #offset]  (halfword store, signed unscaled offset)
-    Sturh { rt: GpReg, rn: GpReg, offset: i16 },
+    Sturh {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDURSW Xt, [Xn, #offset]  (signed word load, sign-extend to 64)
-    Ldursw { rt: GpReg, rn: GpReg, offset: i16 },
+    Ldursw {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR Xt, [Xn, Rm{, extend}]
     LdrReg64 {
         rt: GpReg,
@@ -599,23 +730,59 @@ pub enum Inst {
         shift: bool,
     },
     /// LDRB Wt, [Xn, #offset]  (byte load, zero-extend)
-    Ldrb { rt: GpReg, rn: GpReg, offset: u16 },
+    Ldrb {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDRSB Wt, [Xn, #offset]  (byte load, sign-extend to 32)
-    Ldrsb32 { rt: GpReg, rn: GpReg, offset: u16 },
+    Ldrsb32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDRSB Xt, [Xn, #offset]  (byte load, sign-extend to 64)
-    Ldrsb64 { rt: GpReg, rn: GpReg, offset: u16 },
+    Ldrsb64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDRH Wt, [Xn, #offset]  (halfword load, zero-extend)
-    Ldrh { rt: GpReg, rn: GpReg, offset: u16 },
+    Ldrh {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDRSH Wt, [Xn, #offset]  (halfword load, sign-extend to 32)
-    Ldrsh32 { rt: GpReg, rn: GpReg, offset: u16 },
+    Ldrsh32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDRSH Xt, [Xn, #offset]  (halfword load, sign-extend to 64)
-    Ldrsh64 { rt: GpReg, rn: GpReg, offset: u16 },
+    Ldrsh64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// STRB Wt, [Xn, #offset]
-    Strb { rt: GpReg, rn: GpReg, offset: u16 },
+    Strb {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// STRH Wt, [Xn, #offset]
-    Strh { rt: GpReg, rn: GpReg, offset: u16 },
+    Strh {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDRSW Xt, [Xn, #offset]  (32-bit load, sign-extend to 64)
-    Ldrsw { rt: GpReg, rn: GpReg, offset: u16 },
+    Ldrsw {
+        rt: GpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDRB Wt, [Xn, Rm{, extend}]
     LdrbReg {
         rt: GpReg,
@@ -690,45 +857,125 @@ pub enum Inst {
     },
 
     /// LDR Dt, [Xn, #offset]
-    LdrFpImm64 { rt: FpReg, rn: GpReg, offset: u16 },
+    LdrFpImm64 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDR St, [Xn, #offset]
-    LdrFpImm32 { rt: FpReg, rn: GpReg, offset: u16 },
+    LdrFpImm32 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDR Ht, [Xn, #offset]
-    LdrFpImm16 { rt: FpReg, rn: GpReg, offset: u16 },
+    LdrFpImm16 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDR Bt, [Xn, #offset]
-    LdrFpImm8 { rt: FpReg, rn: GpReg, offset: u16 },
+    LdrFpImm8 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDR Qt, [Xn, #offset]
-    LdrFpImm128 { rt: FpReg, rn: GpReg, offset: u16 },
+    LdrFpImm128 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// STR Dt, [Xn, #offset]
-    StrFpImm64 { rt: FpReg, rn: GpReg, offset: u16 },
+    StrFpImm64 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// STR St, [Xn, #offset]
-    StrFpImm32 { rt: FpReg, rn: GpReg, offset: u16 },
+    StrFpImm32 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// STR Ht, [Xn, #offset]
-    StrFpImm16 { rt: FpReg, rn: GpReg, offset: u16 },
+    StrFpImm16 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// STR Bt, [Xn, #offset]
-    StrFpImm8 { rt: FpReg, rn: GpReg, offset: u16 },
+    StrFpImm8 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// STR Qt, [Xn, #offset]
-    StrFpImm128 { rt: FpReg, rn: GpReg, offset: u16 },
+    StrFpImm128 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: u16,
+    },
     /// LDUR Dt, [Xn, #offset]
-    LdurFp64 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdurFp64 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDUR St, [Xn, #offset]
-    LdurFp32 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdurFp32 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDUR Ht, [Xn, #offset]
-    LdurFp16 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdurFp16 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDUR Bt, [Xn, #offset]
-    LdurFp8 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdurFp8 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDUR Qt, [Xn, #offset]
-    LdurFp128 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdurFp128 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STUR Dt, [Xn, #offset]
-    SturFp64 { rt: FpReg, rn: GpReg, offset: i16 },
+    SturFp64 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STUR St, [Xn, #offset]
-    SturFp32 { rt: FpReg, rn: GpReg, offset: i16 },
+    SturFp32 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STUR Ht, [Xn, #offset]
-    SturFp16 { rt: FpReg, rn: GpReg, offset: i16 },
+    SturFp16 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STUR Bt, [Xn, #offset]
-    SturFp8 { rt: FpReg, rn: GpReg, offset: i16 },
+    SturFp8 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STUR Qt, [Xn, #offset]
-    SturFp128 { rt: FpReg, rn: GpReg, offset: i16 },
+    SturFp128 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR Dt, [Xn, Rm{, extend}]
     LdrFpReg64 {
         rt: FpReg,
@@ -779,191 +1026,568 @@ pub enum Inst {
     },
 
     /// LDR Xt, label
-    LdrLit64 { rt: GpReg, offset: i32 },
+    LdrLit64 {
+        rt: GpReg,
+        offset: i32,
+    },
     /// LDR Wt, label
-    LdrLit32 { rt: GpReg, offset: i32 },
+    LdrLit32 {
+        rt: GpReg,
+        offset: i32,
+    },
     /// LDRSW Xt, label
-    LdrswLit { rt: GpReg, offset: i32 },
+    LdrswLit {
+        rt: GpReg,
+        offset: i32,
+    },
     /// LDR Dt, label
-    LdrFpLit64 { rt: FpReg, offset: i32 },
+    LdrFpLit64 {
+        rt: FpReg,
+        offset: i32,
+    },
     /// LDR St, label
-    LdrFpLit32 { rt: FpReg, offset: i32 },
+    LdrFpLit32 {
+        rt: FpReg,
+        offset: i32,
+    },
     /// LDR Qt, label
-    LdrFpLit128 { rt: FpReg, offset: i32 },
+    LdrFpLit128 {
+        rt: FpReg,
+        offset: i32,
+    },
 
     // ---- Load/Store (pre-index) ----
     /// LDR Wt, [Xn, #offset]!  (pre-index, 32-bit)
-    LdrPre32 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrPre32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR Wt, [Xn, #offset]!  (pre-index, 32-bit)
-    StrPre32 { rt: GpReg, rn: GpReg, offset: i16 },
+    StrPre32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRB Wt, [Xn, #offset]!  (pre-index, byte)
-    LdrbPre { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrbPre {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRSB Wt, [Xn, #offset]!  (pre-index, byte)
-    LdrsbPre32 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrsbPre32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRSB Xt, [Xn, #offset]!  (pre-index, byte)
-    LdrsbPre64 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrsbPre64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STRB Wt, [Xn, #offset]!  (pre-index, byte)
-    StrbPre { rt: GpReg, rn: GpReg, offset: i16 },
+    StrbPre {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRH Wt, [Xn, #offset]!  (pre-index, halfword)
-    LdrhPre { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrhPre {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRSH Wt, [Xn, #offset]!  (pre-index, halfword)
-    LdrshPre32 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrshPre32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRSH Xt, [Xn, #offset]!  (pre-index, halfword)
-    LdrshPre64 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrshPre64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STRH Wt, [Xn, #offset]!  (pre-index, halfword)
-    StrhPre { rt: GpReg, rn: GpReg, offset: i16 },
+    StrhPre {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR Xt, [Xn, #offset]!  (pre-index, 64-bit)
-    LdrPre64 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrPre64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR Xt, [Xn, #offset]!  (pre-index, 64-bit)
-    StrPre64 { rt: GpReg, rn: GpReg, offset: i16 },
+    StrPre64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR Dt, [Xn, #offset]!  (pre-index, double)
-    LdrFpPre64 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdrFpPre64 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR Dt, [Xn, #offset]!  (pre-index, double)
-    StrFpPre64 { rt: FpReg, rn: GpReg, offset: i16 },
+    StrFpPre64 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR St, [Xn, #offset]!  (pre-index, single)
-    LdrFpPre32 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdrFpPre32 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR St, [Xn, #offset]!  (pre-index, single)
-    StrFpPre32 { rt: FpReg, rn: GpReg, offset: i16 },
+    StrFpPre32 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR Qt, [Xn, #offset]!  (pre-index, vector)
-    LdrFpPre128 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdrFpPre128 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR Qt, [Xn, #offset]!  (pre-index, vector)
-    StrFpPre128 { rt: FpReg, rn: GpReg, offset: i16 },
+    StrFpPre128 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
 
     // ---- Load/Store (post-index) ----
     /// LDR Wt, [Xn], #offset  (post-index, 32-bit)
-    LdrPost32 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrPost32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR Wt, [Xn], #offset  (post-index, 32-bit)
-    StrPost32 { rt: GpReg, rn: GpReg, offset: i16 },
+    StrPost32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRB Wt, [Xn], #offset  (post-index, byte)
-    LdrbPost { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrbPost {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRSB Wt, [Xn], #offset  (post-index, byte)
-    LdrsbPost32 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrsbPost32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRSB Xt, [Xn], #offset  (post-index, byte)
-    LdrsbPost64 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrsbPost64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STRB Wt, [Xn], #offset  (post-index, byte)
-    StrbPost { rt: GpReg, rn: GpReg, offset: i16 },
+    StrbPost {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRH Wt, [Xn], #offset  (post-index, halfword)
-    LdrhPost { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrhPost {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRSH Wt, [Xn], #offset  (post-index, halfword)
-    LdrshPost32 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrshPost32 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDRSH Xt, [Xn], #offset  (post-index, halfword)
-    LdrshPost64 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrshPost64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STRH Wt, [Xn], #offset  (post-index, halfword)
-    StrhPost { rt: GpReg, rn: GpReg, offset: i16 },
+    StrhPost {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR Xt, [Xn], #offset  (post-index, 64-bit)
-    LdrPost64 { rt: GpReg, rn: GpReg, offset: i16 },
+    LdrPost64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR Xt, [Xn], #offset  (post-index, 64-bit)
-    StrPost64 { rt: GpReg, rn: GpReg, offset: i16 },
+    StrPost64 {
+        rt: GpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR Dt, [Xn], #offset  (post-index, double)
-    LdrFpPost64 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdrFpPost64 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR Dt, [Xn], #offset  (post-index, double)
-    StrFpPost64 { rt: FpReg, rn: GpReg, offset: i16 },
+    StrFpPost64 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR St, [Xn], #offset  (post-index, single)
-    LdrFpPost32 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdrFpPost32 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR St, [Xn], #offset  (post-index, single)
-    StrFpPost32 { rt: FpReg, rn: GpReg, offset: i16 },
+    StrFpPost32 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// LDR Qt, [Xn], #offset  (post-index, vector)
-    LdrFpPost128 { rt: FpReg, rn: GpReg, offset: i16 },
+    LdrFpPost128 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
     /// STR Qt, [Xn], #offset  (post-index, vector)
-    StrFpPost128 { rt: FpReg, rn: GpReg, offset: i16 },
+    StrFpPost128 {
+        rt: FpReg,
+        rn: GpReg,
+        offset: i16,
+    },
 
     // ---- Atomic memory operations ----
     /// LDAPRB Wt, [Xn]
-    Ldaprb { rt: GpReg, rn: GpReg },
+    Ldaprb {
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDAPRH Wt, [Xn]
-    Ldaprh { rt: GpReg, rn: GpReg },
+    Ldaprh {
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDAPR Wt, [Xn]
-    Ldapr32 { rt: GpReg, rn: GpReg },
+    Ldapr32 {
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDAPR Xt, [Xn]
-    Ldapr64 { rt: GpReg, rn: GpReg },
+    Ldapr64 {
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// STLRB Wt, [Xn]
-    Stlrb { rt: GpReg, rn: GpReg },
+    /// LDAR Wt/Xt, [Xn] -- load-acquire
+    Ldar32 {
+        rt: GpReg,
+        rn: GpReg,
+    },
+    Ldar64 {
+        rt: GpReg,
+        rn: GpReg,
+    },
+    /// LDAXR Wt/Xt, [Xn] -- load-acquire EXCLUSIVE (pairs with STLXR)
+    Ldaxr32 {
+        rt: GpReg,
+        rn: GpReg,
+    },
+    Ldaxr64 {
+        rt: GpReg,
+        rn: GpReg,
+    },
+    /// STLXR Ws, Wt/Xt, [Xn] -- store-release exclusive; Ws gets 0 on success
+    Stlxr32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
+    Stlxr64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
+    /// CLREX -- clear the local monitor
+    Clrex,
+    Stlrb {
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// STLRH Wt, [Xn]
-    Stlrh { rt: GpReg, rn: GpReg },
+    Stlrh {
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// STLR Wt, [Xn]
-    Stlr32 { rt: GpReg, rn: GpReg },
+    Stlr32 {
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// STLR Xt, [Xn]
-    Stlr64 { rt: GpReg, rn: GpReg },
+    Stlr64 {
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDADDALB Ws, Wt, [Xn]
-    Ldaddalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldaddalb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDADDALH Ws, Wt, [Xn]
-    Ldaddalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldaddalh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDADDAL Ws, Wt, [Xn]
-    Ldaddal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldaddal32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDADDAL Xs, Xt, [Xn]
-    Ldaddal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldaddal64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDUMAXALB Ws, Wt, [Xn]
-    Ldumaxalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldumaxalb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDUMAXALH Ws, Wt, [Xn]
-    Ldumaxalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldumaxalh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDUMAXAL Ws, Wt, [Xn]
-    Ldumaxal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldumaxal32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDUMAXAL Xs, Xt, [Xn]
-    Ldumaxal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldumaxal64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSMAXALB Ws, Wt, [Xn]
-    Ldsmaxalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsmaxalb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSMAXALH Ws, Wt, [Xn]
-    Ldsmaxalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsmaxalh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSMAXAL Ws, Wt, [Xn]
-    Ldsmaxal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsmaxal32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSMAXAL Xs, Xt, [Xn]
-    Ldsmaxal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsmaxal64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDUMINALB Ws, Wt, [Xn]
-    Lduminalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Lduminalb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDUMINALH Ws, Wt, [Xn]
-    Lduminalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Lduminalh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDUMINAL Ws, Wt, [Xn]
-    Lduminal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Lduminal32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDUMINAL Xs, Xt, [Xn]
-    Lduminal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Lduminal64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSMINALB Ws, Wt, [Xn]
-    Ldsminalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsminalb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSMINALH Ws, Wt, [Xn]
-    Ldsminalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsminalh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSMINAL Ws, Wt, [Xn]
-    Ldsminal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsminal32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSMINAL Xs, Xt, [Xn]
-    Ldsminal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsminal64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDCLRALB Ws, Wt, [Xn]
-    Ldclralb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldclralb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDCLRALH Ws, Wt, [Xn]
-    Ldclralh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldclralh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDCLRAL Ws, Wt, [Xn]
-    Ldclral32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldclral32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDCLRAL Xs, Xt, [Xn]
-    Ldclral64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldclral64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDEORALB Ws, Wt, [Xn]
-    Ldeoralb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldeoralb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDEORALH Ws, Wt, [Xn]
-    Ldeoralh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldeoralh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDEORAL Ws, Wt, [Xn]
-    Ldeoral32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldeoral32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDEORAL Xs, Xt, [Xn]
-    Ldeoral64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldeoral64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSETALB Ws, Wt, [Xn]
-    Ldsetalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsetalb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSETALH Ws, Wt, [Xn]
-    Ldsetalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsetalh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSETAL Ws, Wt, [Xn]
-    Ldsetal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsetal32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// LDSETAL Xs, Xt, [Xn]
-    Ldsetal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Ldsetal64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// SWPAL Ws, Wt, [Xn]
-    Swpal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Swpal32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// SWPAL Xs, Xt, [Xn]
-    Swpal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Swpal64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// SWPALB Ws, Wt, [Xn]
-    Swpalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Swpalb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// SWPALH Ws, Wt, [Xn]
-    Swpalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Swpalh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// CASALB Ws, Wt, [Xn]
-    Casalb { rs: GpReg, rt: GpReg, rn: GpReg },
+    Casalb {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// CASALH Ws, Wt, [Xn]
-    Casalh { rs: GpReg, rt: GpReg, rn: GpReg },
+    Casalh {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// CASAL Ws, Wt, [Xn]
-    Casal32 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Casal32 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
     /// CASAL Xs, Xt, [Xn]
-    Casal64 { rs: GpReg, rt: GpReg, rn: GpReg },
+    Casal64 {
+        rs: GpReg,
+        rt: GpReg,
+        rn: GpReg,
+    },
 
     // ---- Load/Store pair ----
     /// STP Wt1, Wt2, [Xn, #offset]  (signed offset, 32-bit)
@@ -1179,309 +1803,852 @@ pub enum Inst {
 
     // ---- Floating point arithmetic ----
     /// FADD Dd, Dn, Dm  (double)
-    FaddD { rd: FpReg, rn: FpReg, rm: FpReg },
+    FaddD {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FSUB Dd, Dn, Dm  (double)
-    FsubD { rd: FpReg, rn: FpReg, rm: FpReg },
+    FsubD {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMUL Dd, Dn, Dm  (double)
-    FmulD { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmulD {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FDIV Dd, Dn, Dm  (double)
-    FdivD { rd: FpReg, rn: FpReg, rm: FpReg },
+    FdivD {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FADD Sd, Sn, Sm  (single)
-    FaddS { rd: FpReg, rn: FpReg, rm: FpReg },
+    FaddS {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FADD.2D Vd, Vn, Vm
-    FaddV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FaddV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FADD.4S Vd, Vn, Vm
-    FaddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FaddV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FADDP.2D Vd, Vn, Vm
-    FaddpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FaddpV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FADDP.4S Vd, Vn, Vm
-    FaddpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FaddpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMAXP.2D Vd, Vn, Vm
-    FmaxpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmaxpV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMAXP.4S Vd, Vn, Vm
-    FmaxpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmaxpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMINP.2D Vd, Vn, Vm
-    FminpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FminpV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMINP.4S Vd, Vn, Vm
-    FminpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FminpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMAXNMP.4S Vd, Vn, Vm
-    FmaxnmpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmaxnmpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMINNMP.4S Vd, Vn, Vm
-    FminnmpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FminnmpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FADDP.2S Sd, Vn
-    FaddpV2S { rd: FpReg, rn: FpReg },
+    FaddpV2S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FADDP.2D Dd, Vn
-    FaddpV2DScalar { rd: FpReg, rn: FpReg },
+    FaddpV2DScalar {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMAXP.2D Dd, Vn
-    FmaxpV2DScalar { rd: FpReg, rn: FpReg },
+    FmaxpV2DScalar {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMINP.2D Dd, Vn
-    FminpV2DScalar { rd: FpReg, rn: FpReg },
+    FminpV2DScalar {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMAXNMP.2D Dd, Vn
-    FmaxnmpV2DScalar { rd: FpReg, rn: FpReg },
+    FmaxnmpV2DScalar {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMINNMP.2D Dd, Vn
-    FminnmpV2DScalar { rd: FpReg, rn: FpReg },
+    FminnmpV2DScalar {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMLA.4S Vd, Vn, Vm
-    FmlaV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmlaV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMLA.2D Vd, Vn, Vm
-    FmlaV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmlaV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMLS.4S Vd, Vn, Vm
-    FmlsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmlsV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMLS.2D Vd, Vn, Vm
-    FmlsV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmlsV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ADD.4S Vd, Vn, Vm
-    AddV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    AddV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ADDP.2D Vd, Vn, Vm
-    AddpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    AddpV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ADDP.16B Vd, Vn, Vm
-    AddpV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    AddpV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ADDP.8H Vd, Vn, Vm
-    AddpV8H { rd: FpReg, rn: FpReg, rm: FpReg },
+    AddpV8H {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ADDP.4S Vd, Vn, Vm
-    AddpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    AddpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// SMAXP.16B Vd, Vn, Vm
-    SmaxpV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    SmaxpV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// SMAXP.8H Vd, Vn, Vm
-    SmaxpV8H { rd: FpReg, rn: FpReg, rm: FpReg },
+    SmaxpV8H {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// SMAXP.4S Vd, Vn, Vm
-    SmaxpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    SmaxpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// SMINP.16B Vd, Vn, Vm
-    SminpV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    SminpV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// SMINP.8H Vd, Vn, Vm
-    SminpV8H { rd: FpReg, rn: FpReg, rm: FpReg },
+    SminpV8H {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// SMINP.4S Vd, Vn, Vm
-    SminpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    SminpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMAX.2D Vd, Vn, Vm
-    FmaxV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmaxV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMAX.4S Vd, Vn, Vm
-    FmaxV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmaxV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMIN.2D Vd, Vn, Vm
-    FminV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FminV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMIN.4S Vd, Vn, Vm
-    FminV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FminV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMAXNM.2D Vd, Vn, Vm
-    FmaxnmV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmaxnmV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMAXNM.4S Vd, Vn, Vm
-    FmaxnmV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmaxnmV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMAXNMP.2D Vd, Vn, Vm
-    FmaxnmpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmaxnmpV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMINNM.2D Vd, Vn, Vm
-    FminnmV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FminnmV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMINNM.4S Vd, Vn, Vm
-    FminnmV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FminnmV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMINNMP.2D Vd, Vn, Vm
-    FminnmpV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FminnmpV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// SMAX.4S Vd, Vn, Vm
-    SmaxV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    SmaxV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// SMIN.4S Vd, Vn, Vm
-    SminV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    SminV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UMAX.4S Vd, Vn, Vm
-    UmaxV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    UmaxV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UMAXP.16B Vd, Vn, Vm
-    UmaxpV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    UmaxpV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UMAXP.8H Vd, Vn, Vm
-    UmaxpV8H { rd: FpReg, rn: FpReg, rm: FpReg },
+    UmaxpV8H {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UMIN.4S Vd, Vn, Vm
-    UminV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    UminV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UMINP.16B Vd, Vn, Vm
-    UminpV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    UminpV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UMINP.8H Vd, Vn, Vm
-    UminpV8H { rd: FpReg, rn: FpReg, rm: FpReg },
+    UminpV8H {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UMAXP.4S Vd, Vn, Vm
-    UmaxpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    UmaxpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UMINP.4S Vd, Vn, Vm
-    UminpV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    UminpV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ADDV.16B Bd, Vn
-    AddvV16B { rd: FpReg, rn: FpReg },
+    AddvV16B {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// ADDV.8H Hd, Vn
-    AddvV8H { rd: FpReg, rn: FpReg },
+    AddvV8H {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// ADDV.4S Sd, Vn
-    AddvV4S { rd: FpReg, rn: FpReg },
+    AddvV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// UMAXV.16B Bd, Vn
-    UmaxvV16B { rd: FpReg, rn: FpReg },
+    UmaxvV16B {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// UMAXV.8H Hd, Vn
-    UmaxvV8H { rd: FpReg, rn: FpReg },
+    UmaxvV8H {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// UMAXV.4S Sd, Vn
-    UmaxvV4S { rd: FpReg, rn: FpReg },
+    UmaxvV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// SMAXV.16B Bd, Vn
-    SmaxvV16B { rd: FpReg, rn: FpReg },
+    SmaxvV16B {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// SMAXV.8H Hd, Vn
-    SmaxvV8H { rd: FpReg, rn: FpReg },
+    SmaxvV8H {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// SMAXV.4S Sd, Vn
-    SmaxvV4S { rd: FpReg, rn: FpReg },
+    SmaxvV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// UMINV.16B Bd, Vn
-    UminvV16B { rd: FpReg, rn: FpReg },
+    UminvV16B {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// UMINV.8H Hd, Vn
-    UminvV8H { rd: FpReg, rn: FpReg },
+    UminvV8H {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// UMINV.4S Sd, Vn
-    UminvV4S { rd: FpReg, rn: FpReg },
+    UminvV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// SMINV.16B Bd, Vn
-    SminvV16B { rd: FpReg, rn: FpReg },
+    SminvV16B {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// SMINV.8H Hd, Vn
-    SminvV8H { rd: FpReg, rn: FpReg },
+    SminvV8H {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// SMINV.4S Sd, Vn
-    SminvV4S { rd: FpReg, rn: FpReg },
+    SminvV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMAXV.4S Sd, Vn
-    FmaxvV4S { rd: FpReg, rn: FpReg },
+    FmaxvV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMINV.4S Sd, Vn
-    FminvV4S { rd: FpReg, rn: FpReg },
+    FminvV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMAXNMV.4S Sd, Vn
-    FmaxnmvV4S { rd: FpReg, rn: FpReg },
+    FmaxnmvV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMINNMV.4S Sd, Vn
-    FminnmvV4S { rd: FpReg, rn: FpReg },
+    FminnmvV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FSUB.2D Vd, Vn, Vm
-    FsubV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FsubV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FSUB.4S Vd, Vn, Vm
-    FsubV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FsubV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// SUB.4S Vd, Vn, Vm
-    SubV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    SubV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FSUB Sd, Sn, Sm  (single)
-    FsubS { rd: FpReg, rn: FpReg, rm: FpReg },
+    FsubS {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMUL.2D Vd, Vn, Vm
-    FmulV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmulV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMUL.4S Vd, Vn, Vm
-    FmulV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmulV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMUL Sd, Sn, Sm  (single)
-    FmulS { rd: FpReg, rn: FpReg, rm: FpReg },
+    FmulS {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FDIV.2D Vd, Vn, Vm
-    FdivV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FdivV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FABD.2D Vd, Vn, Vm
-    FabdV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FabdV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FDIV.4S Vd, Vn, Vm
-    FdivV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FdivV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FABS.4S Vd, Vn
-    FabsV4S { rd: FpReg, rn: FpReg },
+    FabsV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FABS.2D Vd, Vn
-    FabsV2D { rd: FpReg, rn: FpReg },
+    FabsV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FNEG.4S Vd, Vn
-    FnegV4S { rd: FpReg, rn: FpReg },
+    FnegV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FNEG.2D Vd, Vn
-    FnegV2D { rd: FpReg, rn: FpReg },
+    FnegV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FSQRT.4S Vd, Vn
-    FsqrtV4S { rd: FpReg, rn: FpReg },
+    FsqrtV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FSQRT.2D Vd, Vn
-    FsqrtV2D { rd: FpReg, rn: FpReg },
+    FsqrtV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// SCVTF.4S Vd, Vn
-    ScvtfV4S { rd: FpReg, rn: FpReg },
+    ScvtfV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// SCVTF.2D Vd, Vn
-    ScvtfV2D { rd: FpReg, rn: FpReg },
+    ScvtfV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// UCVTF.4S Vd, Vn
-    UcvtfV4S { rd: FpReg, rn: FpReg },
+    UcvtfV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// UCVTF.2D Vd, Vn
-    UcvtfV2D { rd: FpReg, rn: FpReg },
+    UcvtfV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FCVTZS.4S Vd, Vn
-    FcvtzsV4S { rd: FpReg, rn: FpReg },
+    FcvtzsV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FCVTZS.2D Vd, Vn
-    FcvtzsV2D { rd: FpReg, rn: FpReg },
+    FcvtzsV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FCVTZU.4S Vd, Vn
-    FcvtzuV4S { rd: FpReg, rn: FpReg },
+    FcvtzuV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FCVTZU.2D Vd, Vn
-    FcvtzuV2D { rd: FpReg, rn: FpReg },
+    FcvtzuV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRECPE.4S Vd, Vn
-    FrecpeV4S { rd: FpReg, rn: FpReg },
+    FrecpeV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRECPE.2D Vd, Vn
-    FrecpeV2D { rd: FpReg, rn: FpReg },
+    FrecpeV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRECPS.4S Vd, Vn, Vm
-    FrecpsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FrecpsV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FRECPS.2D Vd, Vn, Vm
-    FrecpsV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FrecpsV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FRSQRTE.4S Vd, Vn
-    FrsqrteV4S { rd: FpReg, rn: FpReg },
+    FrsqrteV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRSQRTE.2D Vd, Vn
-    FrsqrteV2D { rd: FpReg, rn: FpReg },
+    FrsqrteV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRSQRTS.4S Vd, Vn, Vm
-    FrsqrtsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FrsqrtsV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FRSQRTS.2D Vd, Vn, Vm
-    FrsqrtsV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FrsqrtsV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FRINTN.4S Vd, Vn
-    FrintnV4S { rd: FpReg, rn: FpReg },
+    FrintnV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTN.2D Vd, Vn
-    FrintnV2D { rd: FpReg, rn: FpReg },
+    FrintnV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTM.4S Vd, Vn
-    FrintmV4S { rd: FpReg, rn: FpReg },
+    FrintmV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTM.2D Vd, Vn
-    FrintmV2D { rd: FpReg, rn: FpReg },
+    FrintmV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTP.4S Vd, Vn
-    FrintpV4S { rd: FpReg, rn: FpReg },
+    FrintpV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTP.2D Vd, Vn
-    FrintpV2D { rd: FpReg, rn: FpReg },
+    FrintpV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTZ.4S Vd, Vn
-    FrintzV4S { rd: FpReg, rn: FpReg },
+    FrintzV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTZ.2D Vd, Vn
-    FrintzV2D { rd: FpReg, rn: FpReg },
+    FrintzV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTA.4S Vd, Vn
-    FrintaV4S { rd: FpReg, rn: FpReg },
+    FrintaV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTA.2D Vd, Vn
-    FrintaV2D { rd: FpReg, rn: FpReg },
+    FrintaV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTI.4S Vd, Vn
-    FrintiV4S { rd: FpReg, rn: FpReg },
+    FrintiV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FRINTI.2D Vd, Vn
-    FrintiV2D { rd: FpReg, rn: FpReg },
+    FrintiV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FDIV Sd, Sn, Sm  (single)
-    FdivS { rd: FpReg, rn: FpReg, rm: FpReg },
+    FdivS {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMOV Dd, Dn
-    FmovRegD { rd: FpReg, rn: FpReg },
+    FmovRegD {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FMOV Sd, Sn
-    FmovRegS { rd: FpReg, rn: FpReg },
+    FmovRegS {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// MOV.8B Vd, Vn
-    MovV8B { rd: FpReg, rn: FpReg },
+    MovV8B {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// MOV.16B Vd, Vn
-    MovV16B { rd: FpReg, rn: FpReg },
+    MovV16B {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// MOV.4S Vd, Vn
-    MovV4S { rd: FpReg, rn: FpReg },
+    MovV4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// MOV.2D Vd, Vn
-    MovV2D { rd: FpReg, rn: FpReg },
+    MovV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// DUP.16B Vd, Vn[index]
-    DupV16B { rd: FpReg, rn: FpReg, index: u8 },
+    DupV16B {
+        rd: FpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// DUP.8H Vd, Vn[index]
-    DupV8H { rd: FpReg, rn: FpReg, index: u8 },
+    DupV8H {
+        rd: FpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// DUP.4S Vd, Vn[index]
-    DupV4S { rd: FpReg, rn: FpReg, index: u8 },
+    DupV4S {
+        rd: FpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// DUP.2D Vd, Vn[index]
-    DupV2D { rd: FpReg, rn: FpReg, index: u8 },
+    DupV2D {
+        rd: FpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// AND.16B Vd, Vn, Vm
-    AndV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    AndV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// BIC.16B Vd, Vn, Vm
-    BicV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    BicV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ORR.16B Vd, Vn, Vm
-    OrrV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    OrrV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// EOR.16B Vd, Vn, Vm
-    EorV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    EorV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// BIF.16B Vd, Vn, Vm
-    BifV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    BifV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// BIT.16B Vd, Vn, Vm
-    BitV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    BitV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// BSL.16B Vd, Vn, Vm
-    BslV16B { rd: FpReg, rn: FpReg, rm: FpReg },
+    BslV16B {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// CMEQ.4S Vd, Vn, Vm
-    CmeqV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    CmeqV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FCMEQ.4S Vd, Vn, Vm
-    FcmeqV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FcmeqV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FCMEQ.2D Vd, Vn, Vm
-    FcmeqV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FcmeqV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// CMHS.4S Vd, Vn, Vm
-    CmhsV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    CmhsV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// CMHI.4S Vd, Vn, Vm
-    CmhiV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    CmhiV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// CMGE.4S Vd, Vn, Vm
-    CmgeV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    CmgeV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FCMGE.4S Vd, Vn, Vm
-    FcmgeV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FcmgeV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FCMGE.2D Vd, Vn, Vm
-    FcmgeV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FcmgeV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FCMGE.2D Vd, Vn, #0.0
-    FcmgeZeroV2D { rd: FpReg, rn: FpReg },
+    FcmgeZeroV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// CMGT.4S Vd, Vn, Vm
-    CmgtV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    CmgtV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FCMGT.4S Vd, Vn, Vm
-    FcmgtV4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    FcmgtV4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FCMGT.2D Vd, Vn, Vm
-    FcmgtV2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    FcmgtV2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FCMGT.2D Vd, Vn, #0.0
-    FcmgtZeroV2D { rd: FpReg, rn: FpReg },
+    FcmgtZeroV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FCMLE.2D Vd, Vn, #0.0
-    FcmleZeroV2D { rd: FpReg, rn: FpReg },
+    FcmleZeroV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FCMLT.2D Vd, Vn, #0.0
-    FcmltZeroV2D { rd: FpReg, rn: FpReg },
+    FcmltZeroV2D {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// EXT.16B Vd, Vn, Vm, #index
     ExtV16B {
         rd: FpReg,
@@ -1490,31 +2657,82 @@ pub enum Inst {
         index: u8,
     },
     /// REV64.4S Vd, Vn
-    Rev64V4S { rd: FpReg, rn: FpReg },
+    Rev64V4S {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// ZIP1.4S Vd, Vn, Vm
-    Zip1V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    Zip1V4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ZIP1.2D Vd, Vn, Vm
-    Zip1V2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    Zip1V2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ZIP2.4S Vd, Vn, Vm
-    Zip2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    Zip2V4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// ZIP2.2D Vd, Vn, Vm
-    Zip2V2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    Zip2V2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UZP1.4S Vd, Vn, Vm
-    Uzp1V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    Uzp1V4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UZP1.2D Vd, Vn, Vm
-    Uzp1V2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    Uzp1V2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UZP2.4S Vd, Vn, Vm
-    Uzp2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    Uzp2V4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// UZP2.2D Vd, Vn, Vm
-    Uzp2V2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    Uzp2V2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// TRN1.4S Vd, Vn, Vm
-    Trn1V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    Trn1V4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// TRN1.2D Vd, Vn, Vm
-    Trn1V2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    Trn1V2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// TRN2.4S Vd, Vn, Vm
-    Trn2V4S { rd: FpReg, rn: FpReg, rm: FpReg },
+    Trn2V4S {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// TRN2.2D Vd, Vn, Vm
-    Trn2V2D { rd: FpReg, rn: FpReg, rm: FpReg },
+    Trn2V2D {
+        rd: FpReg,
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// TBL.16B Vd, { Vn... }, Vm
     TblV16B {
         rd: FpReg,
@@ -1530,21 +2748,53 @@ pub enum Inst {
         index: FpReg,
     },
     /// MOV Sd, Vn[index]
-    MovFromLaneS { rd: FpReg, rn: FpReg, index: u8 },
+    MovFromLaneS {
+        rd: FpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// MOV Dd, Vn[index]
-    MovFromLaneD { rd: FpReg, rn: FpReg, index: u8 },
+    MovFromLaneD {
+        rd: FpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// MOV.S Wd, Vn[index]
-    MovFromLaneGpS { rd: GpReg, rn: FpReg, index: u8 },
+    MovFromLaneGpS {
+        rd: GpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// MOV.D Xd, Vn[index]
-    MovFromLaneGpD { rd: GpReg, rn: FpReg, index: u8 },
+    MovFromLaneGpD {
+        rd: GpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// UMOV.H Wd, Vn[index]
-    UmovFromLaneH { rd: GpReg, rn: FpReg, index: u8 },
+    UmovFromLaneH {
+        rd: GpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// UMOV.B Wd, Vn[index]
-    UmovFromLaneB { rd: GpReg, rn: FpReg, index: u8 },
+    UmovFromLaneB {
+        rd: GpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// SMOV.H Wd, Vn[index]
-    SmovFromLaneH { rd: GpReg, rn: FpReg, index: u8 },
+    SmovFromLaneH {
+        rd: GpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// SMOV.B Wd, Vn[index]
-    SmovFromLaneB { rd: GpReg, rn: FpReg, index: u8 },
+    SmovFromLaneB {
+        rd: GpReg,
+        rn: FpReg,
+        index: u8,
+    },
     /// MOV.S Vd[index], Vn[index]
     MovLaneS {
         rd: FpReg,
@@ -1574,41 +2824,103 @@ pub enum Inst {
         rn_index: u8,
     },
     /// MOV.S Vd[index], Wn
-    MovLaneFromGpS { rd: FpReg, rd_index: u8, rn: GpReg },
+    MovLaneFromGpS {
+        rd: FpReg,
+        rd_index: u8,
+        rn: GpReg,
+    },
     /// MOV.D Vd[index], Xn
-    MovLaneFromGpD { rd: FpReg, rd_index: u8, rn: GpReg },
+    MovLaneFromGpD {
+        rd: FpReg,
+        rd_index: u8,
+        rn: GpReg,
+    },
     /// MOV.H Vd[index], Wn
-    MovLaneFromGpH { rd: FpReg, rd_index: u8, rn: GpReg },
+    MovLaneFromGpH {
+        rd: FpReg,
+        rd_index: u8,
+        rn: GpReg,
+    },
     /// MOV.B Vd[index], Wn
-    MovLaneFromGpB { rd: FpReg, rd_index: u8, rn: GpReg },
+    MovLaneFromGpB {
+        rd: FpReg,
+        rd_index: u8,
+        rn: GpReg,
+    },
     /// LD1.B { Vt }[index], [Xn]
-    Ld1LaneB { rt: FpReg, index: u8, rn: GpReg },
+    Ld1LaneB {
+        rt: FpReg,
+        index: u8,
+        rn: GpReg,
+    },
     /// LD1.H { Vt }[index], [Xn]
-    Ld1LaneH { rt: FpReg, index: u8, rn: GpReg },
+    Ld1LaneH {
+        rt: FpReg,
+        index: u8,
+        rn: GpReg,
+    },
     /// LD1.S { Vt }[index], [Xn]
-    Ld1LaneS { rt: FpReg, index: u8, rn: GpReg },
+    Ld1LaneS {
+        rt: FpReg,
+        index: u8,
+        rn: GpReg,
+    },
     /// LD1.D { Vt }[index], [Xn]
-    Ld1LaneD { rt: FpReg, index: u8, rn: GpReg },
+    Ld1LaneD {
+        rt: FpReg,
+        index: u8,
+        rn: GpReg,
+    },
     /// FNEG Dd, Dn
-    FnegD { rd: FpReg, rn: FpReg },
+    FnegD {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FNEG Sd, Sn
-    FnegS { rd: FpReg, rn: FpReg },
+    FnegS {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FABS Dd, Dn
-    FabsD { rd: FpReg, rn: FpReg },
+    FabsD {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FABS Sd, Sn
-    FabsS { rd: FpReg, rn: FpReg },
+    FabsS {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FSQRT Dd, Dn
-    FsqrtD { rd: FpReg, rn: FpReg },
+    FsqrtD {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FSQRT Sd, Sn
-    FsqrtS { rd: FpReg, rn: FpReg },
+    FsqrtS {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FCMP Dn, Dm
-    FcmpD { rn: FpReg, rm: FpReg },
+    FcmpD {
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FCMP Sn, Sm
-    FcmpS { rn: FpReg, rm: FpReg },
+    FcmpS {
+        rn: FpReg,
+        rm: FpReg,
+    },
     /// FMOV Dd, #imm
-    FmovImmD { rd: FpReg, imm8: u8 },
+    FmovImmD {
+        rd: FpReg,
+        imm8: u8,
+    },
     /// FMOV Sd, #imm
-    FmovImmS { rd: FpReg, imm8: u8 },
+    FmovImmS {
+        rd: FpReg,
+        imm8: u8,
+    },
     /// FCSEL Dd, Dn, Dm, cond
     FcselD {
         rd: FpReg,
@@ -1676,10 +2988,25 @@ pub enum Inst {
         /// Selects a D source instead of S.
         src_double: bool,
     },
+    /// FCVTZU Wd/Xd, Sn/Dn (truncate floating point to UNSIGNED integer)
+    Fcvtzu {
+        rd: GpReg,
+        rn: FpReg,
+        /// Selects an X destination instead of W.
+        dst_64bit: bool,
+        /// Selects a D source instead of S.
+        src_double: bool,
+    },
     /// FCVT Dd, Sn  (single -> double)
-    FcvtDFromS { rd: FpReg, rn: FpReg },
+    FcvtDFromS {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// FCVT Sd, Dn  (double -> single)
-    FcvtSFromD { rd: FpReg, rn: FpReg },
+    FcvtSFromD {
+        rd: FpReg,
+        rn: FpReg,
+    },
     /// SCVTF Sd/Dd, Wn/Xn (convert signed integer to floating point)
     Scvtf {
         rd: FpReg,
@@ -1689,18 +3016,41 @@ pub enum Inst {
         /// Selects an X source instead of W.
         src_64bit: bool,
     },
+    /// UCVTF Sd/Dd, Wn/Xn (convert UNSIGNED integer to floating point)
+    Ucvtf {
+        rd: FpReg,
+        rn: GpReg,
+        /// Selects a D destination instead of S.
+        dst_double: bool,
+        /// Selects an X source instead of W.
+        src_64bit: bool,
+    },
     /// FMOV Dd, Xn  (move bits GP -> FP, no conversion)
-    FmovToD { rd: FpReg, rn: GpReg },
+    FmovToD {
+        rd: FpReg,
+        rn: GpReg,
+    },
     /// FMOV Sd, Wn  (move bits GP -> FP, no conversion)
-    FmovToS { rd: FpReg, rn: GpReg },
+    FmovToS {
+        rd: FpReg,
+        rn: GpReg,
+    },
     /// FMOV Xd, Dn  (move bits FP -> GP, no conversion)
-    FmovFromD { rd: GpReg, rn: FpReg },
+    FmovFromD {
+        rd: GpReg,
+        rn: FpReg,
+    },
     /// FMOV Wd, Sn  (move bits FP -> GP, no conversion)
-    FmovFromS { rd: GpReg, rn: FpReg },
+    FmovFromS {
+        rd: GpReg,
+        rn: FpReg,
+    },
 
     // ---- System ----
     /// SVC #imm16
-    Svc { imm16: u16 },
+    Svc {
+        imm16: u16,
+    },
     /// NOP
     Nop,
     /// YIELD
@@ -1714,13 +3064,21 @@ pub enum Inst {
     /// SEVL
     Sevl,
     /// DMB <option>
-    Dmb { option: BarrierOpt },
+    Dmb {
+        option: BarrierOpt,
+    },
     /// DSB <option>
-    Dsb { option: BarrierOpt },
+    Dsb {
+        option: BarrierOpt,
+    },
     /// ISB {<option>}
-    Isb { option: BarrierOpt },
+    Isb {
+        option: BarrierOpt,
+    },
     /// BRK #imm16
-    Brk { imm16: u16 },
+    Brk {
+        imm16: u16,
+    },
 }
 
 impl Inst {
@@ -1863,6 +3221,17 @@ impl Inst {
             }
             Inst::Umull { rd, rn, rm } => {
                 0x9BA0_0000 | (rm.enc() << 16) | (0b1_1111 << 10) | (rn.enc() << 5) | rd.enc()
+            }
+            // Same word as UMULL with the U bit (23) clear.
+            Inst::Smull { rd, rn, rm } => {
+                0x9B20_0000 | (rm.enc() << 16) | (0b1_1111 << 10) | (rn.enc() << 5) | rd.enc()
+            }
+            // The high-half multiplies take Ra = XZR in the same field.
+            Inst::Smulh { rd, rn, rm } => {
+                0x9B40_0000 | (rm.enc() << 16) | (0b1_1111 << 10) | (rn.enc() << 5) | rd.enc()
+            }
+            Inst::Umulh { rd, rn, rm } => {
+                0x9BC0_0000 | (rm.enc() << 16) | (0b1_1111 << 10) | (rn.enc() << 5) | rd.enc()
             }
             // SDIV: sf|0|0|11010110|Rm|00001|1|Rn|Rd
             Inst::Sdiv { rd, rn, rm, sf } => {
@@ -2432,6 +3801,19 @@ impl Inst {
             Inst::Ldaprh { rt, rn } => 0x78BFC000 | (rn.enc() << 5) | rt.enc(),
             Inst::Ldapr32 { rt, rn } => 0xB8BFC000 | (rn.enc() << 5) | rt.enc(),
             Inst::Ldapr64 { rt, rn } => 0xF8BFC000 | (rn.enc() << 5) | rt.enc(),
+            Inst::Ldar32 { rt, rn } => 0x88DFFC00 | (rn.enc() << 5) | rt.enc(),
+            Inst::Ldar64 { rt, rn } => 0xC8DFFC00 | (rn.enc() << 5) | rt.enc(),
+            Inst::Ldaxr32 { rt, rn } => 0x885FFC00 | (rn.enc() << 5) | rt.enc(),
+            Inst::Ldaxr64 { rt, rn } => 0xC85FFC00 | (rn.enc() << 5) | rt.enc(),
+            Inst::Stlxr32 { rs, rt, rn } => {
+                0x8800FC00 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            Inst::Stlxr64 { rs, rt, rn } => {
+                0xC800FC00 | (rs.enc() << 16) | (rn.enc() << 5) | rt.enc()
+            }
+            // CLREX #15 -- the CRm field is 1111, which is the assembler
+            // default and what gas emits for a bare `clrex`.
+            Inst::Clrex => 0xD5033F5F,
             Inst::Stlrb { rt, rn } => 0x089FFC00 | (rn.enc() << 5) | rt.enc(),
             Inst::Stlrh { rt, rn } => 0x489FFC00 | (rn.enc() << 5) | rt.enc(),
             Inst::Stlr32 { rt, rn } => 0x889FFC00 | (rn.enc() << 5) | rt.enc(),
@@ -3003,6 +4385,19 @@ impl Inst {
                     | (rn.enc() << 5)
                     | rd.enc()
             }
+            // FCVTZU is FCVTZS with opcode bit 16 set.
+            Inst::Fcvtzu {
+                rd,
+                rn,
+                dst_64bit,
+                src_double,
+            } => {
+                0x1E39_0000
+                    | ((*dst_64bit as u32) << 31)
+                    | ((*src_double as u32) << 22)
+                    | (rn.enc() << 5)
+                    | rd.enc()
+            }
             Inst::FcvtDFromS { rd, rn } => 0x1E22C000 | (rn.enc() << 5) | rd.enc(),
             Inst::FcvtSFromD { rd, rn } => 0x1E624000 | (rn.enc() << 5) | rd.enc(),
             Inst::Scvtf {
@@ -3012,6 +4407,19 @@ impl Inst {
                 src_64bit,
             } => {
                 0x1E22_0000
+                    | ((*src_64bit as u32) << 31)
+                    | ((*dst_double as u32) << 22)
+                    | (rn.enc() << 5)
+                    | rd.enc()
+            }
+            // UCVTF is SCVTF with opcode bit 16 set.
+            Inst::Ucvtf {
+                rd,
+                rn,
+                dst_double,
+                src_64bit,
+            } => {
+                0x1E23_0000
                     | ((*src_64bit as u32) << 31)
                     | ((*dst_double as u32) << 22)
                     | (rn.enc() << 5)
@@ -4140,6 +5548,113 @@ mod tests {
             .encode(),
             0x1B002000
         );
+    }
+    #[test]
+    fn smull_x9_w8_w9() {
+        // UMULL with the U bit clear; both verified against
+        // aarch64-linux-gnu-as.
+        assert_eq!(
+            Inst::Smull {
+                rd: X9,
+                rn: W8,
+                rm: W9
+            }
+            .encode(),
+            0x9B297D09
+        );
+    }
+    #[test]
+    fn smulh_umulh_x0_x1_x2() {
+        assert_eq!(
+            Inst::Smulh {
+                rd: X0,
+                rn: X1,
+                rm: X2
+            }
+            .encode(),
+            0x9B427C20
+        );
+        assert_eq!(
+            Inst::Umulh {
+                rd: X0,
+                rn: X1,
+                rm: X2
+            }
+            .encode(),
+            0x9BC27C20
+        );
+    }
+    #[test]
+    fn ucvtf_fcvtzu_all_four_widths() {
+        // The width pair is (destination, source); each combination is a
+        // distinct encoding and all four were checked against gas.
+        assert_eq!(
+            Inst::Ucvtf {
+                rd: D0,
+                rn: X1,
+                dst_double: true,
+                src_64bit: true
+            }
+            .encode(),
+            0x9E630020
+        );
+        assert_eq!(
+            Inst::Ucvtf {
+                rd: S0,
+                rn: W1,
+                dst_double: false,
+                src_64bit: false
+            }
+            .encode(),
+            0x1E230020
+        );
+        assert_eq!(
+            Inst::Fcvtzu {
+                rd: W0,
+                rn: D1,
+                dst_64bit: false,
+                src_double: true
+            }
+            .encode(),
+            0x1E790020
+        );
+        assert_eq!(
+            Inst::Fcvtzu {
+                rd: X0,
+                rn: S1,
+                dst_64bit: true,
+                src_double: false
+            }
+            .encode(),
+            0x9E390020
+        );
+    }
+    #[test]
+    fn load_acquire_and_store_exclusive() {
+        assert_eq!(Inst::Ldar32 { rt: W0, rn: X1 }.encode(), 0x88DFFC20);
+        assert_eq!(Inst::Ldar64 { rt: X0, rn: X1 }.encode(), 0xC8DFFC20);
+        assert_eq!(Inst::Ldaxr32 { rt: W0, rn: X1 }.encode(), 0x885FFC20);
+        assert_eq!(Inst::Ldaxr64 { rt: X0, rn: X1 }.encode(), 0xC85FFC20);
+        assert_eq!(
+            Inst::Stlxr32 {
+                rs: W2,
+                rt: W0,
+                rn: X1
+            }
+            .encode(),
+            0x8802FC20
+        );
+        assert_eq!(
+            Inst::Stlxr64 {
+                rs: W2,
+                rt: X0,
+                rn: X1
+            }
+            .encode(),
+            0xC802FC20
+        );
+        // gas emits CLREX #15 for a bare `clrex`.
+        assert_eq!(Inst::Clrex.encode(), 0xD5033F5F);
     }
     #[test]
     fn umull_x9_w8_w9() {

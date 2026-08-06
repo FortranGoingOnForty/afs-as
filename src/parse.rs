@@ -1884,6 +1884,18 @@ impl<'a> Parser<'a> {
         if mnemonic == "stlr" {
             return self.parse_stlr();
         }
+        if mnemonic == "ldar" {
+            return self.parse_load_acquire("ldar");
+        }
+        if mnemonic == "ldaxr" {
+            return self.parse_load_acquire("ldaxr");
+        }
+        if mnemonic == "stlxr" {
+            return self.parse_stlxr();
+        }
+        if mnemonic == "clrex" {
+            return Ok(Stmt::Instruction(Inst::Clrex));
+        }
         if mnemonic == "ldaddalb" {
             return self.parse_atomic_rmw_narrow("ldaddalb");
         }
@@ -1988,6 +2000,10 @@ impl<'a> Parser<'a> {
             "cmn" => self.parse_cmn(),
             "mul" => self.parse_3reg("mul"),
             "umull" => self.parse_umull(),
+            "smull" => self.parse_smull(),
+            "smulh" => self.parse_mulh("smulh"),
+            "umulh" => self.parse_mulh("umulh"),
+            "mneg" => self.parse_mneg(),
             "madd" => self.parse_madd(),
             "msub" => self.parse_madd_sub("msub"),
             "sdiv" => self.parse_3reg("sdiv"),
@@ -2138,7 +2154,9 @@ impl<'a> Parser<'a> {
             // FP conversion
             "fcvt" => self.parse_fcvt(),
             "fcvtzs" => self.parse_fcvtzs(),
+            "fcvtzu" => self.parse_fcvtzu(),
             "scvtf" => self.parse_scvtf(),
+            "ucvtf" => self.parse_ucvtf(),
             "fmov" => self.parse_fmov(),
 
             // System
@@ -2433,6 +2451,36 @@ impl<'a> Parser<'a> {
             Inst::Stlr64 { rt, rn }
         } else {
             Inst::Stlr32 { rt, rn }
+        }))
+    }
+
+    /// LDAR/LDAXR Wt/Xt, [Xn] -- same operand shape as STLR, opposite
+    /// direction. LDAXR additionally arms the local monitor that STLXR
+    /// checks; the assembler treats them identically.
+    fn parse_load_acquire(&mut self, mnemonic: &str) -> Result<Stmt, ParseError> {
+        let (rt, sf) = self.parse_atomic_data_reg(mnemonic)?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_atomic_base_reg(mnemonic)?;
+        Ok(Stmt::Instruction(match (mnemonic, sf) {
+            ("ldar", false) => Inst::Ldar32 { rt, rn },
+            ("ldar", true) => Inst::Ldar64 { rt, rn },
+            (_, false) => Inst::Ldaxr32 { rt, rn },
+            (_, true) => Inst::Ldaxr64 { rt, rn },
+        }))
+    }
+
+    /// STLXR Ws, Wt/Xt, [Xn]. The status register is ALWAYS a W register
+    /// whatever the data width -- it receives 0 or 1, not the value.
+    fn parse_stlxr(&mut self) -> Result<Stmt, ParseError> {
+        let rs = self.parse_atomic_wreg("stlxr")?;
+        self.expect(&Tok::Comma)?;
+        let (rt, sf) = self.parse_atomic_data_reg("stlxr")?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_atomic_base_reg("stlxr")?;
+        Ok(Stmt::Instruction(if sf {
+            Inst::Stlxr64 { rs, rt, rn }
+        } else {
+            Inst::Stlxr32 { rs, rt, rn }
         }))
     }
 
@@ -3220,6 +3268,68 @@ impl<'a> Parser<'a> {
             return Err(self.err_at(rm_start, "umull sources must be W registers".into()));
         }
         Ok(Inst::Umull { rd, rn, rm })
+    }
+
+    /// SMULL Xd, Wn, Wm -- identical shape to UMULL.
+    fn parse_smull(&mut self) -> Result<Inst, ParseError> {
+        let rd_start = self.pos;
+        let (rd, rd_is_64bit) = self.parse_gp_data_reg_with_size("smull")?;
+        if !rd_is_64bit {
+            return Err(self.err_at(rd_start, "smull destination must be an X register".into()));
+        }
+        self.expect(&Tok::Comma)?;
+        let rn_start = self.pos;
+        let (rn, rn_is_64bit) = self.parse_gp_data_reg_with_size("smull")?;
+        if rn_is_64bit {
+            return Err(self.err_at(rn_start, "smull sources must be W registers".into()));
+        }
+        self.expect(&Tok::Comma)?;
+        let rm_start = self.pos;
+        let (rm, rm_is_64bit) = self.parse_gp_data_reg_with_size("smull")?;
+        if rm_is_64bit {
+            return Err(self.err_at(rm_start, "smull sources must be W registers".into()));
+        }
+        Ok(Inst::Smull { rd, rn, rm })
+    }
+
+    /// SMULH/UMULH Xd, Xn, Xm -- 64x64 giving the HIGH half, so every
+    /// operand is an X register.
+    fn parse_mulh(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
+        let mut regs = [crate::reg::XZR; 3];
+        for (i, slot) in regs.iter_mut().enumerate() {
+            if i > 0 {
+                self.expect(&Tok::Comma)?;
+            }
+            let start = self.pos;
+            let (r, is_64bit) = self.parse_gp_data_reg_with_size(mnemonic)?;
+            if !is_64bit {
+                return Err(self.err_at(start, format!("{mnemonic} operands must be X registers")));
+            }
+            *slot = r;
+        }
+        let (rd, rn, rm) = (regs[0], regs[1], regs[2]);
+        Ok(if mnemonic == "smulh" {
+            Inst::Smulh { rd, rn, rm }
+        } else {
+            Inst::Umulh { rd, rn, rm }
+        })
+    }
+
+    /// MNEG Rd, Rn, Rm is an ALIAS of MSUB Rd, Rn, Rm, ZR -- no encoding of
+    /// its own, which is why it reuses Inst::Msub rather than adding a row.
+    fn parse_mneg(&mut self) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_data_reg_with_size("mneg")?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_gp_reg_matching_width(sf, "mneg")?;
+        self.expect(&Tok::Comma)?;
+        let rm = self.parse_gp_reg_matching_width(sf, "mneg")?;
+        Ok(Inst::Msub {
+            rd,
+            rn,
+            rm,
+            ra: crate::reg::XZR,
+            sf,
+        })
     }
 
     fn parse_logic(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -5754,6 +5864,18 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_fcvtzu(&mut self) -> Result<Inst, ParseError> {
+        let (rd, dst_64bit) = self.parse_gp_data_reg_with_size("fcvtzu")?;
+        self.expect(&Tok::Comma)?;
+        let (rn, src_double) = self.parse_fp_reg_with_size()?;
+        Ok(Inst::Fcvtzu {
+            rd,
+            rn,
+            dst_64bit,
+            src_double,
+        })
+    }
+
     fn parse_fcvt(&mut self) -> Result<Inst, ParseError> {
         let (rd, rd_is_double) = self.parse_fp_reg_with_size()?;
         self.expect(&Tok::Comma)?;
@@ -5770,6 +5892,18 @@ impl<'a> Parser<'a> {
         self.expect(&Tok::Comma)?;
         let (rn, src_64bit) = self.parse_gp_data_reg_with_size("scvtf")?;
         Ok(Inst::Scvtf {
+            rd,
+            rn,
+            dst_double,
+            src_64bit,
+        })
+    }
+
+    fn parse_ucvtf(&mut self) -> Result<Inst, ParseError> {
+        let (rd, dst_double) = self.parse_fp_reg_with_size()?;
+        self.expect(&Tok::Comma)?;
+        let (rn, src_64bit) = self.parse_gp_data_reg_with_size("ucvtf")?;
+        Ok(Inst::Ucvtf {
             rd,
             rn,
             dst_double,
