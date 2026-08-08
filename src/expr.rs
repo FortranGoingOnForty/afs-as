@@ -461,8 +461,20 @@ pub(crate) enum AbsoluteAssignmentError {
 }
 
 impl AbsoluteAssignmentError {
+    /// Whether the parser should DEFER this failure rather than report it.
+    ///
+    /// The parse-time preview evaluates every `.set` before any label exists,
+    /// so it cannot tell an absolute symbol from a label. Two failures are
+    /// therefore provisional: a symbol it has never seen, and one that
+    /// resolves to an address rather than a value -- `.set alias, real` is the
+    /// second, and is a symbol ALIAS once labels are known. Both are decided
+    /// again in the assembler, where `self.labels` is final; a failure that is
+    /// still real there is reported with the same text and its own location.
     pub(crate) fn may_resolve_with_labels(&self) -> bool {
-        matches!(self, Self::UndefinedSymbol { .. })
+        matches!(
+            self,
+            Self::UndefinedSymbol { .. } | Self::NonAbsolute { .. }
+        )
     }
 
     pub(crate) fn assignment_index(&self) -> usize {

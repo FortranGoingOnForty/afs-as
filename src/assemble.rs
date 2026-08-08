@@ -384,6 +384,20 @@ struct Assembler {
     absolute_assignments: Vec<(String, Expr)>,
     absolute_symbol_names: BTreeSet<String>,
     absolute_assignment_values: Vec<i64>,
+    /// Parallel to `absolute_assignments`: the target of a `.set` whose
+    /// right-hand side names a defined LABEL rather than an absolute value.
+    /// Such an entry is a symbol alias, not an assignment.
+    ///
+    /// Marked IN PLACE rather than partitioned out: `activate_absolute_definition`
+    /// walks `absolute_assignments` with a cursor, one step per `.set` in the
+    /// emission pass, so removing entries desynchronizes it and fails with
+    /// "missing resolved absolute assignment".
+    absolute_assignment_aliases: Vec<Option<String>>,
+    /// `.set` alias name -> target. Kept separately from the assignment list
+    /// because the alias's TYPE and SIZE cannot be inherited when the alias is
+    /// placed: `.size real, .-real` is processed during emission, so at
+    /// placement time the target's size is still zero.
+    set_alias_targets: BTreeMap<String, String>,
     next_absolute_assignment: usize,
     initial_absolute_symbols: BTreeMap<String, i64>,
     absolute_symbols: BTreeMap<String, i64>,
@@ -792,6 +806,8 @@ impl Assembler {
             absolute_assignments: Vec::new(),
             absolute_symbol_names: BTreeSet::new(),
             absolute_assignment_values: Vec::new(),
+            absolute_assignment_aliases: Vec::new(),
+            set_alias_targets: BTreeMap::new(),
             next_absolute_assignment: 0,
             initial_absolute_symbols: BTreeMap::new(),
             absolute_symbols: BTreeMap::new(),
@@ -927,10 +943,49 @@ impl Assembler {
             .iter()
             .map(SectionLayoutFingerprint::from)
             .collect();
-        let assignment_results = expr::resolve_absolute_assignments(
-            &self.absolute_assignments,
-            &self.label_values_for_expr(),
-        );
+        // `.set NAME, TARGET` where TARGET is a defined LABEL is a symbol
+        // alias, not an absolute assignment: gas gives NAME the target's
+        // section, offset, type and size, and only its own .globl/.weak
+        // decides its binding. A label has no absolute value, so leaving these
+        // to the resolver is what produced "absolute symbol 'x' must resolve
+        // to an absolute value" on source gas accepts.
+        //
+        // A target that is ITSELF a `.set` name stays an ordinary assignment,
+        // so `.set A, 5` / `.set B, A` still gives B the value 5. Only a LONE
+        // symbol qualifies: `.set a, b + 1` names no single object.
+        let alias_targets: Vec<Option<String>> = self
+            .absolute_assignments
+            .iter()
+            .map(|(_, expr)| match expr {
+                // Deliberately NOT conditioned on the target being a known
+                // label: a lone symbol that is not an absolute assignment is
+                // an alias ATTEMPT, and reporting "'.set a, nowhere':
+                // 'nowhere' is not defined in this file" beats the resolver's
+                // "absolute symbol 'a' must resolve to an absolute value",
+                // which describes the mechanism rather than the mistake.
+                Expr::Symbol(target) if !self.absolute_symbol_names.contains(target) => {
+                    Some(target.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        // Resolved over a substituted list so the aliases cannot fail, while
+        // every index still lines up with `assignment_locations` -- the error
+        // path reports by index.
+        let resolvable: Vec<(String, Expr)> = self
+            .absolute_assignments
+            .iter()
+            .enumerate()
+            .map(|(index, (name, expr))| {
+                if alias_targets[index].is_some() {
+                    (name.clone(), Expr::Int(0))
+                } else {
+                    (name.clone(), expr.clone())
+                }
+            })
+            .collect();
+        let assignment_results =
+            expr::resolve_absolute_assignments(&resolvable, &self.label_values_for_expr());
         let assignment_locations: Vec<_> = stmts
             .iter()
             .filter_map(|stmt| {
@@ -943,7 +998,12 @@ impl Assembler {
         self.initial_absolute_symbols.clear();
         self.final_absolute_symbols.clear();
         self.absolute_assignment_values.clear();
-        for ((name, _), result) in self.absolute_assignments.iter().zip(assignment_results) {
+        for (index, ((name, _), result)) in self
+            .absolute_assignments
+            .iter()
+            .zip(assignment_results)
+            .enumerate()
+        {
             let value = result.map_err(|error| {
                 let location = assignment_locations.get(error.assignment_index()).copied();
                 let error = AsmError(error.to_string());
@@ -952,12 +1012,21 @@ impl Assembler {
                     None => error,
                 }
             })?;
+            // An alias keeps its slot so the emission cursor stays aligned,
+            // but must not enter the absolute-symbol maps: it names an
+            // address, and an expression using it has to stay relocatable.
+            if alias_targets[index].is_some() {
+                self.absolute_assignment_values.push(0);
+                continue;
+            }
             if first_names.insert(name.clone(), ()).is_none() {
                 self.initial_absolute_symbols.insert(name.clone(), value);
             }
             self.final_absolute_symbols.insert(name.clone(), value);
             self.absolute_assignment_values.push(value);
         }
+        self.absolute_assignment_aliases = alias_targets;
+        self.apply_set_aliases(&assignment_locations)?;
         self.absolute_symbols
             .clone_from(&self.final_absolute_symbols);
         Ok(())
@@ -2619,6 +2688,45 @@ impl Assembler {
             .map_err(|err| AsmError(err.to_string()))
     }
 
+    /// Give every `.set` alias its target's address, type and size. Runs once
+    /// layout is final, because gas resolves a target defined LATER in the
+    /// file and the alias's address is not knowable where it is written.
+    ///
+    /// Binding is deliberately NOT inherited: it comes from the alias's own
+    /// `.globl`/`.weak`, which is what lets a weak alias name a strong target
+    /// -- musl's weak_alias idiom, and the reason this exists.
+    fn apply_set_aliases(&mut self, locations: &[(u32, u32)]) -> Result<(), AsmError> {
+        let pairs: Vec<(usize, String, String)> = self
+            .absolute_assignments
+            .iter()
+            .zip(self.absolute_assignment_aliases.iter())
+            .enumerate()
+            .filter_map(|(index, ((name, _), target))| {
+                target.as_ref().map(|t| (index, name.clone(), t.clone()))
+            })
+            .collect();
+        for (index, name, target) in pairs {
+            let Some(&(section, offset)) = self.labels.get(&target) else {
+                let error = AsmError(format!(
+                    "'.set {}, {}': '{}' is not defined in this file",
+                    name, target, target
+                ));
+                return Err(match locations.get(index).copied() {
+                    Some((line, col)) => error.with_loc_if_absent(line, col),
+                    None => error,
+                });
+            };
+            // The alias becomes a LABEL, not merely a symbol: a reference to a
+            // local one must fold into the section symbol the way gas folds
+            // it, or the object still links and runs while diverging on
+            // exactly the bytes a relocation differential compares.
+            self.labels.insert(name.clone(), (section, offset));
+            self.absolute_symbol_names.remove(&name);
+            self.set_alias_targets.insert(name.clone(), target.clone());
+        }
+        Ok(())
+    }
+
     fn activate_absolute_definition(&mut self, name: &str) -> Result<(), AsmError> {
         let (expected_name, _) = self
             .absolute_assignments
@@ -2634,8 +2742,16 @@ impl Assembler {
             .absolute_assignment_values
             .get(self.next_absolute_assignment)
             .ok_or_else(|| AsmError("missing resolved absolute assignment value".into()))?;
+        let is_alias = self
+            .absolute_assignment_aliases
+            .get(self.next_absolute_assignment)
+            .is_some_and(Option::is_some);
         self.next_absolute_assignment += 1;
-        self.absolute_symbols.insert(name.to_string(), value);
+        // An alias was already placed by apply_set_aliases; it has an address,
+        // not a value. The cursor still advances, one step per `.set`.
+        if !is_alias {
+            self.absolute_symbols.insert(name.to_string(), value);
+        }
         Ok(())
     }
 
@@ -2908,13 +3024,31 @@ impl Assembler {
             });
         }
 
+        // A `.set` alias takes its target's TYPE and SIZE, and only here is
+        // the target's size final -- `.size real, .-real` is measured from its
+        // own directive's position during emission, and the alias has no
+        // directive of its own to measure from. An alias that declared either
+        // itself keeps what it declared.
+        for (name, target) in self.set_alias_targets.clone() {
+            let Some((kind, size)) = self.elf_attrs.get(&target).map(|a| (a.kind, a.size)) else {
+                continue;
+            };
+            let attrs = self.elf_attrs_mut(&name);
+            if attrs.kind.is_none() {
+                attrs.kind = kind;
+            }
+            if attrs.size == 0 {
+                attrs.size = size;
+            }
+        }
+
         let labels: Vec<(String, (usize, u64))> = self
             .labels
             .iter()
             .map(|(name, place)| (name.clone(), *place))
             .collect();
 
-        let mut defined: Vec<(String, usize, u64, bool)> = Vec::new();
+        let mut defined: Vec<(String, usize, u64, bool, usize)> = Vec::new();
         for (name, (section, offset)) in &labels {
             // `.L` names are assembler temporaries and never reach the ELF
             // symbol table -- gas strips them even when `.local`, `.type`
@@ -2925,10 +3059,14 @@ impl Assembler {
                 continue;
             }
             let global = self.elf_symbol_binding_is_global(name);
-            defined.push((name.clone(), *section, *offset, global));
+            let order = self.symbol_order.get(name).copied().unwrap_or(usize::MAX);
+            defined.push((name.clone(), *section, *offset, global, order));
         }
         // Address order, which for a compiler-emitted file is source order.
-        defined.sort_by(|a, b| (a.1, a.2, &a.0).cmp(&(b.1, b.2, &b.0)));
+        // Ties break on DEFINITION order rather than name, because a `.set`
+        // alias shares its target's address exactly and gas emits the target
+        // first -- sorting those two by name puts `alias` before `real`.
+        defined.sort_by(|a, b| (a.1, a.2, a.4, &a.0).cmp(&(b.1, b.2, b.4, &b.0)));
 
         // AArch64 mapping symbols are locals and come before other locals in
         // gas's output for a given section.
@@ -2947,7 +3085,7 @@ impl Assembler {
             }
         }
 
-        for (name, section, offset, global) in defined.iter().filter(|row| !row.3) {
+        for (name, section, offset, global, _) in defined.iter().filter(|row| !row.3) {
             index_of.insert(name.clone(), obj.symbols.len());
             let _ = global;
             obj.symbols
@@ -2970,7 +3108,7 @@ impl Assembler {
             });
         }
 
-        for (name, section, offset, global) in defined.iter().filter(|row| row.3) {
+        for (name, section, offset, global, _) in defined.iter().filter(|row| row.3) {
             let _ = global;
             index_of.insert(name.clone(), obj.symbols.len());
             obj.symbols

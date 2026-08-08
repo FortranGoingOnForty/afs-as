@@ -541,9 +541,13 @@ fn definite_absolute_assignment_errors_report_the_definition() {
             ".set X,a+b\n",
             "absolute symbol 'X': expression is not representable as an absolute value or relocation",
         ),
+        // A lone symbol is an alias ATTEMPT, so the diagnostic names the
+        // missing target rather than the mechanism. `.set X, target` where
+        // `target` IS defined is a symbol alias and assembles; see
+        // tests/arm64_set_directive.rs.
         (
             ".set X,target\n",
-            "absolute symbol 'X' must resolve to an absolute value",
+            "'.set X, target': 'target' is not defined in this file",
         ),
     ] {
         let error = assemble_source(source)
