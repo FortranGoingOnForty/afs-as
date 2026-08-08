@@ -169,6 +169,10 @@ fn merge_subsections(streams: Vec<SubsectionBuild>) -> (Vec<(String, SecBuild)>,
 
 #[derive(Debug, Default, Clone)]
 struct SymInfo {
+    /// Set for a `.set` alias: its SIZE is the target's, resolved at emission
+    /// because a `.size` expression is measured from its own directive's
+    /// position and the alias has no directive of its own.
+    alias_of: Option<String>,
     globl: bool,
     weak: bool,
     local: bool,
@@ -214,6 +218,9 @@ pub fn assemble_x86_bytes_with_provenance(
     // The first directive or definition that makes a named ELF symbol exist.
     // GNU as uses this order to interleave local symbols with `.file` groups.
     let mut symbol_creation_order: HashMap<String, usize> = HashMap::new();
+    // `.set NAME, TARGET` pairs, applied after layout: gas resolves a target
+    // defined later in the file, so the alias's address is not knowable here.
+    let mut set_aliases: Vec<(String, String, u32, u32)> = Vec::new();
     let mut file_symbols: Vec<(usize, String)> = Vec::new();
     // (sym, size, explicit alignment, line, column)
     let mut commons: Vec<(String, u64, Option<u64>, u32, u32)> = Vec::new();
@@ -278,6 +285,15 @@ pub fn assemble_x86_bytes_with_provenance(
                 sb.label_order.push(name.clone());
             }
             Stmt::Directive(d) => match d {
+                // `.set` places nothing: the alias takes its target's address,
+                // and gas resolves a target defined LATER in the file, so this
+                // is recorded here and applied once every label is final.
+                Directive::SetSymbolAlias { name, target } => {
+                    symbol_creation_order
+                        .entry(name.clone())
+                        .or_insert(statement_order);
+                    set_aliases.push((name.clone(), target.clone(), line, col));
+                }
                 Directive::Section {
                     name,
                     subsection,
@@ -598,7 +614,7 @@ pub fn assemble_x86_bytes_with_provenance(
         }
     }
 
-    let (secs, stream_to_section) = merge_subsections(streams);
+    let (mut secs, stream_to_section) = merge_subsections(streams);
     for section in label_section.values_mut() {
         *section = stream_to_section[*section];
     }
@@ -1033,6 +1049,56 @@ pub fn assemble_x86_bytes_with_provenance(
 
     // ---- Build the ELF model ---------------------------------------
     let mut obj = ObjectFile::new(EM_X86_64, osabi);
+    // `.set` resolution. Every label is final here, so an alias can take its
+    // target's section and offset -- which is exactly what gas produces: the
+    // two symbols become indistinguishable except for the binding each one's
+    // own `.globl`/`.weak` gave it.
+    for (name, target, line, col) in &set_aliases {
+        let mut found = None;
+
+        for (li, l) in laid.iter().enumerate() {
+            if let Some(off) = l.labels.get(target) {
+                found = Some((li, *off));
+                break;
+            }
+        }
+        let (li, off) = found.ok_or_else(|| {
+            err(
+                *line,
+                *col,
+                format!(
+                    "'.set {}, {}': '{}' is not defined in this file",
+                    name, target, target
+                ),
+            )
+        })?;
+        laid[li].labels.insert(name.clone(), off);
+        secs[li].1.label_order.push(name.clone());
+        // Also a LABEL for relocation purposes, or a call to a local alias
+        // keeps a symbol relocation where gas folds it into the section
+        // symbol -- the object still links and runs, but it diverges from gas
+        // on exactly the byte a differential compares.
+        label_section.insert(name.clone(), li);
+        // TYPE and SIZE both follow the target unless the alias declared its
+        // own: gas gives an alias of a `@function` target STT_FUNC, and an
+        // alias of a sized object that object's size. Inheriting the type
+        // alone leaves a symbol that looks right in a disassembly and reports
+        // size 0 -- which is what the differential caught on its first run.
+        let target_typ = syminfo.get(target).and_then(|i| i.typ);
+        let entry = syminfo.entry(name.clone()).or_default();
+        if entry.typ.is_none() {
+            entry.typ = target_typ;
+        }
+        if entry.size.is_none() {
+            // NOT the SizeArg: `.size real, .-real` is positional, and the
+            // alias has no `.size` directive for `.` to be measured from. Its
+            // own error says so -- "directive has no recorded position". Record
+            // the relationship and resolve the target's size at emission,
+            // where both are final.
+            entry.alias_of = Some(target.clone());
+        }
+    }
+
     obj.gnu_stack_flags = gnu_stack_flags;
     let mut model_sec_index: HashMap<String, usize> = HashMap::new();
     for l in &mut laid {
@@ -1155,7 +1221,13 @@ pub fn assemble_x86_bytes_with_provenance(
             let info = syminfo.get(label).cloned().unwrap_or_default();
             // Validate metadata even when the temporary itself is omitted
             // from the symbol table.
-            let size = symbol_size(label, &info, Some(li))?;
+            let size = match &info.alias_of {
+                Some(target) => {
+                    let tinfo = syminfo.get(target).cloned().unwrap_or_default();
+                    symbol_size(target, &tinfo, Some(li))?
+                }
+                None => symbol_size(label, &info, Some(li))?,
+            };
             if label.starts_with(".L") && !info.globl && !info.weak {
                 continue;
             }
