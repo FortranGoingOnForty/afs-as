@@ -126,6 +126,17 @@ pub enum Directive {
     Extern(String),
     Local(String),
     Weak(String),
+    /// `.set NAME, TARGET` -- NAME becomes another name for the symbol TARGET,
+    /// taking its section, offset and type. Binding is NOT inherited: it comes
+    /// from the alias's own `.globl`/`.weak`, which is what lets a weak alias
+    /// name a strong target, and is how gas behaves.
+    ///
+    /// gas resolves a `.set` whose target is defined LATER in the file, so
+    /// this cannot be applied where it is parsed.
+    SetSymbolAlias {
+        name: String,
+        target: String,
+    },
     Type {
         sym: String,
         kind: SymKind,
@@ -834,6 +845,19 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
                 },
             };
             Directive::Comm { sym, size, align }
+        }
+        "set" | "equ" => {
+            // `.set NAME, TARGET`. Only the symbol form: nothing in this
+            // toolchain emits an absolute `.set`, and guessing a value where
+            // the caller meant an alias is the failure this dialect's
+            // corpus-evidence rule exists to avoid.
+            let mut it = args.split(',').map(str::trim);
+            let name = one_sym(it.next().unwrap_or(""))?;
+            let target = one_sym(it.next().unwrap_or(""))?;
+            if it.next().is_some() {
+                return Err(err(format!("bad .set operands '{}'", args)));
+            }
+            Directive::SetSymbolAlias { name, target }
         }
         "file" => Directive::File(parse_file_name(args).map_err(&err)?),
         other => {
