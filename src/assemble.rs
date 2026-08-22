@@ -895,12 +895,8 @@ impl Assembler {
         for entries in &mut self.elf_mapping {
             entries.clear();
         }
-        for state in &mut self.elf_map_state {
-            *state = None;
-        }
-        for pending in &mut self.elf_pending_align {
-            *pending = None;
-        }
+        self.elf_map_state.fill(None);
+        self.elf_pending_align.fill(None);
         self.section = 0;
         self.current_line = 0;
         self.current_col = 0;
