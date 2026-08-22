@@ -300,13 +300,33 @@ fn split_label_bytes(line: &[u8]) -> Option<(&[u8], &[u8])> {
 
 fn parse_insn(line: &str, line_no: u32, col: u32) -> Result<Stmt, X86ParseError> {
     let line = line.trim();
-    let (mnemonic, rest) = match line.find(char::is_whitespace) {
+    let (first, rest) = match line.find(char::is_whitespace) {
         Some(i) => (&line[..i], line[i..].trim()),
         None => (line, ""),
     };
-    if mnemonic.is_empty() {
+    if first.is_empty() {
         return Err(X86ParseError::new(line_no, col, "empty instruction"));
     }
+    /* `lock` is an instruction prefix, not an opcode with `xaddq` as its
+     * first operand. Keep it attached to the mnemonic so the encoder can
+     * validate which instructions accept it while operands retain their
+     * ordinary AT&T shapes. */
+    let (mnemonic, rest) = if first == "lock" {
+        let (inner, operands) = match rest.find(char::is_whitespace) {
+            Some(i) => (&rest[..i], rest[i..].trim()),
+            None if !rest.is_empty() => (rest, ""),
+            None => {
+                return Err(X86ParseError::new(
+                    line_no,
+                    col,
+                    "lock prefix requires an instruction",
+                ))
+            }
+        };
+        (format!("lock {}", inner), operands)
+    } else {
+        (first.to_string(), rest)
+    };
     let mut operands = Vec::new();
     if !rest.is_empty() {
         for piece in split_operands(rest) {
@@ -317,10 +337,7 @@ fn parse_insn(line: &str, line_no: u32, col: u32) -> Result<Stmt, X86ParseError>
             operands.push(parse_operand(piece, line_no, col)?);
         }
     }
-    Ok(Stmt::Insn {
-        mnemonic: mnemonic.to_string(),
-        operands,
-    })
+    Ok(Stmt::Insn { mnemonic, operands })
 }
 
 /// Split on top-level commas — commas inside `(...)` belong to the
@@ -1076,6 +1093,10 @@ mod tests {
         let (m, ops) = one_insn("call afs_error_stop\n");
         assert_eq!(m, "call");
         assert_eq!(ops[0], Operand::Sym("afs_error_stop".into()));
+
+        let (m, ops) = one_insn("lock xaddq %rdx, counter(%rip)\n");
+        assert_eq!(m, "lock xaddq");
+        assert_eq!(ops.len(), 2);
     }
 
     #[test]

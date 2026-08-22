@@ -67,6 +67,13 @@ const CASES: &[&str] = &[
     "xorl %eax, %eax",
     "xorq %rax, %rax",
     "andb $1, %cl",
+    // atomic exchange/update forms emitted by Cgfried's C11 atomics
+    "xchgb %al, (%rbx)",
+    "xchgw %r9w, 2(%r12)",
+    "xchgl %eax, atomic_float(%rip)",
+    "xchgq %rax, atomic_double(%rip)",
+    "xaddl %r10d, (%r11)",
+    "lock xaddq %rdx, atomic_counter(%rip)",
     // width-reinterpreted immediates pick the sign-extended 83 form
     "orw $65535, %ax",
     "xorw $65535, %bx",

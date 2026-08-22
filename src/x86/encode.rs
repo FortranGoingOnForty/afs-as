@@ -327,6 +327,26 @@ impl Parts {
 /// return a `label_fix`; calls/jumps to symbols return a PLT32 reloc
 /// with gas's addend bytes already in place.
 pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
+    if let Some(inner) = mnemonic.strip_prefix("lock ") {
+        let Some((stem, _)) = width_of_suffix(inner) else {
+            return Err(format!(
+                "lock prefix requires a suffixed instruction, got '{}'",
+                inner
+            ));
+        };
+        if stem != "xadd" {
+            return Err(format!("lock prefix is not supported for '{}'", inner));
+        }
+        let mut encoded = encode(inner, ops)?;
+        encoded.bytes.insert(0, 0xf0);
+        if let Some(reloc) = &mut encoded.reloc {
+            reloc.offset += 1;
+        }
+        if let Some(fix) = &mut encoded.label_fix {
+            fix.disp_offset += 1;
+        }
+        return Ok(encoded);
+    }
     match mnemonic {
         "ret" | "retq" => {
             let bytes = match ops {
@@ -467,6 +487,8 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
                 return encode_arith(stem, w, ops, mnemonic)
             }
             "test" => return encode_test(w, ops, mnemonic),
+            "xchg" => return encode_reg_rm(&[0x86], &[0x87], w, ops, mnemonic),
+            "xadd" => return encode_reg_rm(&[0x0f, 0xc0], &[0x0f, 0xc1], w, ops, mnemonic),
             // Two-byte-opcode RM forms sharing one shape; the
             // immediate form (69/6B) is its own AT&T 3-operand shape
             // `imul $imm, r/m, r` (cgfried emits it for scaled
@@ -1278,6 +1300,39 @@ fn encode_test(w: Width, ops: &[Operand], mnemonic: &str) -> EncodeResult {
             }
         }
         _ => return Err(format!("unsupported test operands for '{}'", mnemonic)),
+    }
+    p.finish()
+}
+
+/* Register source plus register/memory destination.  XCHG and XADD share
+ * this ModRM direction; only their byte/non-byte opcode maps differ. */
+fn encode_reg_rm(
+    byte_opcode: &[u8],
+    wide_opcode: &[u8],
+    w: Width,
+    ops: &[Operand],
+    mnemonic: &str,
+) -> EncodeResult {
+    let mut p = Parts::new();
+
+    width_setup(w, &mut p.rex, &mut p.prefix);
+    p.opcode.extend_from_slice(if w == Width::B {
+        byte_opcode
+    } else {
+        wide_opcode
+    });
+    match ops {
+        [Operand::Reg(src), Operand::Reg(dst)] => {
+            check_width(*src, w, mnemonic)?;
+            check_width(*dst, w, mnemonic)?;
+            p.modrm_rr(*src, *dst);
+        }
+        [Operand::Reg(src), Operand::Mem(mem)] => {
+            check_width(*src, w, mnemonic)?;
+            p.rex.merge_reg(*src, RexSlot::R);
+            p.mem(src.low3(), mem)?;
+        }
+        _ => return Err(format!("{} expects register, register/memory", mnemonic)),
     }
     p.finish()
 }
