@@ -126,6 +126,7 @@ pub enum Directive {
     Extern(String),
     Local(String),
     Weak(String),
+    Hidden(String),
     /// `.set NAME, TARGET` -- NAME becomes another name for the symbol TARGET,
     /// taking its section, offset and type. Binding is NOT inherited: it comes
     /// from the alias's own `.globl`/`.weak`, which is what lets a weak alias
@@ -208,10 +209,15 @@ pub fn parse_bytes(src: &[u8]) -> Result<Vec<Located>, X86ParseError> {
                 continue;
             }
             let col = col_of_bytes(raw, line);
-            let stmt = if let Some(rest) = line.strip_prefix(b".") {
+            let (statement, rest) = split_statement_bytes(line);
+            if statement.is_empty() {
+                line = rest;
+                continue;
+            }
+            let stmt = if let Some(rest) = statement.strip_prefix(b".") {
                 parse_directive_bytes(rest, line_no, col)?
             } else {
-                let line = decode_grammar(line, line_no, col, "instruction")?;
+                let line = decode_grammar(statement, line_no, col, "instruction")?;
                 parse_insn(line, line_no, col)?
             };
             out.push(Located {
@@ -219,10 +225,24 @@ pub fn parse_bytes(src: &[u8]) -> Result<Vec<Located>, X86ParseError> {
                 col,
                 stmt,
             });
-            break;
+            line = rest;
         }
     }
     Ok(out)
+}
+
+fn split_statement_bytes(line: &[u8]) -> (&[u8], &[u8]) {
+    let mut in_str = false;
+    let mut esc = false;
+    for (index, &byte) in line.iter().enumerate() {
+        match byte {
+            b'\\' if in_str => esc = !esc,
+            b'"' if !esc => in_str = !in_str,
+            b';' if !in_str => return (trim_ascii_end(&line[..index]), &line[index + 1..]),
+            _ => esc = false,
+        }
+    }
+    (trim_ascii_end(line), &[])
 }
 
 fn col_of_bytes(raw: &[u8], rest: &[u8]) -> u32 {
@@ -732,6 +752,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         "extern" => Directive::Extern(one_sym(args)?),
         "local" => Directive::Local(one_sym(args)?),
         "weak" => Directive::Weak(one_sym(args)?),
+        "hidden" => Directive::Hidden(one_sym(args)?),
         "type" => {
             let mut it = args.split(',').map(str::trim);
             let sym = one_sym(it.next().unwrap_or(""))?;
@@ -1101,16 +1122,28 @@ mod tests {
 
     #[test]
     fn labels_and_multiple_per_line() {
-        let stmts = parse(".L1:\n.text\nf: ret\n").unwrap();
+        let stmts = parse(".L1:\n.text\nf: ret; fprem; fnstsw %ax\n").unwrap();
         assert_eq!(stmts[0].stmt, Stmt::Label(".L1".into()));
         assert_eq!(stmts[2].stmt, Stmt::Label("f".into()));
         assert!(matches!(&stmts[3].stmt, Stmt::Insn { mnemonic, .. } if mnemonic == "ret"));
+        assert!(matches!(&stmts[4].stmt, Stmt::Insn { mnemonic, .. } if mnemonic == "fprem"));
+        assert!(matches!(&stmts[5].stmt, Stmt::Insn { mnemonic, .. } if mnemonic == "fnstsw"));
+        assert_eq!((stmts[3].line, stmts[3].col), (3, 4));
+        assert_eq!((stmts[4].line, stmts[4].col), (3, 9));
+        assert_eq!((stmts[5].line, stmts[5].col), (3, 16));
+
+        let data = parse(".ascii \"a;b\"; .byte 1\n").unwrap();
+        assert!(matches!(
+            &data[0].stmt,
+            Stmt::Directive(Directive::Ascii(groups)) if groups == &[b"a;b".to_vec()]
+        ));
+        assert!(matches!(&data[1].stmt, Stmt::Directive(Directive::Byte(_))));
     }
 
     #[test]
     fn directive_forms() {
         let stmts = parse(
-            ".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8, tbl-4\n.asciz \"hi\\n\"\n.p2align 4\n.extern ext\n",
+            ".comm blk_,1024,32\n.size f,.-f\n.quad tbl+8, tbl-4\n.asciz \"hi\\n\"\n.p2align 4\n.extern ext\n.hidden ext\n",
         )
         .unwrap();
         assert_eq!(
@@ -1148,6 +1181,10 @@ mod tests {
         assert_eq!(
             stmts[5].stmt,
             Stmt::Directive(Directive::Extern("ext".into()))
+        );
+        assert_eq!(
+            stmts[6].stmt,
+            Stmt::Directive(Directive::Hidden("ext".into()))
         );
     }
 

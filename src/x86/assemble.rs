@@ -24,7 +24,7 @@ use crate::assemble::AsmError;
 use super::super::elf::{
     self, reloc::x86_64::*, ObjectFile, Rela, Section, Symbol, SymbolPlace, EM_X86_64, SHF_ALLOC,
     SHF_EXECINSTR, SHF_WRITE, SHT_NOBITS, SHT_NOTE, SHT_PROGBITS, STB_GLOBAL, STB_LOCAL, STB_WEAK,
-    STT_FILE, STT_FUNC, STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT,
+    STT_FILE, STT_FUNC, STT_NOTYPE, STT_OBJECT, STT_SECTION, STV_DEFAULT, STV_HIDDEN,
 };
 use super::encode::{encode, InsnReloc};
 use super::parse::{
@@ -175,6 +175,7 @@ struct SymInfo {
     alias_of: Option<String>,
     globl: bool,
     weak: bool,
+    hidden: bool,
     local: bool,
     typ: Option<u8>,
     size: Option<SizeArg>,
@@ -362,6 +363,12 @@ pub fn assemble_x86_bytes_with_provenance(
                         ));
                     }
                     syminfo.entry(s.clone()).or_default().weak = true;
+                }
+                Directive::Hidden(s) => {
+                    symbol_creation_order
+                        .entry(s.clone())
+                        .or_insert(statement_order);
+                    syminfo.entry(s.clone()).or_default().hidden = true;
                 }
                 Directive::Local(s) => {
                     symbol_creation_order
@@ -1244,7 +1251,7 @@ pub fn assemble_x86_bytes_with_provenance(
                 name: label.clone(),
                 bind,
                 typ: info.typ.unwrap_or(STT_NOTYPE),
-                vis: STV_DEFAULT,
+                vis: if info.hidden { STV_HIDDEN } else { STV_DEFAULT },
                 place: SymbolPlace::Section(model_sec_index[&l.name]),
                 value: off,
                 size,
@@ -1256,7 +1263,8 @@ pub fn assemble_x86_bytes_with_provenance(
         let sym = match &located.stmt {
             Stmt::Directive(Directive::Globl(sym))
             | Stmt::Directive(Directive::Local(sym))
-            | Stmt::Directive(Directive::Weak(sym)) => sym,
+            | Stmt::Directive(Directive::Weak(sym))
+            | Stmt::Directive(Directive::Hidden(sym)) => sym,
             Stmt::Directive(Directive::Type { sym, .. })
             | Stmt::Directive(Directive::Size { sym, .. })
             | Stmt::Directive(Directive::Comm { sym, .. }) => sym,
@@ -1274,7 +1282,7 @@ pub fn assemble_x86_bytes_with_provenance(
             name: sym.clone(),
             bind: STB_LOCAL,
             typ: info.typ.unwrap_or(STT_OBJECT),
-            vis: STV_DEFAULT,
+            vis: if info.hidden { STV_HIDDEN } else { STV_DEFAULT },
             place: SymbolPlace::Section(model_sec_index[".bss"]),
             value: off,
             size,
@@ -1288,6 +1296,9 @@ pub fn assemble_x86_bytes_with_provenance(
         let align = align.unwrap_or_else(|| default_common_alignment(*size));
         if let Some(&symbol_index) = model_sym_index.get(sym) {
             let symbol = &mut obj.symbols[symbol_index];
+            if syminfo.get(sym).is_some_and(|info| info.hidden) {
+                symbol.vis = STV_HIDDEN;
+            }
             symbol.value = symbol.value.max(align);
             if symbol.size == 0 {
                 symbol.size = *size;
@@ -1295,11 +1306,12 @@ pub fn assemble_x86_bytes_with_provenance(
             continue;
         }
         model_sym_index.insert(sym.clone(), obj.symbols.len());
+        let info = syminfo.get(sym).cloned().unwrap_or_default();
         obj.symbols.push(Symbol {
             name: sym.clone(),
             bind: STB_GLOBAL,
             typ: STT_OBJECT,
-            vis: STV_DEFAULT,
+            vis: if info.hidden { STV_HIDDEN } else { STV_DEFAULT },
             place: SymbolPlace::Common,
             value: align,
             size: *size,
@@ -1314,7 +1326,8 @@ pub fn assemble_x86_bytes_with_provenance(
             Stmt::Directive(Directive::Globl(symbol))
             | Stmt::Directive(Directive::Extern(symbol))
             | Stmt::Directive(Directive::Local(symbol))
-            | Stmt::Directive(Directive::Weak(symbol)) => symbol,
+            | Stmt::Directive(Directive::Weak(symbol))
+            | Stmt::Directive(Directive::Hidden(symbol)) => symbol,
             Stmt::Directive(Directive::Type { sym, .. })
             | Stmt::Directive(Directive::Size { sym, .. }) => sym,
             _ => continue,
@@ -1325,7 +1338,7 @@ pub fn assemble_x86_bytes_with_provenance(
             continue;
         }
         let info = &syminfo[symbol];
-        if info.weak || !(info.globl || info.typ.is_some() || info.size.is_some()) {
+        if info.weak || !(info.globl || info.hidden || info.typ.is_some() || info.size.is_some()) {
             continue;
         }
         let size = symbol_size(symbol, info, None)?;
@@ -1334,7 +1347,7 @@ pub fn assemble_x86_bytes_with_provenance(
             name: symbol.clone(),
             bind: STB_GLOBAL,
             typ: info.typ.unwrap_or(STT_NOTYPE),
-            vis: STV_DEFAULT,
+            vis: if info.hidden { STV_HIDDEN } else { STV_DEFAULT },
             place: SymbolPlace::Undef,
             value: 0,
             size,
@@ -1497,7 +1510,7 @@ pub fn assemble_x86_bytes_with_provenance(
                             name: r.sym.clone(),
                             bind: if info.weak { STB_WEAK } else { STB_GLOBAL },
                             typ: info.typ.unwrap_or(STT_NOTYPE),
-                            vis: STV_DEFAULT,
+                            vis: if info.hidden { STV_HIDDEN } else { STV_DEFAULT },
                             place: SymbolPlace::Undef,
                             value: 0,
                             size,

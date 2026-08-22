@@ -562,6 +562,7 @@ const X87_NULLARY: &[(&str, [u8; 2])] = &[
     ("fabs", [0xd9, 0xe1]),
     ("fldz", [0xd9, 0xee]),
     ("fld1", [0xd9, 0xe8]),
+    ("fprem", [0xd9, 0xf8]),
     // fucomip (bare) = fucomip %st(1), %st
     ("fucomip", [0xdf, 0xe9]),
 ];
@@ -607,6 +608,17 @@ fn encode_x87(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
                 ..Default::default()
             }));
         }
+    }
+    if mnemonic == "fnstsw" {
+        if let [Operand::Reg(r)] = ops {
+            if r.class == RegClass::Gp && r.num == 0 && r.width == Width::W {
+                return Ok(Some(Encoded {
+                    bytes: vec![0xdf, 0xe0],
+                    ..Default::default()
+                }));
+            }
+        }
+        return Err("fnstsw expects %ax".into());
     }
     // fstp %st(i): DD D8+i (the pop-discard).
     if mnemonic == "fstp" {
@@ -849,21 +861,30 @@ fn encode_sse(mnemonic: &str, ops: &[Operand]) -> Result<Option<Encoded>, String
         .map(Some);
     }
 
-    // psrldq has the packed-shift group encoding 66 0F 73 /3 ib and a
-    // destructive two-operand AT&T spelling: `psrldq $imm, %xmm`.
-    if mnemonic == "psrldq" {
+    // Packed immediate shifts use the 66 0F 72/73 group and a destructive
+    // two-operand AT&T spelling: `op $imm, %xmm`.
+    if matches!(mnemonic, "psrld" | "psrlq" | "psrldq") {
         let (imm, dst) = match ops {
             [Operand::Imm(i), Operand::Reg(dst)] if dst.class == RegClass::Xmm => (*i, *dst),
-            _ => return Err("psrldq expects $imm8, xmm".into()),
+            _ => return Err(format!("{} expects $imm8, xmm", mnemonic)),
         };
         if !(0..=255).contains(&imm) {
-            return Err(format!("psrldq immediate {} out of range for imm8", imm));
+            return Err(format!(
+                "{} immediate {} out of range for imm8",
+                mnemonic, imm
+            ));
         }
+        let (opcode, digit) = match mnemonic {
+            "psrld" => (0x72, 2),
+            "psrlq" => (0x73, 2),
+            "psrldq" => (0x73, 3),
+            _ => unreachable!(),
+        };
         let mut p = Parts::new();
         Sse::P66.emit(&mut p.prefix);
         p.rex.merge_reg(dst, RexSlot::B);
-        p.opcode.extend_from_slice(&[0x0f, 0x73]);
-        p.tail.push(0b11 << 6 | 3 << 3 | dst.low3());
+        p.opcode.extend_from_slice(&[0x0f, opcode]);
+        p.tail.push(0b11 << 6 | digit << 3 | dst.low3());
         p.tail.push(imm as u8);
         return p.finish().map(Some);
     }

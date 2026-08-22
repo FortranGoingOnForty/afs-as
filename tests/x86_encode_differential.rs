@@ -252,6 +252,8 @@ const CASES: &[&str] = &[
     "psrldq $8, %xmm0",
     "psrldq $15, %xmm12",
     "psrldq $255, %xmm12",
+    "psrld $1, %xmm1",
+    "psrlq $1, %xmm1",
     // RIP-relative source + trailing imm8: the PC32 addend must count the
     // imm8 byte (gas emits sym-5 / sym+off-5, not sym-4).
     "pshufd $3, tbl(%rip), %xmm0",
@@ -292,6 +294,8 @@ const CASES: &[&str] = &[
     "fabs",
     "fldz",
     "fld1",
+    "fprem",
+    "fnstsw %ax",
     "fucomip",
     "fstp %st(0)",
     "fstp %st(1)",

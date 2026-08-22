@@ -12,7 +12,7 @@ mod celf;
 
 use afs_as::elf::{
     parse_elf, SymbolPlace, ELFOSABI_FREEBSD, ELFOSABI_NONE, SHF_EXECINSTR, STB_GLOBAL, STB_WEAK,
-    STT_FUNC, STT_NOTYPE, STT_OBJECT,
+    STT_FUNC, STT_NOTYPE, STT_OBJECT, STV_HIDDEN,
 };
 use afs_as::x86::assemble::{assemble_x86, assemble_x86_bytes, assemble_x86_with_provenance};
 
@@ -637,7 +637,9 @@ base:
 .byte 1
 later:
 .data
+.hidden hidden_only
 .weak ext_obj
+.hidden ext_obj
 .type ext_obj,@object
 .size ext_obj,16
 .quad ext_obj
@@ -664,6 +666,7 @@ fn undefined_symbol_metadata_is_preserved() {
         ("sized_only", STB_GLOBAL, STT_NOTYPE, 7),
         ("dotted", STB_GLOBAL, STT_FUNC, 1),
         ("wrapped", STB_GLOBAL, STT_NOTYPE, u64::MAX),
+        ("hidden_only", STB_GLOBAL, STT_NOTYPE, 0),
         ("ext_obj", STB_WEAK, STT_OBJECT, 16),
     ] {
         let actual = symbol(name);
@@ -673,6 +676,9 @@ fn undefined_symbol_metadata_is_preserved() {
         assert_eq!(actual.value, 0, "value for {name}");
         assert_eq!(actual.size, size, "size for {name}");
     }
+
+    assert_eq!(symbol("hidden_only").vis, STV_HIDDEN);
+    assert_eq!(symbol("ext_obj").vis, STV_HIDDEN);
 
     for name in ["extern_unused", "weak_unused"] {
         assert!(
