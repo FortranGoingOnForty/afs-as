@@ -399,6 +399,15 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
                 ..Default::default()
             });
         }
+        "mfence" => {
+            if !ops.is_empty() {
+                return Err("mfence expects no operands".into());
+            }
+            return Ok(Encoded {
+                bytes: vec![0x0f, 0xae, 0xf0],
+                ..Default::default()
+            });
+        }
         "call" | "callq" => return encode_call_jmp(ops, 0xe8, "call"),
         "jmp" => return encode_call_jmp(ops, 0xe9, "jmp"),
         _ => {}
