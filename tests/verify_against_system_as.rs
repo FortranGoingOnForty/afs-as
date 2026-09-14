@@ -347,6 +347,28 @@ fn sys_udiv() {
     );
 }
 #[test]
+fn sys_clz() {
+    if !native_macho_host("verify_against_system_as", "sys_clz") {
+        return;
+    }
+    verify(
+        "clz w5, w6",
+        Inst::Clz {
+            rd: W5,
+            rn: W6,
+            sf: false,
+        },
+    );
+    verify(
+        "clz x7, x8",
+        Inst::Clz {
+            rd: X7,
+            rn: X8,
+            sf: true,
+        },
+    );
+}
+#[test]
 fn sys_and() {
     if !native_macho_host("verify_against_system_as", "sys_and") {
         return;

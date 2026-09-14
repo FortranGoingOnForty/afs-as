@@ -268,6 +268,12 @@ pub enum Inst {
         rm: GpReg,
         sf: bool,
     },
+    /// CLZ Xd, Xn
+    Clz {
+        rd: GpReg,
+        rn: GpReg,
+        sf: bool,
+    },
     /// CSEL Xd, Xn, Xm, cond
     Csel {
         rd: GpReg,
@@ -3292,6 +3298,10 @@ impl Inst {
                     | (rn.enc() << 5)
                     | rd.enc()
             }
+            // CLZ: sf|1|0|11010110|00000|000100|Rn|Rd
+            Inst::Clz { rd, rn, sf } => {
+                ((*sf as u32) << 31) | 0x5AC0_1000 | (rn.enc() << 5) | rd.enc()
+            }
 
             // ---- Logic (register) ----
             Inst::AndReg { rd, rn, rm, sf } => logic_reg(*sf, 0b00, false, *rm, *rn, *rd),
@@ -5762,6 +5772,30 @@ mod tests {
             }
             .encode(),
             0x9ACE09AC
+        );
+    }
+    #[test]
+    fn clz_w5_w6() {
+        assert_eq!(
+            Inst::Clz {
+                rd: W5,
+                rn: W6,
+                sf: false
+            }
+            .encode(),
+            0x5AC010C5
+        );
+    }
+    #[test]
+    fn clz_x7_x8() {
+        assert_eq!(
+            Inst::Clz {
+                rd: X7,
+                rn: X8,
+                sf: true
+            }
+            .encode(),
+            0xDAC01107
         );
     }
 

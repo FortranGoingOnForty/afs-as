@@ -63,6 +63,7 @@ fn gp_instruction_families_reject_mismatched_register_widths() {
         "mul x0, w1, w2",
         "sdiv w0, x1, w2",
         "udiv x0, x1, w2",
+        "clz x0, w1",
         "madd x0, x1, w2, x3",
         "msub w0, w1, w2, x3",
         "mov x0, w1",
