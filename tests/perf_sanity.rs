@@ -115,6 +115,19 @@ fn relocation_source(count: usize) -> String {
     src
 }
 
+fn dense_absolute_data_source(count: usize) -> String {
+    let mut src = String::with_capacity(count * 40);
+    src.push_str(".text\n");
+    for index in 0..count {
+        writeln!(src, "Labsolute_{index:05}:\n  nop").unwrap();
+    }
+    src.push_str(".data\n");
+    for index in 0..count {
+        writeln!(src, ".byte {}", index % 256).unwrap();
+    }
+    src
+}
+
 fn measure_relocation_resolution(src: &str, rounds: usize) -> Duration {
     let mut samples = Vec::with_capacity(rounds);
     for _ in 0..rounds {
@@ -239,6 +252,26 @@ fn relocation_object_pipeline_scales_near_linearly() {
     assert!(
         large_time <= ratio_ceiling,
         "relocation object scaling regressed: medium {:?}, large {:?}, ceiling {:?}",
+        medium_time,
+        large_time,
+        ratio_ceiling
+    );
+}
+
+#[test]
+fn absolute_data_expressions_do_not_scan_unreferenced_labels() {
+    let medium = dense_absolute_data_source(1_000);
+    let large = dense_absolute_data_source(2_000);
+
+    let _ = measure_relocation_resolution(&large, 1);
+
+    let medium_time = measure_relocation_resolution(&medium, 2);
+    let large_time = measure_relocation_resolution(&large, 2);
+    let ratio_ceiling = medium_time.mul_f64(3.0) + Duration::from_millis(20);
+
+    assert!(
+        large_time <= ratio_ceiling && large_time <= Duration::from_secs(2),
+        "absolute data expression scaling regressed: medium {:?}, large {:?}, ratio ceiling {:?}",
         medium_time,
         large_time,
         ratio_ceiling
