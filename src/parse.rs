@@ -2035,6 +2035,7 @@ impl<'a> Parser<'a> {
             "msub" => self.parse_madd_sub("msub"),
             "sdiv" => self.parse_3reg("sdiv"),
             "udiv" => self.parse_3reg("udiv"),
+            "clz" => self.parse_clz(),
 
             // Logic
             "and" => self.parse_logic("and"),
@@ -3256,6 +3257,13 @@ impl<'a> Parser<'a> {
             "udiv" => Inst::Udiv { rd, rn, rm, sf },
             _ => unreachable!(),
         })
+    }
+
+    fn parse_clz(&mut self) -> Result<Inst, ParseError> {
+        let (rd, sf) = self.parse_gp_data_reg_with_size("clz")?;
+        self.expect(&Tok::Comma)?;
+        let rn = self.parse_gp_reg_matching_width(sf, "clz")?;
+        Ok(Inst::Clz { rd, rn, sf })
     }
 
     fn parse_madd_sub(&mut self, mnemonic: &str) -> Result<Inst, ParseError> {
@@ -7437,6 +7445,26 @@ mod tests {
                 rd: X6,
                 rn: X7,
                 rm: X8,
+                sf: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_clz_widths() {
+        assert_eq!(
+            parse_inst("clz w5, w6"),
+            Inst::Clz {
+                rd: W5,
+                rn: W6,
+                sf: false
+            }
+        );
+        assert_eq!(
+            parse_inst("clz x7, x8"),
+            Inst::Clz {
+                rd: X7,
+                rn: X8,
                 sf: true
             }
         );

@@ -237,6 +237,13 @@ fn rt_udiv() {
     roundtrip(".text\nudiv x6, x7, x8\n");
 }
 #[test]
+fn rt_clz() {
+    if !native_macho_host("roundtrip", "rt_clz") {
+        return;
+    }
+    roundtrip(".text\nclz w5, w6\nclz x7, x8\n");
+}
+#[test]
 fn rt_and() {
     if !native_macho_host("roundtrip", "rt_and") {
         return;
