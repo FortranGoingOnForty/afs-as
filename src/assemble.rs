@@ -2207,16 +2207,6 @@ impl Assembler {
         Ok(bases)
     }
 
-    fn symbol_values_for_expr(&self) -> BTreeMap<String, SymbolValue> {
-        let mut values = self.label_values_for_expr();
-
-        for (name, value) in &self.absolute_symbols {
-            values.insert(name.clone(), SymbolValue::Absolute(*value));
-        }
-
-        values
-    }
-
     fn label_values_for_expr(&self) -> BTreeMap<String, SymbolValue> {
         let mut values = BTreeMap::new();
 
@@ -2234,8 +2224,19 @@ impl Assembler {
     }
 
     fn classify_expr(&self, expr: &Expr) -> Result<ClassifiedExpr, AsmError> {
-        expr::classify(expr, &self.symbol_values_for_expr())
-            .map_err(|err| AsmError(err.to_string()))
+        expr::classify_with_lookup(expr, |symbol| {
+            self.absolute_symbols
+                .get(symbol)
+                .copied()
+                .map(SymbolValue::Absolute)
+                .or_else(|| {
+                    self.labels
+                        .get(symbol)
+                        .copied()
+                        .map(|(section, value)| SymbolValue::Defined { section, value })
+                })
+        })
+        .map_err(|err| AsmError(err.to_string()))
     }
 
     fn activate_absolute_definition(&mut self, name: &str) -> Result<(), AsmError> {

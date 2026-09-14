@@ -126,6 +126,13 @@ pub fn classify(
     expr: &Expr,
     symbols: &BTreeMap<String, SymbolValue>,
 ) -> Result<ClassifiedExpr, ClassifyError> {
+    classify_with_lookup(expr, |symbol| symbols.get(symbol).copied())
+}
+
+pub(crate) fn classify_with_lookup(
+    expr: &Expr,
+    mut lookup: impl FnMut(&str) -> Option<SymbolValue>,
+) -> Result<ClassifiedExpr, ClassifyError> {
     if let Expr::Unsigned(value) = expr {
         return Ok(match i64::try_from(*value) {
             Ok(value) => ClassifiedExpr::Absolute(value),
@@ -146,11 +153,7 @@ pub fn classify(
 
     for (term, coeff) in terms {
         match term {
-            Term::Plain(symbol) => match symbols
-                .get(&symbol)
-                .copied()
-                .unwrap_or(SymbolValue::Undefined)
-            {
+            Term::Plain(symbol) => match lookup(&symbol).unwrap_or(SymbolValue::Undefined) {
                 SymbolValue::Absolute(value) => {
                     constant = checked_add(constant, checked_mul(value, coeff as i64)?)?;
                 }
@@ -821,6 +824,34 @@ mod tests {
                 addend: 4
             }
         );
+    }
+
+    #[test]
+    fn classify_with_lookup_queries_only_expression_symbols() {
+        let expr = Expr::Sub(
+            Box::new(Expr::Symbol("end".into())),
+            Box::new(Expr::Symbol("start".into())),
+        );
+        let mut lookups = Vec::new();
+
+        let classified = classify_with_lookup(&expr, |symbol| {
+            lookups.push(symbol.to_string());
+            match symbol {
+                "start" => Some(SymbolValue::Defined {
+                    section: 1,
+                    value: 4,
+                }),
+                "end" => Some(SymbolValue::Defined {
+                    section: 1,
+                    value: 12,
+                }),
+                _ => None,
+            }
+        })
+        .unwrap();
+
+        assert_eq!(classified, ClassifiedExpr::Absolute(8));
+        assert_eq!(lookups, ["end", "start"]);
     }
 
     #[test]
