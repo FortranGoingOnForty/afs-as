@@ -40,7 +40,7 @@ const REJECTED: &[&str] = &[
     "psrldq $256, %xmm0",
 ];
 
-const ZERO_OPERAND_MNEMONICS: &[&str] = &["cqto", "cqo", "cltd", "cdq", "syscall"];
+const ZERO_OPERAND_MNEMONICS: &[&str] = &["cqto", "cqo", "cltd", "cdq", "syscall", "ud2"];
 
 const SCALE_WITHOUT_INDEX: &[u8] = &[1, 2, 4, 8];
 
@@ -129,6 +129,11 @@ fn valid_memory_scale_boundaries_keep_exact_encodings() {
     ] {
         assert_eq!(encode_line(line).expect(line).bytes, expected, "{line}");
     }
+}
+
+#[test]
+fn ud2_has_its_architectural_encoding() {
+    assert_eq!(encode_line("ud2").expect("ud2").bytes, [0x0f, 0x0b]);
 }
 
 #[test]

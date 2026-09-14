@@ -3,7 +3,7 @@
 //!
 //! Parallel to the ARM64 modules by design — no shared encoder or
 //! parser traits. The supported surface starts at exactly what the
-//! armfortas x86_64 backend emits (99 mnemonics, three memory shapes
+//! armfortas x86_64 backend emits (100 mnemonics, three memory shapes
 //! plus RIP-relative, no VEX) and grows via the differential fuzz
 //! suites. Unsupported forms fail loudly with file/line diagnostics —
 //! never assemble silently.

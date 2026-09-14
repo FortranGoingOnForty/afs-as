@@ -399,6 +399,15 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
                 ..Default::default()
             });
         }
+        "ud2" => {
+            if !ops.is_empty() {
+                return Err("ud2 expects no operands".into());
+            }
+            return Ok(Encoded {
+                bytes: vec![0x0f, 0x0b],
+                ..Default::default()
+            });
+        }
         "mfence" => {
             if !ops.is_empty() {
                 return Err("mfence expects no operands".into());

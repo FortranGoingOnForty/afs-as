@@ -154,6 +154,7 @@ const CASES: &[&str] = &[
     "callq *%rax",
     "jmp *16(%rcx)",
     "syscall",
+    "ud2",
     // SSE scalar moves + arithmetic
     "movss %xmm0, %xmm1",
     "movss (%rax), %xmm2",
