@@ -648,8 +648,8 @@ fn parse_directive_bytes(rest: &[u8], line: u32, col: u32) -> Result<Stmt, X86Pa
     let err = |msg: String| X86ParseError::new(line, col, msg);
 
     let directive = match name {
-        "ascii" => Directive::Ascii(parse_string_operands_bytes(args).map_err(&err)?),
-        "asciz" | "string" => Directive::Asciz(parse_string_operands_bytes(args).map_err(&err)?),
+        "ascii" => Directive::Ascii(parse_string_operands_bytes(args).map_err(err)?),
+        "asciz" | "string" => Directive::Asciz(parse_string_operands_bytes(args).map_err(err)?),
         _ => {
             let rest = decode_grammar(rest, line, col + 1, "directive")?;
             return parse_directive(rest, line, col);
@@ -684,7 +684,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
     let d = match name {
         "text" | "data" | "bss" => Directive::Section {
             name: format!(".{name}"),
-            subsection: parse_subsection(args).map_err(&err)?,
+            subsection: parse_subsection(args).map_err(err)?,
             flags: None,
             section_type: None,
         },
@@ -819,8 +819,8 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
         "short" | "word" | "value" => Directive::Short(data_items(args)?),
         "long" => Directive::Long(data_items(args)?),
         "quad" => Directive::Quad(data_items(args)?),
-        "ascii" => Directive::Ascii(parse_string_operands(args).map_err(&err)?),
-        "asciz" | "string" => Directive::Asciz(parse_string_operands(args).map_err(&err)?),
+        "ascii" => Directive::Ascii(parse_string_operands(args).map_err(err)?),
+        "asciz" | "string" => Directive::Asciz(parse_string_operands(args).map_err(err)?),
         "space" | "skip" => {
             let mut parts = args.split(',').map(str::trim);
             let v = parse_int(parts.next().unwrap_or(""))
@@ -897,7 +897,7 @@ fn parse_directive(rest: &str, line: u32, col: u32) -> Result<Stmt, X86ParseErro
             }
             Directive::SetSymbolAlias { name, target }
         }
-        "file" => Directive::File(parse_file_name(args).map_err(&err)?),
+        "file" => Directive::File(parse_file_name(args).map_err(err)?),
         other => {
             return Err(err(format!(
                 "unsupported directive '.{}' — the x86 dialect grows only with corpus evidence",
