@@ -1606,7 +1606,7 @@ fn reserve_materialized_bytes(
         )
     };
     let additional = usize::try_from(additional).map_err(|_| too_large())?;
-    let end = current.checked_add(additional).ok_or_else(&too_large)?;
+    let end = current.checked_add(additional).ok_or_else(too_large)?;
     bytes.try_reserve(additional).map_err(|_| too_large())?;
     Ok(end)
 }
