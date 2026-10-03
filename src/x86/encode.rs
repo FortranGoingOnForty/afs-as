@@ -334,8 +334,11 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
                 inner
             ));
         };
-        if stem != "xadd" {
+        if stem != "xadd" && stem != "cmpxchg" {
             return Err(format!("lock prefix is not supported for '{}'", inner));
+        }
+        if !matches!(ops, [Operand::Reg(_), Operand::Mem(_)]) {
+            return Err(format!("lock {} requires register, memory", inner));
         }
         let mut encoded = encode(inner, ops)?;
         encoded.bytes.insert(0, 0xf0);
@@ -507,6 +510,7 @@ pub fn encode(mnemonic: &str, ops: &[Operand]) -> EncodeResult {
             "test" => return encode_test(w, ops, mnemonic),
             "xchg" => return encode_reg_rm(&[0x86], &[0x87], w, ops, mnemonic),
             "xadd" => return encode_reg_rm(&[0x0f, 0xc0], &[0x0f, 0xc1], w, ops, mnemonic),
+            "cmpxchg" => return encode_reg_rm(&[0x0f, 0xb0], &[0x0f, 0xb1], w, ops, mnemonic),
             // Two-byte-opcode RM forms sharing one shape; the
             // immediate form (69/6B) is its own AT&T 3-operand shape
             // `imul $imm, r/m, r` (cgfried emits it for scaled

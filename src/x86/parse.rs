@@ -1118,6 +1118,10 @@ mod tests {
         let (m, ops) = one_insn("lock xaddq %rdx, counter(%rip)\n");
         assert_eq!(m, "lock xaddq");
         assert_eq!(ops.len(), 2);
+
+        let (m, ops) = one_insn("lock cmpxchgl %r15d, counter(%rip)\n");
+        assert_eq!(m, "lock cmpxchgl");
+        assert_eq!(ops.len(), 2);
     }
 
     #[test]

@@ -38,6 +38,9 @@ const REJECTED: &[&str] = &[
     "pshuflw $256, %xmm0, %xmm1",
     "psrldq $-1, %xmm0",
     "psrldq $256, %xmm0",
+    // LOCK is only valid when these read-modify-write forms target memory.
+    "lock xaddq %rax, %rbx",
+    "lock cmpxchgl %ecx, %edx",
 ];
 
 const ZERO_OPERAND_MNEMONICS: &[&str] = &["cqto", "cqo", "cltd", "cdq", "syscall", "ud2"];

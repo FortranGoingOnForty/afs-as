@@ -74,6 +74,10 @@ const CASES: &[&str] = &[
     "xchgq %rax, atomic_double(%rip)",
     "xaddl %r10d, (%r11)",
     "lock xaddq %rdx, atomic_counter(%rip)",
+    "cmpxchgb %r9b, (%r12)",
+    "cmpxchgw %r10w, 2(%r13)",
+    "lock cmpxchgl %r15d, (%r14)",
+    "lock cmpxchgq %rdx, atomic_counter(%rip)",
     "mfence",
     // width-reinterpreted immediates pick the sign-extended 83 form
     "orw $65535, %ax",
